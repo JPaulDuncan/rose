@@ -1,6 +1,8 @@
 import { simpleParser, type ParsedMail, type AddressObject } from 'mailparser';
 import { createHash } from 'node:crypto';
 
+export { formatImapError } from './imapErrors.js';
+
 export type CleanedEmail = {
   messageId: string | null;
   threadKey: string | null;

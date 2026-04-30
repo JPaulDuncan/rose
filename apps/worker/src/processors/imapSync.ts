@@ -2,7 +2,7 @@ import { Worker, type Job, Queue } from 'bullmq';
 import { ImapFlow } from 'imapflow';
 import { Types } from 'mongoose';
 import { Source, Email } from '@rose/db';
-import { parseEmail } from '@rose/email-parser';
+import { parseEmail, formatImapError } from '@rose/email-parser';
 import { decryptJson } from '../lib/crypto.js';
 import { redis } from '../lib/redis.js';
 import { logger } from '../lib/logger.js';
@@ -80,7 +80,7 @@ export function startImapSyncWorker() {
         source.status = 'active';
         await source.save();
       } catch (err) {
-        source.lastError = (err as Error).message;
+        source.lastError = formatImapError(err, cfg.host);
         source.status = 'error';
         await source.save();
         throw err;

@@ -11,6 +11,7 @@ import {
 import { userIdOf } from '../middleware/auth.js';
 import { validateBody } from '../middleware/validate.js';
 import { Source, ApiToken } from '@rose/db';
+import { formatImapError } from '@rose/email-parser';
 import { encryptJson, decryptJson } from '../lib/crypto.js';
 import { imapSyncQueue, gmailSyncQueue } from '../lib/queues.js';
 import { logger } from '../lib/logger.js';
@@ -148,7 +149,8 @@ async function testImap(config: ImapConfig): Promise<{ ok: true; mailboxes: stri
     const list = await client.list();
     return { ok: true, mailboxes: list.map((m) => m.path).slice(0, 100) };
   } catch (err) {
-    return { ok: false, message: (err as Error).message };
+    logger.warn({ err, host: config.host, user: config.username }, 'IMAP test failed');
+    return { ok: false, message: formatImapError(err, config.host) };
   } finally {
     await client.logout().catch(() => null);
   }
