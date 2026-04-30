@@ -1,11 +1,11 @@
 import { Router } from 'express';
-import type { AuthedRequest } from '../middleware/auth.js';
+import { userIdOf } from '../middleware/auth.js';
 import { User } from '@rose/db';
 
-export const meRouter = Router();
+export const meRouter: Router = Router();
 
 meRouter.get('/', async (req, res) => {
-  const userId = (req as AuthedRequest).userId;
+  const userId = userIdOf(req);
   const user = await User.findById(userId);
   if (!user) {
     res.status(404).json({ error: 'not_found', message: 'User not found' });
@@ -21,7 +21,7 @@ meRouter.get('/', async (req, res) => {
 });
 
 meRouter.patch('/', async (req, res) => {
-  const userId = (req as AuthedRequest).userId;
+  const userId = userIdOf(req);
   const { displayName, settings } = (req.body ?? {}) as {
     displayName?: string;
     settings?: Record<string, unknown>;

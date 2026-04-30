@@ -2,23 +2,23 @@ import { Router } from 'express';
 import crypto from 'node:crypto';
 import { Types } from 'mongoose';
 import { SourceCreateRequest } from '@rose/shared';
-import type { AuthedRequest } from '../middleware/auth.js';
+import { userIdOf } from '../middleware/auth.js';
 import { validateBody } from '../middleware/validate.js';
 import { Source } from '@rose/db';
 import { ApiToken } from '@rose/db';
 import { encryptJson } from '../lib/crypto.js';
 import { imapSyncQueue, gmailSyncQueue } from '../lib/queues.js';
 
-export const sourcesRouter = Router();
+export const sourcesRouter: Router = Router();
 
 sourcesRouter.get('/', async (req, res) => {
-  const userId = new Types.ObjectId((req as AuthedRequest).userId);
+  const userId = new Types.ObjectId(userIdOf(req));
   const sources = await Source.find({ userId }).sort({ createdAt: -1 }).lean();
   res.json({ sources });
 });
 
 sourcesRouter.post('/', validateBody(SourceCreateRequest), async (req, res) => {
-  const userId = new Types.ObjectId((req as AuthedRequest).userId);
+  const userId = new Types.ObjectId(userIdOf(req));
   const body = req.body as typeof SourceCreateRequest._type;
 
   if (body.type === 'imap') {
@@ -72,7 +72,7 @@ sourcesRouter.post('/', validateBody(SourceCreateRequest), async (req, res) => {
 });
 
 sourcesRouter.delete('/:id', async (req, res) => {
-  const userId = new Types.ObjectId((req as AuthedRequest).userId);
+  const userId = new Types.ObjectId(userIdOf(req));
   const src = await Source.findOne({ _id: req.params.id, userId });
   if (!src) {
     res.json({ ok: true });

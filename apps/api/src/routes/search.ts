@@ -1,14 +1,14 @@
 import { Router } from 'express';
 import { Types } from 'mongoose';
 import { SearchRequest } from '@rose/shared';
-import type { AuthedRequest } from '../middleware/auth.js';
+import { userIdOf } from '../middleware/auth.js';
 import { searchPages } from '../services/search.js';
 
-export const searchRouter = Router();
+export const searchRouter: Router = Router();
 
 searchRouter.get('/', async (req, res, next) => {
   try {
-    const userId = new Types.ObjectId((req as AuthedRequest).userId);
+    const userId = new Types.ObjectId(userIdOf(req));
     const parsed = SearchRequest.parse({
       ...req.query,
       limit: req.query.limit ? Number(req.query.limit) : undefined,

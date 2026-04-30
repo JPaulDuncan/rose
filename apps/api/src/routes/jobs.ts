@@ -4,15 +4,15 @@ import jwt from 'jsonwebtoken';
 import { generatePageQueue, generatePageEvents } from '../lib/queues.js';
 import { jobEvents } from '../services/sse.js';
 import { env } from '../lib/env.js';
-import type { AuthedRequest } from '../middleware/auth.js';
+import { userIdOf } from '../middleware/auth.js';
 
 /** Authenticated REST routes. */
-export const jobsRouter = Router();
+export const jobsRouter: Router = Router();
 
 jobsRouter.get('/:id', async (req, res) => {
-  const _userId = (req as AuthedRequest).userId;
+  const _userId = userIdOf(req);
   void _userId;
-  const job = await generatePageQueue.getJob(req.params.id);
+  const job = await generatePageQueue.getJob(req.params.id ?? '');
   if (!job) {
     res.status(404).json({ error: 'not_found', message: 'Job not found' });
     return;
@@ -25,7 +25,7 @@ jobsRouter.get('/:id', async (req, res) => {
  * Public-mounted SSE stream that authenticates via either Authorization header
  * or `?access_token=` query (for EventSource which can't send headers).
  */
-export const jobsStreamRouter = Router();
+export const jobsStreamRouter: Router = Router();
 
 jobsStreamRouter.get('/:id/stream', async (req: Request, res: Response) => {
   const header = req.headers.authorization ?? '';
@@ -42,7 +42,11 @@ jobsStreamRouter.get('/:id/stream', async (req: Request, res: Response) => {
     res.status(401).json({ error: 'unauthorized', message: 'Invalid token' });
     return;
   }
-  const jobId = req.params.id;
+  const jobId = req.params.id ?? '';
+  if (!jobId) {
+    res.status(400).json({ error: 'invalid_request', message: 'Missing job id' });
+    return;
+  }
 
   res.set({
     'Content-Type': 'text/event-stream',

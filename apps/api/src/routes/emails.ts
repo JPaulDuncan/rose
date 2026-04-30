@@ -1,16 +1,16 @@
 import { Router } from 'express';
 import multer from 'multer';
 import { Types } from 'mongoose';
-import type { AuthedRequest } from '../middleware/auth.js';
+import { userIdOf } from '../middleware/auth.js';
 import { Email } from '@rose/db';
 import { ingestRawEmail } from '../services/ingest.js';
 
-export const emailsRouter = Router();
+export const emailsRouter: Router = Router();
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
 
 emailsRouter.post('/upload', upload.array('files', 50), async (req, res) => {
-  const userId = new Types.ObjectId((req as AuthedRequest).userId);
+  const userId = new Types.ObjectId(userIdOf(req));
   const files = (req.files ?? []) as Express.Multer.File[];
   if (!files.length) {
     res.status(400).json({ error: 'invalid_request', message: 'No files uploaded' });
@@ -33,7 +33,7 @@ emailsRouter.post('/upload', upload.array('files', 50), async (req, res) => {
 });
 
 emailsRouter.get('/', async (req, res) => {
-  const userId = new Types.ObjectId((req as AuthedRequest).userId);
+  const userId = new Types.ObjectId(userIdOf(req));
   const status = (req.query.status as string | undefined) ?? undefined;
   const limit = Math.min(Number(req.query.limit ?? 50), 200);
   const filter: Record<string, unknown> = { userId };
@@ -47,7 +47,7 @@ emailsRouter.get('/', async (req, res) => {
 });
 
 emailsRouter.get('/:id', async (req, res) => {
-  const userId = new Types.ObjectId((req as AuthedRequest).userId);
+  const userId = new Types.ObjectId(userIdOf(req));
   if (!Types.ObjectId.isValid(req.params.id)) {
     res.status(400).json({ error: 'invalid_request', message: 'Invalid id' });
     return;
@@ -61,7 +61,7 @@ emailsRouter.get('/:id', async (req, res) => {
 });
 
 emailsRouter.delete('/:id', async (req, res) => {
-  const userId = new Types.ObjectId((req as AuthedRequest).userId);
+  const userId = new Types.ObjectId(userIdOf(req));
   await Email.deleteOne({ _id: req.params.id, userId });
   res.json({ ok: true });
 });

@@ -2,6 +2,7 @@ import type { NextFunction, Request, Response } from 'express';
 import jwt from 'jsonwebtoken';
 import { env } from '../lib/env.js';
 
+/** Request guaranteed to carry `userId` after `requireAuth`. */
 export type AuthedRequest = Request & { userId: string };
 
 export function requireAuth(req: Request, res: Response, next: NextFunction): void {
@@ -13,11 +14,17 @@ export function requireAuth(req: Request, res: Response, next: NextFunction): vo
   }
   try {
     const payload = jwt.verify(token, env.JWT_SECRET) as { sub: string };
-    (req as AuthedRequest).userId = payload.sub;
+    req.userId = payload.sub;
     next();
   } catch {
     res.status(401).json({ error: 'unauthorized', message: 'Invalid or expired token' });
   }
+}
+
+/** Helper for handlers mounted behind requireAuth — throws if misused. */
+export function userIdOf(req: Request): string {
+  if (!req.userId) throw new Error('userIdOf called without requireAuth');
+  return req.userId;
 }
 
 export function signAccessToken(userId: string): string {

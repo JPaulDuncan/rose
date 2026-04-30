@@ -1,17 +1,17 @@
 import { Router } from 'express';
 import { Types } from 'mongoose';
 import { PageUpdateRequest } from '@rose/shared';
-import type { AuthedRequest } from '../middleware/auth.js';
+import { userIdOf } from '../middleware/auth.js';
 import { validateBody } from '../middleware/validate.js';
 import { Page } from '@rose/db';
 import { PageRevision } from '@rose/db';
 import { embedPageQueue } from '../lib/queues.js';
 import { recordRevision, uniqueSlug } from '../services/wiki.js';
 
-export const pagesRouter = Router();
+export const pagesRouter: Router = Router();
 
 pagesRouter.get('/', async (req, res) => {
-  const userId = new Types.ObjectId((req as AuthedRequest).userId);
+  const userId = new Types.ObjectId(userIdOf(req));
   const limit = Math.min(Number(req.query.limit ?? 50), 200);
   const tag = req.query.tag as string | undefined;
   const filter: Record<string, unknown> = { userId };
@@ -25,7 +25,7 @@ pagesRouter.get('/', async (req, res) => {
 });
 
 pagesRouter.get('/by-slug/:slug', async (req, res) => {
-  const userId = new Types.ObjectId((req as AuthedRequest).userId);
+  const userId = new Types.ObjectId(userIdOf(req));
   const page = await Page.findOne({ userId, slug: req.params.slug }).lean();
   if (!page) {
     res.status(404).json({ error: 'not_found', message: 'Page not found' });
@@ -35,7 +35,7 @@ pagesRouter.get('/by-slug/:slug', async (req, res) => {
 });
 
 pagesRouter.get('/:id', async (req, res) => {
-  const userId = new Types.ObjectId((req as AuthedRequest).userId);
+  const userId = new Types.ObjectId(userIdOf(req));
   if (!Types.ObjectId.isValid(req.params.id)) {
     res.status(400).json({ error: 'invalid_request', message: 'Invalid id' });
     return;
@@ -49,7 +49,7 @@ pagesRouter.get('/:id', async (req, res) => {
 });
 
 pagesRouter.patch('/:id', validateBody(PageUpdateRequest), async (req, res) => {
-  const userId = new Types.ObjectId((req as AuthedRequest).userId);
+  const userId = new Types.ObjectId(userIdOf(req));
   const page = await Page.findOne({ _id: req.params.id, userId });
   if (!page) {
     res.status(404).json({ error: 'not_found', message: 'Page not found' });
@@ -85,14 +85,14 @@ pagesRouter.patch('/:id', validateBody(PageUpdateRequest), async (req, res) => {
 });
 
 pagesRouter.delete('/:id', async (req, res) => {
-  const userId = new Types.ObjectId((req as AuthedRequest).userId);
+  const userId = new Types.ObjectId(userIdOf(req));
   await Page.deleteOne({ _id: req.params.id, userId });
   await PageRevision.deleteMany({ pageId: req.params.id });
   res.json({ ok: true });
 });
 
 pagesRouter.get('/:id/revisions', async (req, res) => {
-  const userId = new Types.ObjectId((req as AuthedRequest).userId);
+  const userId = new Types.ObjectId(userIdOf(req));
   const page = await Page.findOne({ _id: req.params.id, userId }).select('_id').lean();
   if (!page) {
     res.status(404).json({ error: 'not_found', message: 'Page not found' });
@@ -103,7 +103,7 @@ pagesRouter.get('/:id/revisions', async (req, res) => {
 });
 
 pagesRouter.post('/:id/revisions/:version/restore', async (req, res) => {
-  const userId = new Types.ObjectId((req as AuthedRequest).userId);
+  const userId = new Types.ObjectId(userIdOf(req));
   const page = await Page.findOne({ _id: req.params.id, userId });
   if (!page) {
     res.status(404).json({ error: 'not_found', message: 'Page not found' });

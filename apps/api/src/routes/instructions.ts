@@ -1,15 +1,15 @@
 import { Router } from 'express';
 import { Types } from 'mongoose';
 import { InstructionUpsertRequest } from '@rose/shared';
-import type { AuthedRequest } from '../middleware/auth.js';
+import { userIdOf } from '../middleware/auth.js';
 import { validateBody } from '../middleware/validate.js';
 import { Instruction } from '@rose/db';
 import { extractVariables } from '@rose/llm';
 
-export const instructionsRouter = Router();
+export const instructionsRouter: Router = Router();
 
 instructionsRouter.get('/', async (req, res) => {
-  const userId = new Types.ObjectId((req as AuthedRequest).userId);
+  const userId = new Types.ObjectId(userIdOf(req));
   const scope = req.query.scope as string | undefined;
   const filter: Record<string, unknown> = { userId };
   if (scope) filter.scope = scope;
@@ -18,7 +18,7 @@ instructionsRouter.get('/', async (req, res) => {
 });
 
 instructionsRouter.post('/', validateBody(InstructionUpsertRequest), async (req, res) => {
-  const userId = new Types.ObjectId((req as AuthedRequest).userId);
+  const userId = new Types.ObjectId(userIdOf(req));
   const body = req.body as typeof InstructionUpsertRequest._type;
   const variables = body.variables ?? extractVariables(body.template);
   if (body.isDefault) {
@@ -38,7 +38,7 @@ instructionsRouter.post('/', validateBody(InstructionUpsertRequest), async (req,
 });
 
 instructionsRouter.patch('/:id', validateBody(InstructionUpsertRequest.partial()), async (req, res) => {
-  const userId = new Types.ObjectId((req as AuthedRequest).userId);
+  const userId = new Types.ObjectId(userIdOf(req));
   const inst = await Instruction.findOne({ _id: req.params.id, userId });
   if (!inst) {
     res.status(404).json({ error: 'not_found', message: 'Instruction not found' });
@@ -73,7 +73,7 @@ instructionsRouter.patch('/:id', validateBody(InstructionUpsertRequest.partial()
 });
 
 instructionsRouter.post('/:id/clone', async (req, res) => {
-  const userId = new Types.ObjectId((req as AuthedRequest).userId);
+  const userId = new Types.ObjectId(userIdOf(req));
   const src = await Instruction.findOne({ _id: req.params.id, userId });
   if (!src) {
     res.status(404).json({ error: 'not_found', message: 'Instruction not found' });
@@ -93,7 +93,7 @@ instructionsRouter.post('/:id/clone', async (req, res) => {
 });
 
 instructionsRouter.delete('/:id', async (req, res) => {
-  const userId = new Types.ObjectId((req as AuthedRequest).userId);
+  const userId = new Types.ObjectId(userIdOf(req));
   const inst = await Instruction.findOne({ _id: req.params.id, userId });
   if (!inst) {
     res.json({ ok: true });

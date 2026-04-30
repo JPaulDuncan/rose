@@ -1,8 +1,8 @@
-import express from 'express';
+import express, { type Express } from 'express';
 import mongoose from 'mongoose';
 import helmet from 'helmet';
 import cors from 'cors';
-import pinoHttp from 'pino-http';
+import { pinoHttp } from 'pino-http';
 import { OllamaClient } from '@rose/llm';
 import { env } from './lib/env.js';
 import { logger } from './lib/logger.js';
@@ -25,7 +25,7 @@ import { redis } from './lib/redis.js';
 import { generatePageEvents } from './lib/queues.js';
 import { jobEvents } from './services/sse.js';
 
-export async function createServer() {
+export async function createServer(): Promise<Express> {
   await connectMongo();
 
   const app = express();
@@ -48,7 +48,7 @@ export async function createServer() {
   app.get('/ready', async (_req, res) => {
     const ollama = new OllamaClient({ baseUrl: env.OLLAMA_URL });
     const [redisOk, ollamaOk] = await Promise.all([
-      redis.ping().then((r) => r === 'PONG').catch(() => false),
+      redis.ping().then((r: string) => r === 'PONG').catch(() => false),
       ollama.ping(),
     ]);
     const mongoOk = mongoose.connection.readyState === 1;

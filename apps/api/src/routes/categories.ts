@@ -1,18 +1,18 @@
 import { Router } from 'express';
 import { Types } from 'mongoose';
-import type { AuthedRequest } from '../middleware/auth.js';
+import { userIdOf } from '../middleware/auth.js';
 import { Category } from '@rose/db';
 
-export const categoriesRouter = Router();
+export const categoriesRouter: Router = Router();
 
 categoriesRouter.get('/', async (req, res) => {
-  const userId = new Types.ObjectId((req as AuthedRequest).userId);
+  const userId = new Types.ObjectId(userIdOf(req));
   const categories = await Category.find({ userId }).sort({ name: 1 }).lean();
   res.json({ categories });
 });
 
 categoriesRouter.post('/', async (req, res) => {
-  const userId = new Types.ObjectId((req as AuthedRequest).userId);
+  const userId = new Types.ObjectId(userIdOf(req));
   const { name, parentId, color, icon } = req.body as {
     name?: string;
     parentId?: string;
@@ -34,7 +34,7 @@ categoriesRouter.post('/', async (req, res) => {
 });
 
 categoriesRouter.delete('/:id', async (req, res) => {
-  const userId = new Types.ObjectId((req as AuthedRequest).userId);
+  const userId = new Types.ObjectId(userIdOf(req));
   await Category.deleteOne({ _id: req.params.id, userId });
   res.json({ ok: true });
 });

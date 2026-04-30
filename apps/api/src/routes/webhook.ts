@@ -6,7 +6,7 @@ import { Source } from '@rose/db';
 import { ingestRawEmail } from '../services/ingest.js';
 import { webhookLimiter } from '../middleware/rateLimit.js';
 
-export const webhookRouter = Router();
+export const webhookRouter: Router = Router();
 
 /**
  * Inbound email webhook. Accepts raw RFC822 (text/plain or message/rfc822) up to ~25MB.

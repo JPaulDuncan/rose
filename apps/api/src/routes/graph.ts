@@ -1,12 +1,12 @@
 import { Router } from 'express';
 import { Types } from 'mongoose';
-import type { AuthedRequest } from '../middleware/auth.js';
+import { userIdOf } from '../middleware/auth.js';
 import { Page } from '@rose/db';
 
-export const graphRouter = Router();
+export const graphRouter: Router = Router();
 
 graphRouter.get('/', async (req, res) => {
-  const userId = new Types.ObjectId((req as AuthedRequest).userId);
+  const userId = new Types.ObjectId(userIdOf(req));
   const pages = await Page.find({ userId })
     .select('_id title slug tags backlinks categoryId')
     .lean();

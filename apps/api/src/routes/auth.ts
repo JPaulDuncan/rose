@@ -9,7 +9,7 @@ import { authLimiter } from '../middleware/rateLimit.js';
 import { env } from '../lib/env.js';
 import { seedSystemInstructionsForUser } from '../services/instructions.js';
 
-export const authRouter = Router();
+export const authRouter: Router = Router();
 authRouter.use(cookieParser());
 
 function toPublic(u: UserDoc): PublicUser {
