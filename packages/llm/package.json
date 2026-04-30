@@ -1,0 +1,28 @@
+{
+  "name": "@rose/llm",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./seed": "./src/seed/index.ts"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit",
+    "lint": "echo 'no-op'",
+    "test": "echo 'no-op'",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@rose/shared": "workspace:*",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@rose/config": "workspace:*",
+    "@types/node": "^22.7.5",
+    "typescript": "^5.6.3"
+  }
+}

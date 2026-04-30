@@ -1,0 +1,35 @@
+{
+  "name": "@rose/worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit",
+    "lint": "echo 'no-op'",
+    "test": "echo 'no-op'",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@rose/db": "workspace:*",
+    "@rose/email-parser": "workspace:*",
+    "@rose/llm": "workspace:*",
+    "@rose/shared": "workspace:*",
+    "bullmq": "^5.21.2",
+    "dotenv": "^16.4.5",
+    "googleapis": "^144.0.0",
+    "imapflow": "^1.0.171",
+    "ioredis": "^5.4.1",
+    "mongoose": "^8.8.0",
+    "pino": "^9.5.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@rose/config": "workspace:*",
+    "@types/node": "^22.7.5",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3"
+  }
+}

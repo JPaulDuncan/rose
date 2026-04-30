@@ -1,0 +1,102 @@
+import express from 'express';
+import mongoose from 'mongoose';
+import helmet from 'helmet';
+import cors from 'cors';
+import pinoHttp from 'pino-http';
+import { OllamaClient } from '@rose/llm';
+import { env } from './lib/env.js';
+import { logger } from './lib/logger.js';
+import { connectMongo } from './lib/db.js';
+import { authRouter } from './routes/auth.js';
+import { meRouter } from './routes/me.js';
+import { emailsRouter } from './routes/emails.js';
+import { pagesRouter } from './routes/pages.js';
+import { searchRouter } from './routes/search.js';
+import { instructionsRouter } from './routes/instructions.js';
+import { sourcesRouter } from './routes/sources.js';
+import { categoriesRouter } from './routes/categories.js';
+import { jobsRouter, jobsStreamRouter } from './routes/jobs.js';
+import { graphRouter } from './routes/graph.js';
+import { webhookRouter } from './routes/webhook.js';
+import { errorHandler } from './middleware/error.js';
+import { requireAuth } from './middleware/auth.js';
+import { apiLimiter } from './middleware/rateLimit.js';
+import { redis } from './lib/redis.js';
+import { generatePageEvents } from './lib/queues.js';
+import { jobEvents } from './services/sse.js';
+
+export async function createServer() {
+  await connectMongo();
+
+  const app = express();
+  app.set('trust proxy', 1);
+  app.use(helmet());
+  app.use(cors({ origin: env.WEB_ORIGIN, credentials: true }));
+  app.use(pinoHttp({ logger }));
+
+  // Webhook expects raw body, register before json parser.
+  app.use(
+    '/api/webhook',
+    express.raw({ type: ['message/rfc822', 'text/plain', 'application/octet-stream'], limit: '25mb' }),
+    webhookRouter,
+  );
+
+  app.use(express.json({ limit: '5mb' }));
+  app.use(apiLimiter);
+
+  app.get('/health', (_req, res) => res.json({ ok: true }));
+  app.get('/ready', async (_req, res) => {
+    const ollama = new OllamaClient({ baseUrl: env.OLLAMA_URL });
+    const [redisOk, ollamaOk] = await Promise.all([
+      redis.ping().then((r) => r === 'PONG').catch(() => false),
+      ollama.ping(),
+    ]);
+    const mongoOk = mongoose.connection.readyState === 1;
+    const ok = mongoOk && redisOk && ollamaOk;
+    res.status(ok ? 200 : 503).json({ ok, mongo: mongoOk, redis: redisOk, ollama: ollamaOk });
+  });
+
+  app.use('/api/auth', authRouter);
+  app.use('/api/me', requireAuth, meRouter);
+  app.use('/api/emails', requireAuth, emailsRouter);
+  app.use('/api/pages', requireAuth, pagesRouter);
+  app.use('/api/search', requireAuth, searchRouter);
+  app.use('/api/instructions', requireAuth, instructionsRouter);
+  app.use('/api/sources', requireAuth, sourcesRouter);
+  app.use('/api/categories', requireAuth, categoriesRouter);
+  // SSE stream auth via query param; mount before requireAuth-protected jobs.
+  app.use('/api/jobs', jobsStreamRouter);
+  app.use('/api/jobs', requireAuth, jobsRouter);
+  app.use('/api/graph', requireAuth, graphRouter);
+
+  app.use(errorHandler);
+
+  return app;
+}
+
+async function bootstrap() {
+  const app = await createServer();
+  const server = app.listen(env.PORT, () => {
+    logger.info({ port: env.PORT }, 'rose api listening');
+  });
+
+  // Forward worker progress events into the SSE bus.
+  generatePageEvents.on('progress', ({ jobId, data }) => {
+    if (data && typeof data === 'object') {
+      jobEvents.publish(String(jobId), data as Parameters<typeof jobEvents.publish>[1]);
+    }
+  });
+
+  const shutdown = async (signal: string) => {
+    logger.info({ signal }, 'shutting down');
+    server.close(() => process.exit(0));
+    setTimeout(() => process.exit(1), 10_000).unref();
+  };
+  process.on('SIGINT', () => void shutdown('SIGINT'));
+  process.on('SIGTERM', () => void shutdown('SIGTERM'));
+}
+
+bootstrap().catch((err) => {
+  logger.error({ err }, 'fatal startup error');
+  process.exit(1);
+});

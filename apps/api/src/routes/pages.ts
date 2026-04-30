@@ -1,0 +1,136 @@
+import { Router } from 'express';
+import { Types } from 'mongoose';
+import { PageUpdateRequest } from '@rose/shared';
+import type { AuthedRequest } from '../middleware/auth.js';
+import { validateBody } from '../middleware/validate.js';
+import { Page } from '@rose/db';
+import { PageRevision } from '@rose/db';
+import { embedPageQueue } from '../lib/queues.js';
+import { recordRevision, uniqueSlug } from '../services/wiki.js';
+
+export const pagesRouter = Router();
+
+pagesRouter.get('/', async (req, res) => {
+  const userId = new Types.ObjectId((req as AuthedRequest).userId);
+  const limit = Math.min(Number(req.query.limit ?? 50), 200);
+  const tag = req.query.tag as string | undefined;
+  const filter: Record<string, unknown> = { userId };
+  if (tag) filter.tags = tag;
+  const pages = await Page.find(filter)
+    .sort({ updatedAt: -1 })
+    .limit(limit)
+    .select('-contentMd')
+    .lean();
+  res.json({ pages });
+});
+
+pagesRouter.get('/by-slug/:slug', async (req, res) => {
+  const userId = new Types.ObjectId((req as AuthedRequest).userId);
+  const page = await Page.findOne({ userId, slug: req.params.slug }).lean();
+  if (!page) {
+    res.status(404).json({ error: 'not_found', message: 'Page not found' });
+    return;
+  }
+  res.json(page);
+});
+
+pagesRouter.get('/:id', async (req, res) => {
+  const userId = new Types.ObjectId((req as AuthedRequest).userId);
+  if (!Types.ObjectId.isValid(req.params.id)) {
+    res.status(400).json({ error: 'invalid_request', message: 'Invalid id' });
+    return;
+  }
+  const page = await Page.findOne({ _id: req.params.id, userId }).lean();
+  if (!page) {
+    res.status(404).json({ error: 'not_found', message: 'Page not found' });
+    return;
+  }
+  res.json(page);
+});
+
+pagesRouter.patch('/:id', validateBody(PageUpdateRequest), async (req, res) => {
+  const userId = new Types.ObjectId((req as AuthedRequest).userId);
+  const page = await Page.findOne({ _id: req.params.id, userId });
+  if (!page) {
+    res.status(404).json({ error: 'not_found', message: 'Page not found' });
+    return;
+  }
+  const update = req.body as typeof PageUpdateRequest._type;
+  const titleChanged = update.title && update.title !== page.title;
+  if (titleChanged) page.slug = await uniqueSlug(userId, update.title!, page._id);
+  if (update.title) page.title = update.title;
+  if (update.summary !== undefined) page.summary = update.summary;
+  if (update.contentMd !== undefined) page.contentMd = update.contentMd;
+  if (update.tags) page.tags = update.tags;
+  if (update.categoryId !== undefined)
+    page.categoryId = update.categoryId ? new Types.ObjectId(update.categoryId) : null;
+  page.version += 1;
+  await page.save();
+  await recordRevision(
+    {
+      _id: page._id,
+      version: page.version,
+      title: page.title,
+      summary: page.summary,
+      contentMd: page.contentMd,
+    },
+    'user',
+  );
+  await embedPageQueue.add(
+    'embed',
+    { pageId: page._id.toString(), userId: userId.toString() },
+    { removeOnComplete: 200, removeOnFail: 200, attempts: 3 },
+  );
+  res.json(page);
+});
+
+pagesRouter.delete('/:id', async (req, res) => {
+  const userId = new Types.ObjectId((req as AuthedRequest).userId);
+  await Page.deleteOne({ _id: req.params.id, userId });
+  await PageRevision.deleteMany({ pageId: req.params.id });
+  res.json({ ok: true });
+});
+
+pagesRouter.get('/:id/revisions', async (req, res) => {
+  const userId = new Types.ObjectId((req as AuthedRequest).userId);
+  const page = await Page.findOne({ _id: req.params.id, userId }).select('_id').lean();
+  if (!page) {
+    res.status(404).json({ error: 'not_found', message: 'Page not found' });
+    return;
+  }
+  const revisions = await PageRevision.find({ pageId: page._id }).sort({ version: -1 }).lean();
+  res.json({ revisions });
+});
+
+pagesRouter.post('/:id/revisions/:version/restore', async (req, res) => {
+  const userId = new Types.ObjectId((req as AuthedRequest).userId);
+  const page = await Page.findOne({ _id: req.params.id, userId });
+  if (!page) {
+    res.status(404).json({ error: 'not_found', message: 'Page not found' });
+    return;
+  }
+  const rev = await PageRevision.findOne({
+    pageId: page._id,
+    version: Number(req.params.version),
+  });
+  if (!rev) {
+    res.status(404).json({ error: 'not_found', message: 'Revision not found' });
+    return;
+  }
+  page.title = rev.title ?? page.title;
+  page.summary = rev.summary ?? page.summary;
+  page.contentMd = rev.contentMd ?? page.contentMd;
+  page.version += 1;
+  await page.save();
+  await recordRevision(
+    {
+      _id: page._id,
+      version: page.version,
+      title: page.title,
+      summary: page.summary,
+      contentMd: page.contentMd,
+    },
+    'user',
+  );
+  res.json(page);
+});
