@@ -2,6 +2,9 @@ import type { NextFunction, Request, Response } from 'express';
 import jwt from 'jsonwebtoken';
 import { env } from '../lib/env.js';
 
+/** Stash type. The `userId` is set by `requireAuth` and read via `userIdOf`. */
+type WithUser = { userId?: string };
+
 /** Request guaranteed to carry `userId` after `requireAuth`. */
 export type AuthedRequest = Request & { userId: string };
 
@@ -14,7 +17,7 @@ export function requireAuth(req: Request, res: Response, next: NextFunction): vo
   }
   try {
     const payload = jwt.verify(token, env.JWT_SECRET) as { sub: string };
-    req.userId = payload.sub;
+    (req as Request & WithUser).userId = payload.sub;
     next();
   } catch {
     res.status(401).json({ error: 'unauthorized', message: 'Invalid or expired token' });
@@ -23,8 +26,9 @@ export function requireAuth(req: Request, res: Response, next: NextFunction): vo
 
 /** Helper for handlers mounted behind requireAuth — throws if misused. */
 export function userIdOf(req: Request): string {
-  if (!req.userId) throw new Error('userIdOf called without requireAuth');
-  return req.userId;
+  const u = (req as Request & WithUser).userId;
+  if (!u) throw new Error('userIdOf called without requireAuth');
+  return u;
 }
 
 export function signAccessToken(userId: string): string {
