@@ -82,6 +82,21 @@ export async function createServer(): Promise<Express> {
 
 async function bootstrap() {
   const app = await createServer();
+
+  // Reconcile system instruction templates for existing users on every boot,
+  // so seed-prompt improvements propagate without manual migration.
+  try {
+    const { User } = await import('@rose/db');
+    const { seedSystemInstructionsForUser } = await import('./services/instructions.js');
+    const users = await User.find({}).select('_id').lean();
+    for (const u of users) {
+      await seedSystemInstructionsForUser(u._id);
+    }
+    if (users.length) logger.info({ users: users.length }, 'reconciled seed instructions');
+  } catch (err) {
+    logger.warn({ err }, 'seed reconcile failed');
+  }
+
   const server = app.listen(env.PORT, () => {
     logger.info({ port: env.PORT }, 'rose api listening');
   });

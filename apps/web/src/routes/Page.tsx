@@ -5,11 +5,18 @@ import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Placeholder from '@tiptap/extension-placeholder';
 import TiptapLink from '@tiptap/extension-link';
-import { Save, History, Eye, Edit2, Trash2 } from 'lucide-react';
+import { Save, History, Eye, Edit2, Trash2, Mail, ExternalLink } from 'lucide-react';
 import toast from 'react-hot-toast';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useApi } from '../lib/api';
+
+type Citation = {
+  emailId: string;
+  subject: string;
+  from: string | null;
+  date: string | null;
+};
 
 type PageDoc = {
   _id: string;
@@ -20,6 +27,9 @@ type PageDoc = {
   tags: string[];
   version: number;
   updatedAt: string;
+  threadKey?: string | null;
+  citations?: Record<string, Citation>;
+  sourceEmailIds?: string[];
 };
 
 type Revision = {
@@ -202,11 +212,18 @@ export default function PageView() {
 
       <article className="card prose prose-rose max-w-none dark:prose-invert">
         {mode === 'view' ? (
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{page.contentMd}</ReactMarkdown>
+          <MarkdownWithCitations
+            md={page.contentMd}
+            citations={page.citations ?? {}}
+          />
         ) : (
           <EditorContent editor={editor} />
         )}
       </article>
+
+      {mode === 'view' && page.citations && Object.keys(page.citations).length > 0 && (
+        <SourcesSection citations={page.citations} />
+      )}
 
       {showRevisions && revisions && (
         <div className="card mt-6">
@@ -280,4 +297,156 @@ function htmlToMd(html: string): string {
     .replace(/&gt;/g, '>')
     .replace(/&amp;/g, '&')
     .trim();
+}
+
+const CITATION_RE = /\[((?:e\d+\s*,\s*)*e\d+)\]/g;
+
+/**
+ * Render markdown with `[e1]` / `[e1, e2]` citation tokens replaced by
+ * superscript footnote-style chips that link down to the Sources section.
+ *
+ * We hook ReactMarkdown's text renderer so plain text nodes inside paragraphs
+ * and list items get walked for citation tokens. The rest of the markdown
+ * (headings, lists, code, tables) goes through unchanged.
+ */
+function MarkdownWithCitations({
+  md,
+  citations,
+}: {
+  md: string;
+  citations: Record<string, Citation>;
+}) {
+  return (
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      components={{
+        // ReactMarkdown passes raw text strings to this hook. We split on the
+        // citation regex and emit a mix of plain text + JSX chips.
+        p: ({ children }) => <p>{transformChildren(children, citations)}</p>,
+        li: ({ children }) => <li>{transformChildren(children, citations)}</li>,
+      }}
+    >
+      {md}
+    </ReactMarkdown>
+  );
+}
+
+function transformChildren(
+  children: React.ReactNode,
+  citations: Record<string, Citation>,
+): React.ReactNode {
+  return Array.from(toArray(children)).flatMap((child, idx) => {
+    if (typeof child !== 'string') return [child];
+    const parts: React.ReactNode[] = [];
+    let lastIdx = 0;
+    for (const match of child.matchAll(CITATION_RE)) {
+      const start = match.index ?? 0;
+      if (start > lastIdx) parts.push(child.slice(lastIdx, start));
+      const labels = match[1]!.split(',').map((s) => s.trim()).filter((s) => /^e\d+$/.test(s));
+      parts.push(
+        <CitationChip key={`${idx}-${start}`} labels={labels} citations={citations} />,
+      );
+      lastIdx = start + match[0].length;
+    }
+    if (lastIdx < child.length) parts.push(child.slice(lastIdx));
+    return parts.length ? parts : [child];
+  });
+}
+
+function toArray(c: React.ReactNode): React.ReactNode[] {
+  return Array.isArray(c) ? c : [c];
+}
+
+function CitationChip({
+  labels,
+  citations,
+}: {
+  labels: string[];
+  citations: Record<string, Citation>;
+}) {
+  const resolved = labels.filter((l) => citations[l]);
+  if (resolved.length === 0) return <>[{labels.join(', ')}]</>;
+  const tooltip = resolved
+    .map((l) => {
+      const c = citations[l]!;
+      const date = c.date ? new Date(c.date).toLocaleDateString() : '';
+      return `[${l}] ${c.subject}${c.from ? ` — ${c.from}` : ''}${date ? ` (${date})` : ''}`;
+    })
+    .join('\n');
+  return (
+    <sup className="ml-0.5 inline-flex gap-0.5">
+      {resolved.map((l) => (
+        <a
+          key={l}
+          href={`#source-${l}`}
+          title={tooltip}
+          className="rounded bg-rose-100 px-1 text-[10px] font-semibold text-rose-700 no-underline hover:bg-rose-200 dark:bg-rose-950/50 dark:text-rose-300 dark:hover:bg-rose-900/60"
+          onClick={(e) => {
+            const target = document.getElementById(`source-${l}`);
+            if (target) {
+              e.preventDefault();
+              target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+              target.classList.add('ring-2', 'ring-rose-500');
+              setTimeout(() => target.classList.remove('ring-2', 'ring-rose-500'), 1500);
+            }
+          }}
+        >
+          {l}
+        </a>
+      ))}
+    </sup>
+  );
+}
+
+function SourcesSection({ citations }: { citations: Record<string, Citation> }) {
+  const labels = Object.keys(citations).sort((a, b) => {
+    const na = Number(a.slice(1));
+    const nb = Number(b.slice(1));
+    return na - nb;
+  });
+  return (
+    <section className="card mt-6">
+      <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold">
+        <Mail className="h-4 w-4 text-rose-500" />
+        Sources ({labels.length})
+      </h2>
+      <ol className="space-y-2 text-sm">
+        {labels.map((label) => {
+          const c = citations[label]!;
+          return (
+            <li
+              key={label}
+              id={`source-${label}`}
+              className="rounded-lg border border-ink-200 p-2 transition-colors dark:border-ink-800"
+            >
+              <div className="flex items-start gap-2">
+                <span className="rounded bg-rose-100 px-1.5 py-0.5 text-[10px] font-semibold text-rose-700 dark:bg-rose-950/50 dark:text-rose-300">
+                  {label}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="truncate font-medium">{c.subject || '(no subject)'}</div>
+                  <div className="text-xs text-ink-500">
+                    {c.from ?? 'unknown sender'}
+                    {c.date && (
+                      <>
+                        {' · '}
+                        {new Date(c.date).toLocaleString()}
+                      </>
+                    )}
+                  </div>
+                </div>
+                <Link
+                  to={`/inbox?email=${c.emailId}`}
+                  className="btn-ghost text-xs"
+                  title="Show source email"
+                >
+                  <ExternalLink className="h-3 w-3" />
+                </Link>
+              </div>
+            </li>
+          );
+        })}
+      </ol>
+    </section>
+  );
 }

@@ -2,6 +2,22 @@ import { z } from 'zod';
 
 export const Tag = z.string().min(1).max(40);
 
+/**
+ * One citation. The `label` is the stable token the LLM emits inline in
+ * markdown (e.g. `[e1]`); the resolver maps it back to the email it came
+ * from at save time so the UI can render footnote popovers.
+ */
+export const Citation = z.object({
+  emailId: z.string(),
+  subject: z.string().default(''),
+  from: z.string().nullable().default(null),
+  date: z.string().nullable().default(null),
+});
+export type Citation = z.infer<typeof Citation>;
+
+export const CitationMap = z.record(z.string(), Citation);
+export type CitationMap = z.infer<typeof CitationMap>;
+
 export const Page = z.object({
   id: z.string(),
   userId: z.string(),
@@ -13,6 +29,10 @@ export const Page = z.object({
   categoryId: z.string().nullable(),
   sourceEmailIds: z.array(z.string()).default([]),
   backlinks: z.array(z.string()).default([]),
+  /** Thread identifier (References/In-Reply-To/normalized subject). */
+  threadKey: z.string().nullable().default(null),
+  /** Inline citation map: label → email metadata. */
+  citations: CitationMap.default({}),
   version: z.number().int().nonnegative(),
   hasEmbedding: z.boolean().default(false),
   createdAt: z.string(),

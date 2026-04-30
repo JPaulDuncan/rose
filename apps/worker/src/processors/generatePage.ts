@@ -1,12 +1,12 @@
 import { Worker, type Job, Queue } from 'bullmq';
 import { Types } from 'mongoose';
-import { Email, Page, PageRevision, Instruction, Category } from '@rose/db';
+import { Email, Page, PageRevision, Instruction, Category, type EmailDoc } from '@rose/db';
 import {
   SYSTEM_PROMPT_BASE,
   extractJson,
   renderTemplate,
 } from '@rose/llm';
-import { PageGenerationDraft, slugify } from '@rose/shared';
+import { PageGenerationDraft, slugify, type CitationMap } from '@rose/shared';
 import { redis } from '../lib/redis.js';
 import { logger } from '../lib/logger.js';
 import { resolveProviderForUser } from '../lib/providers.js';
@@ -26,34 +26,97 @@ async function getInstructionTemplate(
   return system?.template ?? '';
 }
 
+/** Render emails to a labeled block the LLM can cite. */
+function renderLabeledEmails(emails: EmailDoc[]): string {
+  return emails
+    .map((e, i) => {
+      const label = `e${i + 1}`;
+      const from = e.from?.address ?? 'unknown';
+      const date = e.date ? new Date(e.date).toISOString() : '';
+      const subject = e.subject ?? '';
+      const body = (e.text || e.rawText || '').slice(0, 8000);
+      return `[${label}] From: ${from} | Date: ${date} | Subject: ${subject}\n"""\n${body}\n"""`;
+    })
+    .join('\n\n');
+}
+
+/** Extract `[e1]` or `[e1, e3]` tokens that the LLM actually emitted. */
+function extractCitedLabels(md: string): Set<string> {
+  const seen = new Set<string>();
+  for (const m of md.matchAll(/\[((?:e\d+\s*,\s*)*e\d+)\]/g)) {
+    for (const label of m[1]!.split(',')) {
+      const trimmed = label.trim();
+      if (/^e\d+$/.test(trimmed)) seen.add(trimmed);
+    }
+  }
+  return seen;
+}
+
 export function startGeneratePageWorker() {
   const worker = new Worker<GenerateJobData>(
     QUEUE,
     async (job: Job<GenerateJobData>) => {
       const userId = new Types.ObjectId(job.data.userId);
-      const email = await Email.findOne({ _id: job.data.emailId, userId });
-      if (!email) throw new Error('Email not found');
+      const triggerEmail = await Email.findOne({ _id: job.data.emailId, userId });
+      if (!triggerEmail) throw new Error('Email not found');
 
       await job.updateProgress({ type: 'started', jobId: String(job.id) });
 
       const generateTemplate = await getInstructionTemplate(userId, 'generate');
       if (!generateTemplate) throw new Error('No generation instruction available');
 
+      // Collect all emails in this thread (oldest first). If no threadKey,
+      // it's a thread-of-one — same code path keeps things simple.
+      const threadKey = triggerEmail.threadKey;
+      const threadEmails: EmailDoc[] = threadKey
+        ? ((await Email.find({ userId, threadKey })
+            .sort({ date: 1, createdAt: 1 })
+            .exec()) as unknown as EmailDoc[])
+        : [triggerEmail];
+
+      // Find an existing page already attached to this thread so we can
+      // update-in-place rather than create duplicates.
+      let existingPage = threadKey
+        ? await Page.findOne({ userId, threadKey })
+        : null;
+      // Backfill: pages predating thread-consolidation don't have threadKey;
+      // try to locate one whose sourceEmailIds includes any email in this thread.
+      if (!existingPage && threadKey) {
+        existingPage = await Page.findOne({
+          userId,
+          sourceEmailIds: { $in: threadEmails.map((e) => e._id) },
+        });
+        if (existingPage) {
+          existingPage.threadKey = threadKey;
+          await existingPage.save();
+        }
+      }
+
       const categories = await Category.find({ userId }).select('name').lean();
+      const labeledEmails = renderLabeledEmails(threadEmails);
       const prompt = renderTemplate(generateTemplate, {
-        email_subject: email.subject ?? '',
-        email_from: email.from?.address ?? '',
-        email_date: email.date ? new Date(email.date).toISOString() : '',
-        email_body: email.text ?? email.rawText ?? '',
+        labeled_emails: labeledEmails,
+        email_count: String(threadEmails.length),
         extra_instructions:
-          'Available categories: ' + (categories.map((c) => c.name).join(', ') || '(none)'),
+          'Available categories: ' +
+          (categories.map((c) => c.name).join(', ') || '(none)'),
       });
 
       const { provider, model: genModel, providerId } = await resolveProviderForUser(
         userId,
         'generation',
       );
-      logger.info({ providerId, model: genModel, emailId: String(email._id) }, 'generating');
+      logger.info(
+        {
+          providerId,
+          model: genModel,
+          emailId: String(triggerEmail._id),
+          threadKey,
+          threadSize: threadEmails.length,
+          mode: existingPage ? 'update' : 'create',
+        },
+        'generating',
+      );
 
       let buffered = '';
       for await (const chunk of provider.generateStream({
@@ -91,52 +154,96 @@ export function startGeneratePageWorker() {
         categoryId = cat._id as Types.ObjectId;
       }
 
-      const baseSlug = slugify(draft.title);
-      let slug = baseSlug;
-      let i = 1;
-      while (await Page.findOne({ userId, slug })) {
-        i += 1;
-        slug = `${baseSlug}-${i}`;
+      // Build citation map from labels actually cited in the markdown.
+      const usedLabels = extractCitedLabels(draft.contentMd);
+      const citations: CitationMap = {};
+      threadEmails.forEach((e, i) => {
+        const label = `e${i + 1}`;
+        if (!usedLabels.has(label)) return;
+        citations[label] = {
+          emailId: e._id.toString(),
+          subject: e.subject ?? '',
+          from: e.from?.name ?? e.from?.address ?? null,
+          date: e.date ? new Date(e.date).toISOString() : null,
+        };
+      });
+
+      let pageId: Types.ObjectId;
+      let slug: string;
+
+      if (existingPage) {
+        existingPage.title = draft.title;
+        existingPage.summary = draft.summary;
+        existingPage.contentMd = draft.contentMd;
+        existingPage.tags = draft.tags ?? [];
+        existingPage.categoryId = categoryId;
+        existingPage.sourceEmailIds = threadEmails.map((e) => e._id) as Types.ObjectId[];
+        existingPage.threadKey = threadKey;
+        existingPage.citations = citations;
+        existingPage.version = (existingPage.version ?? 1) + 1;
+        existingPage.markModified('citations');
+        await existingPage.save();
+        pageId = existingPage._id;
+        slug = existingPage.slug;
+        await PageRevision.create({
+          pageId,
+          version: existingPage.version,
+          title: draft.title,
+          summary: draft.summary,
+          contentMd: draft.contentMd,
+          editor: 'llm',
+        });
+      } else {
+        const baseSlug = slugify(draft.title);
+        slug = baseSlug;
+        let i = 1;
+        while (await Page.findOne({ userId, slug })) {
+          i += 1;
+          slug = `${baseSlug}-${i}`;
+        }
+        const created = await Page.create({
+          userId,
+          slug,
+          title: draft.title,
+          summary: draft.summary,
+          contentMd: draft.contentMd,
+          tags: draft.tags ?? [],
+          categoryId,
+          sourceEmailIds: threadEmails.map((e) => e._id),
+          threadKey,
+          citations,
+          version: 1,
+        });
+        pageId = created._id;
+        await PageRevision.create({
+          pageId,
+          version: 1,
+          title: created.title,
+          summary: created.summary,
+          contentMd: created.contentMd,
+          editor: 'llm',
+        });
       }
 
-      const page = await Page.create({
-        userId,
-        slug,
-        title: draft.title,
-        summary: draft.summary,
-        contentMd: draft.contentMd,
-        tags: draft.tags ?? [],
-        categoryId,
-        sourceEmailIds: [email._id],
-        version: 1,
-      });
-
-      await PageRevision.create({
-        pageId: page._id,
-        version: 1,
-        title: page.title,
-        summary: page.summary,
-        contentMd: page.contentMd,
-        editor: 'llm',
-      });
-
-      email.ingestStatus = 'generated';
-      email.pageId = page._id as Types.ObjectId;
-      await email.save();
+      // Mark every email in the thread as generated and pointing at this page.
+      await Email.updateMany(
+        { _id: { $in: threadEmails.map((e) => e._id) } },
+        { $set: { ingestStatus: 'generated', pageId } },
+      );
 
       await embedQueue.add(
         'embed',
-        { pageId: page._id.toString() },
+        { pageId: pageId.toString() },
         { attempts: 3, removeOnComplete: 200, removeOnFail: 200 },
       );
 
       await job.updateProgress({
         type: 'completed',
         jobId: String(job.id),
-        pageId: page._id.toString(),
+        pageId: pageId.toString(),
       });
 
-      return { pageId: page._id.toString(), slug: page.slug };
+      return { pageId: pageId.toString(), slug };
     },
     { connection: redis, concurrency: 2 },
   );
