@@ -34,7 +34,9 @@ services:
     volumes:
       - ollama_data:/root/.ollama
     ports:
-      - "11434:11434"
+      # Host 11444 → container 11434, to avoid colliding with other local
+      # Ollama instances. In-network calls still use http://ollama:11434.
+      - "11444:11434"
     # Uncomment to enable GPU on a CUDA host:
     # deploy:
     #   resources:
