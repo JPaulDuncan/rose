@@ -329,6 +329,33 @@ function ImapForm({
         {mode === 'create' ? 'Connect a mailbox via IMAP' : `Edit "${initial.name}"`}
       </h3>
 
+      {/^imap\.(gmail|googlemail)\.com$/i.test(values.host) && (
+        <div className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-900 dark:border-rose-900/60 dark:bg-rose-950/30 dark:text-rose-100">
+          <p className="font-medium">Gmail setup</p>
+          <ol className="mt-1 list-decimal pl-4 text-[11px] leading-5">
+            <li>
+              Enable 2-Step Verification on your Google account if you haven't already.
+            </li>
+            <li>
+              Generate an App Password at{' '}
+              <a
+                href="https://myaccount.google.com/apppasswords"
+                target="_blank"
+                rel="noreferrer"
+                className="font-medium underline hover:no-underline"
+              >
+                myaccount.google.com/apppasswords
+              </a>
+              . Use that 16-character value below — your normal Google password
+              will be rejected.
+            </li>
+            <li>
+              Confirm IMAP is enabled in Gmail → Settings → Forwarding and POP/IMAP.
+            </li>
+          </ol>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <Field label="Display name" hint="Shown in the sidebar and inbox.">
           <input
@@ -376,7 +403,20 @@ function ImapForm({
         </Field>
         <Field
           label={mode === 'edit' ? 'Password (leave blank to keep)' : 'Password / app password'}
-          hint="For Gmail this is an app password, not your account password."
+          hint={
+            <>
+              For Gmail this must be an{' '}
+              <a
+                href="https://myaccount.google.com/apppasswords"
+                target="_blank"
+                rel="noreferrer"
+                className="text-rose-600 underline hover:text-rose-700"
+              >
+                App Password
+              </a>
+              {' '}— your normal account password will fail.
+            </>
+          }
         >
           <input
             className="input"
@@ -461,7 +501,7 @@ function Field({
   children,
 }: {
   label: string;
-  hint?: string;
+  hint?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (

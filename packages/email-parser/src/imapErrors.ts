@@ -30,7 +30,7 @@ export function formatImapError(err: unknown, host?: string): string {
 
   if (isGmail && isAuthFail) {
     parts.push(
-      'Hint: Gmail requires an App Password (Account → Security → 2-Step Verification → App passwords) — your regular password will always fail. Also confirm IMAP is enabled in Gmail settings.',
+      'Hint: Gmail requires an App Password — generate one at https://myaccount.google.com/apppasswords (2-Step Verification must be on). Your regular Google password will always fail. Also confirm IMAP is enabled in Gmail → Settings → Forwarding and POP/IMAP.',
     );
   }
 
