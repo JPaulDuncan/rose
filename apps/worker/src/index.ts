@@ -4,7 +4,6 @@ import { startGeneratePageWorker } from './processors/generatePage.js';
 import { startEmbedPageWorker } from './processors/embedPage.js';
 import { startImapSyncWorker } from './processors/imapSync.js';
 import { startGmailSyncWorker } from './processors/gmailSync.js';
-import { startEmbedBridge } from './processors/embedAfterGenerate.js';
 
 async function bootstrap() {
   await connectMongo();
@@ -12,7 +11,6 @@ async function bootstrap() {
   startEmbedPageWorker();
   startImapSyncWorker();
   startGmailSyncWorker();
-  startEmbedBridge();
   logger.info('rose worker started');
 }
 

@@ -4,14 +4,14 @@ RUN corepack enable
 WORKDIR /repo
 
 FROM base AS deps
-COPY pnpm-workspace.yaml package.json turbo.json ./
+COPY pnpm-workspace.yaml package.json pnpm-lock.yaml turbo.json ./
 COPY packages/config/package.json ./packages/config/
 COPY packages/shared/package.json ./packages/shared/
 COPY packages/db/package.json ./packages/db/
 COPY packages/email-parser/package.json ./packages/email-parser/
 COPY packages/llm/package.json ./packages/llm/
 COPY apps/worker/package.json ./apps/worker/
-RUN pnpm install --frozen-lockfile=false
+RUN pnpm install --frozen-lockfile
 
 FROM deps AS build
 COPY packages ./packages

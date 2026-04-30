@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
-import { Upload, FileText, X } from 'lucide-react';
+import { Upload, FileText } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useApi } from '../lib/api';
 import { useAuth } from '../lib/auth';
@@ -15,6 +15,7 @@ type EmailRow = {
   date?: string;
   ingestStatus: string;
   pageId?: string;
+  pageSlug?: string | null;
   createdAt: string;
 };
 
@@ -107,11 +108,8 @@ export default function InboxPage() {
                 </div>
               </div>
               <span className={statusClass(e.ingestStatus)}>{e.ingestStatus}</span>
-              {e.pageId && (
-                <Link
-                  to={`/p/${(e as unknown as { pageId: string }).pageId}`}
-                  className="btn-ghost text-xs"
-                >
+              {e.pageSlug && (
+                <Link to={`/p/${e.pageSlug}`} className="btn-ghost text-xs">
                   View page
                 </Link>
               )}
@@ -139,4 +137,3 @@ function statusClass(s: string): string {
   return base;
 }
 
-export { X };

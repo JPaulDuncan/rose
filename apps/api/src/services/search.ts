@@ -74,13 +74,28 @@ export async function searchPages(
     req.mode === 'text'
       ? Promise.resolve([] as Array<Hit>)
       : (async () => {
+          // Hard timeout so a slow Ollama doesn't block hybrid search.
+          const ctrl = new AbortController();
+          const timer = setTimeout(() => ctrl.abort(), 4000);
           let qVec: number[];
           try {
-            qVec = await ollama.embed(env.DEFAULT_EMBEDDING_MODEL, req.q);
+            const tempClient = new OllamaClient({
+              baseUrl: env.OLLAMA_URL,
+              signal: ctrl.signal,
+            });
+            qVec = await tempClient.embed(env.DEFAULT_EMBEDDING_MODEL, req.q);
           } catch {
             return [];
+          } finally {
+            clearTimeout(timer);
           }
-          const candidates = await Page.find({ ...filter, embedding: { $ne: null } })
+          // Only compare vectors produced by the same model — different
+          // embedding spaces are not commensurable.
+          const candidates = await Page.find({
+            ...filter,
+            embedding: { $ne: null },
+            embeddingModel: env.DEFAULT_EMBEDDING_MODEL,
+          })
             .select('+embedding')
             .lean();
           const scored = candidates

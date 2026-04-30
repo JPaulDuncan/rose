@@ -38,6 +38,7 @@ export function startImapSyncWorker() {
           const uids = (await client.search({ since })) as number[];
           for (const uid of uids.slice(-50)) {
             const msg = await client.fetchOne(String(uid), { source: true });
+            if (!msg) continue;
             const buf = msg.source as Buffer | undefined;
             if (!buf) continue;
             const cleaned = await parseEmail(buf);

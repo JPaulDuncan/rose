@@ -2,7 +2,7 @@ import { Router } from 'express';
 import multer from 'multer';
 import { Types } from 'mongoose';
 import { userIdOf } from '../middleware/auth.js';
-import { Email } from '@rose/db';
+import { Email, Page } from '@rose/db';
 import { ingestRawEmail } from '../services/ingest.js';
 
 export const emailsRouter: Router = Router();
@@ -43,7 +43,22 @@ emailsRouter.get('/', async (req, res) => {
     .limit(limit)
     .select('-rawText -html -attachments')
     .lean();
-  res.json({ emails });
+
+  const pageIds = emails
+    .map((e) => e.pageId)
+    .filter((id): id is Types.ObjectId => !!id);
+  const slugMap = new Map<string, string>();
+  if (pageIds.length) {
+    const pages = await Page.find({ _id: { $in: pageIds }, userId })
+      .select('_id slug')
+      .lean();
+    for (const p of pages) slugMap.set(String(p._id), p.slug);
+  }
+  const enriched = emails.map((e) => ({
+    ...e,
+    pageSlug: e.pageId ? slugMap.get(String(e.pageId)) ?? null : null,
+  }));
+  res.json({ emails: enriched });
 });
 
 emailsRouter.get('/:id', async (req, res) => {

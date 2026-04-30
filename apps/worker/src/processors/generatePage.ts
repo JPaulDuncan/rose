@@ -1,4 +1,4 @@
-import { Worker, type Job } from 'bullmq';
+import { Worker, type Job, Queue } from 'bullmq';
 import { Types } from 'mongoose';
 import { Email, Page, PageRevision, Instruction, Category } from '@rose/db';
 import {
@@ -14,6 +14,7 @@ import { logger } from '../lib/logger.js';
 
 const QUEUE = 'rose.generate-page';
 const ollama = new OllamaClient({ baseUrl: env.OLLAMA_URL });
+const embedQueue = new Queue('rose.embed-page', { connection: redis });
 
 type GenerateJobData = { emailId: string; userId: string };
 
@@ -118,6 +119,12 @@ export function startGeneratePageWorker() {
       email.ingestStatus = 'generated';
       email.pageId = page._id as Types.ObjectId;
       await email.save();
+
+      await embedQueue.add(
+        'embed',
+        { pageId: page._id.toString() },
+        { attempts: 3, removeOnComplete: 200, removeOnFail: 200 },
+      );
 
       await job.updateProgress({
         type: 'completed',

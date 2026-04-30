@@ -4,11 +4,11 @@ RUN corepack enable
 WORKDIR /repo
 
 FROM base AS build
-COPY pnpm-workspace.yaml package.json turbo.json ./
+COPY pnpm-workspace.yaml package.json pnpm-lock.yaml turbo.json ./
 COPY packages/config ./packages/config
 COPY packages/shared ./packages/shared
 COPY apps/web ./apps/web
-RUN pnpm install --frozen-lockfile=false \
+RUN pnpm install --frozen-lockfile \
  && pnpm --filter @rose/shared build \
  && pnpm --filter @rose/web build
 

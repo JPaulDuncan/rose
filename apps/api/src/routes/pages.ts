@@ -132,5 +132,10 @@ pagesRouter.post('/:id/revisions/:version/restore', async (req, res) => {
     },
     'user',
   );
+  await embedPageQueue.add(
+    'embed',
+    { pageId: page._id.toString() },
+    { removeOnComplete: 200, removeOnFail: 200, attempts: 3 },
+  );
   res.json(page);
 });
