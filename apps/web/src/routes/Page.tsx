@@ -30,6 +30,7 @@ type PageDoc = {
   threadKey?: string | null;
   threadKeys?: string[];
   senderAddresses?: string[];
+  subjectTemplates?: string[];
   groupingMode?: 'thread' | 'source-topic' | 'manual';
   citations?: Record<string, Citation>;
   sourceEmailIds?: string[];
@@ -460,25 +461,54 @@ function Attribution({ page }: { page: PageDoc }) {
   const senders = page.senderAddresses ?? [];
   const threadCount = page.threadKeys?.length ?? 0;
   const emailCount = page.sourceEmailIds?.length ?? 0;
+  const templateCount = page.subjectTemplates?.length ?? 0;
+  const isStream = templateCount > 0 && emailCount >= 3 && templateCount <= 2;
   const mode = page.groupingMode ?? 'thread';
-  const modeLabel =
-    mode === 'thread'
+  const modeLabel = isStream
+    ? 'Notification stream'
+    : mode === 'thread'
       ? 'Grouped by thread'
       : mode === 'source-topic'
         ? 'Grouped by sender + topic'
         : 'Manually edited';
 
+  // Pull the first/last citation date as a cheap "from … to …" range.
+  const citations = Object.values(page.citations ?? {});
+  const dates = citations
+    .map((c) => (c.date ? new Date(c.date) : null))
+    .filter((d): d is Date => !!d);
+  let dateRange = '';
+  if (dates.length) {
+    const lo = new Date(Math.min(...dates.map((d) => d.getTime())));
+    const hi = new Date(Math.max(...dates.map((d) => d.getTime())));
+    const fmt = (d: Date) => d.toLocaleDateString();
+    dateRange = fmt(lo) === fmt(hi) ? fmt(lo) : `${fmt(lo)} → ${fmt(hi)}`;
+  }
+
   if (senders.length === 0 && emailCount === 0) return null;
 
   return (
     <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-ink-200 bg-ink-50 px-3 py-2 text-xs dark:border-ink-800 dark:bg-ink-900">
-      <span className="font-medium text-ink-600 dark:text-ink-300">{modeLabel}</span>
+      <span
+        className={
+          isStream
+            ? 'rounded bg-rose-100 px-1.5 py-0.5 font-medium text-rose-700 dark:bg-rose-950/50 dark:text-rose-300'
+            : 'font-medium text-ink-600 dark:text-ink-300'
+        }
+      >
+        {modeLabel}
+      </span>
       {emailCount > 0 && (
         <span className="text-ink-500">
-          · {emailCount} message{emailCount === 1 ? '' : 's'} across {threadCount}{' '}
-          thread{threadCount === 1 ? '' : 's'}
+          · {emailCount} message{emailCount === 1 ? '' : 's'}
+          {threadCount > 0 && (
+            <>
+              {' '}across {threadCount} thread{threadCount === 1 ? '' : 's'}
+            </>
+          )}
         </span>
       )}
+      {dateRange && <span className="text-ink-500">· {dateRange}</span>}
       {senders.length > 0 && (
         <span className="flex flex-wrap items-center gap-1 text-ink-500">
           · From{' '}
@@ -492,6 +522,9 @@ function Attribution({ page }: { page: PageDoc }) {
           ))}
           {senders.length > 3 && <span>+{senders.length - 3} more</span>}
         </span>
+      )}
+      {(page.version ?? 1) > 1 && (
+        <span className="text-ink-500">· updated {page.version} times</span>
       )}
     </div>
   );

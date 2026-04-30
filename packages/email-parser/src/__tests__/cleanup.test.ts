@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { cleanBody } from '../index.js';
+import { cleanBody, extractSubjectTemplate } from '../index.js';
 
 describe('cleanBody', () => {
   it('strips quoted reply lines', () => {
@@ -22,5 +22,31 @@ describe('cleanBody', () => {
     const out = cleanBody(input);
     expect(out).toContain('Reply text');
     expect(out).not.toContain('old stuff');
+  });
+});
+
+describe('extractSubjectTemplate', () => {
+  it('collapses build numbers and SHAs to placeholders', () => {
+    const a = extractSubjectTemplate('CI / build #1234 — Failed for a1b2c3d4e5f6');
+    const b = extractSubjectTemplate('CI / build #5678 — Failed for fedcba987654');
+    expect(a).toBe(b);
+  });
+
+  it('strips Re: / Fwd: prefixes', () => {
+    expect(extractSubjectTemplate('Re: Hello')).toBe(extractSubjectTemplate('Hello'));
+    expect(extractSubjectTemplate('FWD: Daily digest')).toBe(
+      extractSubjectTemplate('Daily digest'),
+    );
+  });
+
+  it('replaces dates and money', () => {
+    const a = extractSubjectTemplate('Receipt $42.50 on 2026-04-30');
+    const b = extractSubjectTemplate('Receipt $99.00 on 2026-05-01');
+    expect(a).toBe(b);
+  });
+
+  it('returns null for empty input', () => {
+    expect(extractSubjectTemplate(null)).toBeNull();
+    expect(extractSubjectTemplate('')).toBeNull();
   });
 });

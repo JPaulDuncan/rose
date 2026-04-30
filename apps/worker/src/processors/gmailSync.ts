@@ -66,6 +66,7 @@ export function startGmailSyncWorker() {
           sourceId: source._id,
           messageId: cleaned.messageId,
           threadKey: cleaned.threadKey,
+          subjectTemplate: cleaned.subjectTemplate,
           rawHash: cleaned.rawHash,
           from: cleaned.from,
           to: cleaned.to,

@@ -22,6 +22,8 @@ const emailSchema = new Schema(
     sourceId: { type: Schema.Types.ObjectId, ref: 'Source', default: null },
     messageId: { type: String, default: null },
     threadKey: { type: String, default: null, index: true },
+    /** Normalized subject shape for grouping templated notifications. */
+    subjectTemplate: { type: String, default: null, index: true },
     rawHash: { type: String, required: true, index: true },
     from: { type: addressSchema, default: null },
     to: { type: [addressSchema], default: [] },

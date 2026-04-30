@@ -122,6 +122,68 @@ function describeSenders(emails: EmailDoc[]): string {
   return `Senders contributing to this page: ${top}${more}.`;
 }
 
+const PROMPT_EMAIL_LIMIT = 12;
+
+/**
+ * For high-volume notification streams (e.g. 100 GH Actions failure emails)
+ * we don't want to send every body to the LLM — context cost balloons and
+ * the model produces a per-message log instead of a synthesis. Take the
+ * newest N and roll the rest into a metadata summary.
+ */
+function selectEmailsForPrompt(
+  emails: EmailDoc[],
+): { selected: EmailDoc[]; elidedSummary: string } {
+  if (emails.length <= PROMPT_EMAIL_LIMIT) return { selected: emails, elidedSummary: '' };
+  const sorted = [...emails].sort((a, b) => {
+    const da = a.date ? new Date(a.date).getTime() : 0;
+    const db = b.date ? new Date(b.date).getTime() : 0;
+    return db - da;
+  });
+  const selected = sorted.slice(0, PROMPT_EMAIL_LIMIT).reverse(); // chronological
+  const elided = sorted.slice(PROMPT_EMAIL_LIMIT);
+  const dates = elided
+    .map((e) => (e.date ? new Date(e.date) : null))
+    .filter((d): d is Date => !!d);
+  const range =
+    dates.length > 0
+      ? `${new Date(Math.min(...dates.map((d) => d.getTime()))).toISOString().slice(0, 10)} → ${new Date(Math.max(...dates.map((d) => d.getTime()))).toISOString().slice(0, 10)}`
+      : 'unknown range';
+  return {
+    selected,
+    elidedSummary: `${elided.length} additional similar messages omitted from this prompt for brevity (date range: ${range}). Acknowledge their existence in the summary and counts; do not invent details about them.`,
+  };
+}
+
+/** True when most of the page's emails share the same subject template. */
+function isNotificationStream(emails: EmailDoc[]): {
+  yes: boolean;
+  template: string | null;
+  ratio: number;
+} {
+  if (emails.length < 3) return { yes: false, template: null, ratio: 0 };
+  const counts = new Map<string, number>();
+  for (const e of emails) {
+    const t = e.subjectTemplate;
+    if (!t) continue;
+    counts.set(t, (counts.get(t) ?? 0) + 1);
+  }
+  if (!counts.size) return { yes: false, template: null, ratio: 0 };
+  const [topTemplate, topCount] = [...counts.entries()].sort((a, b) => b[1] - a[1])[0]!;
+  const ratio = topCount / emails.length;
+  return { yes: ratio >= 0.7, template: topTemplate, ratio };
+}
+
+function dateRangeOf(emails: EmailDoc[]): string {
+  const ds = emails
+    .map((e) => (e.date ? new Date(e.date) : null))
+    .filter((d): d is Date => !!d);
+  if (!ds.length) return '';
+  const lo = new Date(Math.min(...ds.map((d) => d.getTime())));
+  const hi = new Date(Math.max(...ds.map((d) => d.getTime())));
+  const fmt = (d: Date) => d.toISOString().slice(0, 10);
+  return fmt(lo) === fmt(hi) ? fmt(lo) : `${fmt(lo)} → ${fmt(hi)}`;
+}
+
 export function startGeneratePageWorker() {
   const worker = new Worker<GenerateJobData>(
     QUEUE,
@@ -171,10 +233,16 @@ export function startGeneratePageWorker() {
       if (!generateTemplate) throw new Error('No generation instruction available');
 
       const categories = await Category.find({ userId }).select('name').lean();
-      const { text: labeledThreads, labels } = renderLabeledThreads(pageEmails);
+      const stream = isNotificationStream(pageEmails);
+      const { selected: promptEmails, elidedSummary } = selectEmailsForPrompt(pageEmails);
+      const { text: labeledThreads, labels } = renderLabeledThreads(promptEmails);
       const distinctThreadKeys = new Set(
         pageEmails.map((e) => e.threadKey ?? `__loose:${String(e._id)}`),
       );
+      const streamGuidance = stream.yes
+        ? `\nNOTIFICATION STREAM DETECTED: ${Math.round(stream.ratio * 100)}% of these messages share the same subject template. Treat this page as a long-running notification stream — write a stable, dashboard-style summary instead of a per-message description. Required H2 sections: "Overview" (what this stream is and how often it fires), "Recent Activity" (a tight bullet list of the most recent occurrences with timestamp + the one-line distinguishing detail per item — citing each), and "Patterns" (any common themes you observe across instances). Do NOT enumerate every message individually.`
+        : '';
+      const elidedNote = elidedSummary ? `\nNOTE: ${elidedSummary}` : '';
       const prompt = renderTemplate(generateTemplate, {
         labeled_threads: labeledThreads,
         thread_count: String(distinctThreadKeys.size),
@@ -182,7 +250,9 @@ export function startGeneratePageWorker() {
         sender_summary: describeSenders(pageEmails),
         extra_instructions:
           'Available categories: ' +
-          (categories.map((c) => c.name).join(', ') || '(none)'),
+          (categories.map((c) => c.name).join(', ') || '(none)') +
+          streamGuidance +
+          elidedNote,
       });
 
       const { provider, model: genModel, providerId } = await resolveProviderForUser(
@@ -258,6 +328,11 @@ export function startGeneratePageWorker() {
             .filter((a): a is string => !!a),
         ),
       ];
+      const subjectTemplates = [
+        ...new Set(
+          pageEmails.map((e) => e.subjectTemplate).filter((s): s is string => !!s),
+        ),
+      ];
       const sourceEmailIds = pageEmails.map((e) => e._id) as Types.ObjectId[];
 
       let pageId: Types.ObjectId;
@@ -273,7 +348,13 @@ export function startGeneratePageWorker() {
         page.sourceEmailIds = sourceEmailIds;
         page.threadKeys = threadKeys;
         page.senderAddresses = senderAddresses;
-        page.groupingMode = assignment.mode === 'thread' ? 'thread' : 'source-topic';
+        page.subjectTemplates = subjectTemplates;
+        page.groupingMode =
+          assignment.mode === 'thread'
+            ? 'thread'
+            : assignment.mode === 'source-template'
+              ? 'source-topic'
+              : 'source-topic';
         page.citations = citations;
         page.markModified('citations');
         page.version = (page.version ?? 1) + 1;
@@ -308,6 +389,7 @@ export function startGeneratePageWorker() {
           sourceEmailIds,
           threadKeys,
           senderAddresses,
+          subjectTemplates,
           groupingMode: triggerEmail.threadKey ? 'thread' : 'source-topic',
           citations,
           version: 1,

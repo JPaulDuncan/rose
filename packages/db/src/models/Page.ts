@@ -20,6 +20,13 @@ const pageSchema = new Schema(
     /** Canonical sender addresses contributing to this page (lowercased). */
     senderAddresses: { type: [String], default: [], index: true },
     /**
+     * Subject templates (output of `extractSubjectTemplate`) of the
+     * messages on this page. Templated notifications from the same sender
+     * (CI failures, receipts, daily digests) collapse onto one page via
+     * an exact subjectTemplate hit before any embedding-based path runs.
+     */
+    subjectTemplates: { type: [String], default: [], index: true },
+    /**
      * Why this email landed on this page, recorded for transparency in the UI.
      * `thread` = matched an existing threadKey
      * `source-topic` = matched on sender + cosine similarity above threshold

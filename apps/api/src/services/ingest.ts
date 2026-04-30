@@ -31,6 +31,7 @@ export async function ingestRawEmail(input: IngestInput): Promise<IngestResult> 
     sourceId: input.sourceId ?? null,
     messageId: cleaned.messageId,
     threadKey: cleaned.threadKey,
+    subjectTemplate: cleaned.subjectTemplate,
     rawHash: cleaned.rawHash,
     from: cleaned.from,
     to: cleaned.to,

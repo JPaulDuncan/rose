@@ -6,6 +6,13 @@ export { formatImapError } from './imapErrors.js';
 export type CleanedEmail = {
   messageId: string | null;
   threadKey: string | null;
+  /**
+   * Normalized "shape" of the subject — variable parts (numbers, hex IDs,
+   * dates, URLs, version strings) are replaced with placeholders so two
+   * GitHub Actions failure emails or two Stripe receipts collapse to the
+   * same template even though their actual subjects differ.
+   */
+  subjectTemplate: string | null;
   from: { name?: string; address: string } | null;
   to: { name?: string; address: string }[];
   cc: { name?: string; address: string }[];
@@ -66,6 +73,34 @@ function pickAddresses(addr: AddressObject | AddressObject[] | undefined) {
   );
 }
 
+/**
+ * Strip variable parts of a subject so templated notifications collapse
+ * to the same key. Examples:
+ *   "CI / build #1234 — Failed for main"  → "ci / build <n> — failed for main"
+ *   "Run failed: foo/bar@a1b2c3d"          → "run failed: foo/bar@<hex>"
+ *   "Stripe receipt for $42.50 (May 2026)" → "stripe receipt for <money> (<month> <n>)"
+ */
+export function extractSubjectTemplate(subject: string | null | undefined): string | null {
+  if (!subject) return null;
+  const out = subject
+    .toLowerCase()
+    .replace(/^(re|fwd?):\s*/i, '')
+    .replace(/\bhttps?:\/\/\S+/g, '<url>')
+    .replace(
+      /\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)(?:[a-z]*)\b/g,
+      '<month>',
+    )
+    .replace(/\b\d{4}-\d{2}-\d{2}(?:t\d{2}:\d{2}(?::\d{2})?z?)?\b/g, '<date>')
+    .replace(/\$\d+(?:\.\d+)?/g, '<money>')
+    .replace(/\b\d+(?:\.\d+){2,}\b/g, '<v>')
+    .replace(/\b[a-f0-9]{6,}\b/g, '<hex>')
+    .replace(/#?\d+/g, '<n>')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 200);
+  return out || null;
+}
+
 function deriveThreadKey(parsed: ParsedMail): string | null {
   const refs = parsed.references;
   if (refs) {
@@ -92,6 +127,7 @@ export async function parseEmail(raw: Buffer | string): Promise<CleanedEmail> {
   return {
     messageId: parsed.messageId ? parsed.messageId.replace(/[<>]/g, '') : null,
     threadKey: deriveThreadKey(parsed),
+    subjectTemplate: extractSubjectTemplate(parsed.subject),
     from: fromAddrs[0] ?? null,
     to: toAddrs,
     cc: ccAddrs,

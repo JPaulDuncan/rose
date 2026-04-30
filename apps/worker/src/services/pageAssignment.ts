@@ -3,13 +3,32 @@ import { Email, Page, type EmailDoc, type PageDoc } from '@rose/db';
 import { resolveProviderForUser } from '../lib/providers.js';
 import { logger } from '../lib/logger.js';
 
-export type AssignmentMode = 'thread' | 'source-topic' | 'new';
+export type AssignmentMode = 'thread' | 'source-template' | 'source-topic' | 'new';
 export type Assignment =
   | { mode: 'thread'; page: PageDoc }
+  | { mode: 'source-template'; page: PageDoc }
   | { mode: 'source-topic'; page: PageDoc; similarity: number }
   | { mode: 'new'; page: null };
 
+/** Default cosine threshold for source+topic clustering. */
 const SOURCE_TOPIC_THRESHOLD = 0.78;
+/** Lower threshold for "automated" senders whose templated content
+ *  has lower variance and benefits from looser matching. */
+const AUTOMATED_TOPIC_THRESHOLD = 0.65;
+
+/**
+ * Senders that are clearly automated notification streams. We match against
+ * the local part of the address — `noreply@`, `notifications@`, `ci@`,
+ * `actions@`, `alerts@`, etc.
+ */
+const AUTOMATED_LOCAL_RE =
+  /^(no[-]?reply|noreply|notifications?|alerts?|reports?|ci|actions?|builds?|status|info|updates?|digest|newsletter|receipts?|billing|invoice|monitor|notify|mailer|hello|team)/i;
+
+export function isAutomatedSender(addr: string | undefined | null): boolean {
+  if (!addr) return false;
+  const local = addr.split('@')[0] ?? '';
+  return AUTOMATED_LOCAL_RE.test(local);
+}
 
 function cosine(a: number[], b: number[]): number {
   if (!a.length || a.length !== b.length) return 0;
@@ -27,7 +46,7 @@ function cosine(a: number[], b: number[]): number {
 /**
  * Cache an embedding on the email document so retries don't re-pay for it.
  * Returns the vector + model tag, or null if the user has no embedding
- * provider configured (in which case we can still group by thread+sender).
+ * provider configured.
  */
 export async function ensureEmailEmbedding(
   email: EmailDoc,
@@ -45,19 +64,25 @@ export async function ensureEmailEmbedding(
     await email.save();
     return { vec, model: email.embeddingModel };
   } catch (err) {
-    logger.warn({ err, emailId: String(email._id) }, 'email embed failed (assignment will fall back to thread+sender)');
+    logger.warn(
+      { err, emailId: String(email._id) },
+      'email embed failed (assignment will fall back to thread/template/sender)',
+    );
     return null;
   }
 }
 
 /**
- * Decide which Page a freshly-arrived email belongs to. The order is:
- *   1. Same threadKey as any existing page → that page (no LLM call needed).
- *   2. Same sender as an existing page AND topic centroid similarity ≥
- *      threshold → that page.
- *   3. Otherwise: returns { mode: 'new' } so the worker creates a new page.
- *
- * Picking is read-only — the caller is responsible for mutating the page.
+ * Decide which Page a freshly-arrived email belongs to. Tried in order:
+ *   1. **Thread match** — any existing page lists this email's threadKey.
+ *      Fast, exact, no LLM/embedding cost.
+ *   2. **Subject template + sender** — a page from the same sender already
+ *      has the same `subjectTemplate` (e.g. all GH Actions failures collapse
+ *      here). Also fast, exact, no embedding cost. This is the path that
+ *      catches the "I keep getting CI failure emails" case.
+ *   3. **Sender + topic centroid** — same sender, embedding cosine ≥
+ *      threshold (lower for automated senders).
+ *   4. Otherwise: a new page is spawned.
  */
 export async function findPageForEmail(email: EmailDoc): Promise<Assignment> {
   const userId = email.userId as Types.ObjectId;
@@ -71,10 +96,20 @@ export async function findPageForEmail(email: EmailDoc): Promise<Assignment> {
     if (threadHit) return { mode: 'thread', page: threadHit };
   }
 
-  // 2. Source + topic similarity.
   const fromAddr = email.from?.address?.toLowerCase();
   if (!fromAddr) return { mode: 'new', page: null };
 
+  // 2. Subject template + sender match — exact, no embedding required.
+  if (email.subjectTemplate) {
+    const templateHit = await Page.findOne({
+      userId,
+      senderAddresses: fromAddr,
+      subjectTemplates: email.subjectTemplate,
+    });
+    if (templateHit) return { mode: 'source-template', page: templateHit };
+  }
+
+  // 3. Sender + topic centroid similarity.
   const candidates = await Page.find({
     userId,
     senderAddresses: fromAddr,
@@ -83,12 +118,16 @@ export async function findPageForEmail(email: EmailDoc): Promise<Assignment> {
     .limit(50);
   if (candidates.length === 0) return { mode: 'new', page: null };
 
+  const automated = isAutomatedSender(fromAddr);
+  const threshold = automated ? AUTOMATED_TOPIC_THRESHOLD : SOURCE_TOPIC_THRESHOLD;
+
   const emb = await ensureEmailEmbedding(email);
-  // Without an embedding we can't decide topic similarity. Fall back: if
-  // there's exactly one candidate page from this sender, use it; otherwise
-  // start a new page rather than guess wrong.
+  // Without an embedding fall back to "single candidate from this sender" — but
+  // *only* for non-automated senders. For automated senders the prior subject-
+  // template path already had its chance; if we got here, the templates didn't
+  // match and we shouldn't blindly merge into the wrong existing page.
   if (!emb) {
-    if (candidates.length === 1)
+    if (!automated && candidates.length === 1)
       return { mode: 'source-topic', page: candidates[0]!, similarity: 0 };
     return { mode: 'new', page: null };
   }
@@ -100,7 +139,7 @@ export async function findPageForEmail(email: EmailDoc): Promise<Assignment> {
     const sim = cosine(centroid, emb.vec);
     if (!best || sim > best.sim) best = { page: c, sim };
   }
-  if (best && best.sim >= SOURCE_TOPIC_THRESHOLD) {
+  if (best && best.sim >= threshold) {
     return { mode: 'source-topic', page: best.page, similarity: best.sim };
   }
   return { mode: 'new', page: null };
@@ -127,4 +166,7 @@ export async function recomputeCentroid(page: PageDoc): Promise<number[] | null>
   return out;
 }
 
-export const ASSIGNMENT_THRESHOLD = SOURCE_TOPIC_THRESHOLD;
+export {
+  SOURCE_TOPIC_THRESHOLD as ASSIGNMENT_THRESHOLD,
+  AUTOMATED_TOPIC_THRESHOLD,
+};
