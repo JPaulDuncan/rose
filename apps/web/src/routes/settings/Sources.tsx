@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Trash2, Mail, Webhook, Inbox } from 'lucide-react';
+import { Trash2, Mail, Webhook, Inbox, RefreshCw } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useApi } from '../../lib/api';
 
@@ -45,6 +45,16 @@ export default function SourcesSettings() {
     },
   });
 
+  const syncNow = useMutation({
+    mutationFn: async (id: string) =>
+      api.post<{ jobId: string }>(`/api/sources/${id}/sync`),
+    onSuccess: () => {
+      toast.success('Sync queued — new mail will appear in the inbox shortly');
+      qc.invalidateQueries({ queryKey: ['sources'] });
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
+
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-3 gap-2">
@@ -86,13 +96,28 @@ export default function SourcesSettings() {
                     {s.lastError ? ` · error: ${s.lastError}` : ''}
                   </div>
                 </div>
-                <button
-                  className="btn-ghost text-red-600"
-                  onClick={() => remove.mutate(s._id)}
-                  aria-label="Remove"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </button>
+                <div className="flex items-center gap-1">
+                  {(s.type === 'imap' || s.type === 'gmail') && (
+                    <button
+                      className="btn-ghost"
+                      onClick={() => syncNow.mutate(s._id)}
+                      disabled={syncNow.isPending}
+                      aria-label="Sync now"
+                      title="Sync now"
+                    >
+                      <RefreshCw
+                        className={`h-4 w-4 ${syncNow.isPending ? 'animate-spin' : ''}`}
+                      />
+                    </button>
+                  )}
+                  <button
+                    className="btn-ghost text-red-600"
+                    onClick={() => remove.mutate(s._id)}
+                    aria-label="Remove"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                </div>
               </li>
             ))}
           </ul>

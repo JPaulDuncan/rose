@@ -28,14 +28,18 @@ sourcesRouter.post('/', validateBody(SourceCreateRequest), async (req, res) => {
       name: body.name,
       encryptedConfig: encryptJson(body.config),
     });
-    await imapSyncQueue.add(
-      'sync',
-      { sourceId: src._id.toString(), userId: userId.toString() },
-      {
-        repeat: { every: body.config.pollIntervalMinutes * 60_000 },
-        jobId: `imap:${src._id.toString()}`,
-      },
-    );
+    const payload = { sourceId: src._id.toString(), userId: userId.toString() };
+    // Repeatable job fires every N minutes starting at +N — kick off an
+    // immediate one-shot so the user doesn't wait for the first interval.
+    await imapSyncQueue.add('sync', payload, {
+      repeat: { every: body.config.pollIntervalMinutes * 60_000 },
+      jobId: `imap:${src._id.toString()}`,
+    });
+    await imapSyncQueue.add('sync', payload, {
+      attempts: 3,
+      removeOnComplete: 50,
+      removeOnFail: 50,
+    });
     res.status(201).json(src);
     return;
   }
@@ -61,14 +65,45 @@ sourcesRouter.post('/', validateBody(SourceCreateRequest), async (req, res) => {
       encryptedConfig: encryptJson({ authCode: body.authCode }),
       status: 'active',
     });
-    await gmailSyncQueue.add(
-      'sync',
-      { sourceId: src._id.toString(), userId: userId.toString() },
-      { repeat: { every: 5 * 60_000 }, jobId: `gmail:${src._id.toString()}` },
-    );
+    const payload = { sourceId: src._id.toString(), userId: userId.toString() };
+    await gmailSyncQueue.add('sync', payload, {
+      repeat: { every: 5 * 60_000 },
+      jobId: `gmail:${src._id.toString()}`,
+    });
+    await gmailSyncQueue.add('sync', payload, {
+      attempts: 3,
+      removeOnComplete: 50,
+      removeOnFail: 50,
+    });
     res.status(201).json(src);
     return;
   }
+});
+
+/** Force an immediate one-shot sync for an IMAP or Gmail source. */
+sourcesRouter.post('/:id/sync', async (req, res) => {
+  const userId = new Types.ObjectId(userIdOf(req));
+  const src = await Source.findOne({ _id: req.params.id, userId });
+  if (!src) {
+    res.status(404).json({ error: 'not_found', message: 'Source not found' });
+    return;
+  }
+  const payload = { sourceId: src._id.toString(), userId: userId.toString() };
+  const opts = { attempts: 3, removeOnComplete: 50, removeOnFail: 50 } as const;
+  if (src.type === 'imap') {
+    const job = await imapSyncQueue.add('sync', payload, opts);
+    res.status(202).json({ jobId: job.id });
+    return;
+  }
+  if (src.type === 'gmail') {
+    const job = await gmailSyncQueue.add('sync', payload, opts);
+    res.status(202).json({ jobId: job.id });
+    return;
+  }
+  res.status(400).json({
+    error: 'invalid_request',
+    message: `Source type "${src.type}" does not support manual sync`,
+  });
 });
 
 sourcesRouter.delete('/:id', async (req, res) => {
