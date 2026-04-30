@@ -28,6 +28,9 @@ type PageDoc = {
   version: number;
   updatedAt: string;
   threadKey?: string | null;
+  threadKeys?: string[];
+  senderAddresses?: string[];
+  groupingMode?: 'thread' | 'source-topic' | 'manual';
   citations?: Record<string, Citation>;
   sourceEmailIds?: string[];
 };
@@ -163,6 +166,7 @@ export default function PageView() {
               v{page.version} · {new Date(page.updatedAt).toLocaleString()}
             </span>
           </div>
+          {mode === 'view' && <Attribution page={page} />}
           {mode === 'edit' && (
             <input
               className="input mt-2 text-xs"
@@ -448,5 +452,47 @@ function SourcesSection({ citations }: { citations: Record<string, Citation> }) 
         })}
       </ol>
     </section>
+  );
+}
+
+/** Header strip that explains why this page exists: senders, threads, mode. */
+function Attribution({ page }: { page: PageDoc }) {
+  const senders = page.senderAddresses ?? [];
+  const threadCount = page.threadKeys?.length ?? 0;
+  const emailCount = page.sourceEmailIds?.length ?? 0;
+  const mode = page.groupingMode ?? 'thread';
+  const modeLabel =
+    mode === 'thread'
+      ? 'Grouped by thread'
+      : mode === 'source-topic'
+        ? 'Grouped by sender + topic'
+        : 'Manually edited';
+
+  if (senders.length === 0 && emailCount === 0) return null;
+
+  return (
+    <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-ink-200 bg-ink-50 px-3 py-2 text-xs dark:border-ink-800 dark:bg-ink-900">
+      <span className="font-medium text-ink-600 dark:text-ink-300">{modeLabel}</span>
+      {emailCount > 0 && (
+        <span className="text-ink-500">
+          · {emailCount} message{emailCount === 1 ? '' : 's'} across {threadCount}{' '}
+          thread{threadCount === 1 ? '' : 's'}
+        </span>
+      )}
+      {senders.length > 0 && (
+        <span className="flex flex-wrap items-center gap-1 text-ink-500">
+          · From{' '}
+          {senders.slice(0, 3).map((s) => (
+            <code
+              key={s}
+              className="rounded bg-ink-100 px-1 py-0.5 text-[10px] dark:bg-ink-800"
+            >
+              {s}
+            </code>
+          ))}
+          {senders.length > 3 && <span>+{senders.length - 3} more</span>}
+        </span>
+      )}
+    </div>
   );
 }

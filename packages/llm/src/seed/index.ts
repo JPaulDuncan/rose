@@ -39,24 +39,27 @@ At most 5 tags. Tags are short, lowercase, hyphenated.`,
     name: 'generate.wiki-page',
     scope: 'generate',
     description:
-      'Generates a structured wiki page from a single email or a full thread, with inline citations.',
-    variables: ['labeled_emails', 'email_count', 'extra_instructions'],
+      'Generates a wiki page that consolidates one or more conversation threads from related emails, with inline citations.',
+    variables: ['labeled_threads', 'thread_count', 'email_count', 'sender_summary', 'extra_instructions'],
     isDefault: true,
-    template: `You are turning an email thread into a single wiki entry. The thread contains {{email_count}} message(s), each labeled with an opaque token (e1, e2, …). Treat the messages as a chronological conversation.
+    template: `You are producing a single wiki entry that consolidates {{email_count}} email message(s) across {{thread_count}} conversation thread(s) on the same topic. Each message is labeled with an opaque token (e1, e2, …). Treat threads as separate sub-conversations; treat the page as a long-lived knowledge entry.
+
+CONTEXT
+{{sender_summary}}
 
 REQUIREMENTS
-- Title: a concise, descriptive noun phrase capturing the topic of the conversation (no "Re:", no dates, < 80 chars).
-- Summary: a single paragraph, ≤ 280 characters, neutral tone — a tl;dr of the whole thread.
-- Body: markdown. Use H2 sections that suit the source, drawn from this set when supported by the content: "Overview", "Participants", "Timeline", "Decisions", "Action Items", "Open Questions", "Key Points", "References". For threads, prefer "Timeline" so the chronology is clear; for single messages, "Overview" + "Key Points" is usually enough. Use bullet lists for action items.
-- Citations: every factual claim, decision, action item, quote, or attributed statement MUST be followed by an inline citation referencing the email it came from, using the exact label provided — e.g. \`The deploy is on Friday [e2]\` or \`Costs were debated [e1, e3]\`. Use only labels listed below; never invent labels. Place citations at end of sentence or list-item; multiple labels comma-separated inside a single bracket.
-- Do NOT invent participants, dates, numbers, or decisions that aren't in the source. If the source is contradictory across messages, note the disagreement and cite both.
+- Title: a stable noun phrase that names the *topic* of the page — not the subject of any one email. < 80 chars. No "Re:" / "Fwd:" prefixes, no dates.
+- Summary: ≤ 280 characters, neutral tone, written so it stays accurate as new emails arrive.
+- Body: markdown. Pick H2 sections that fit the source, drawn from this set: "Overview", "Participants", "Timeline", "Decisions", "Action Items", "Open Questions", "Key Points", "References". When more than one thread is present, include a "Threads" section with one short paragraph per thread (subject, date range, what was decided), each citing the messages in that thread. Use bullet lists for action items.
+- Citations: every factual claim, decision, action item, quote, or attributed statement MUST be followed by an inline citation referencing the source email using the exact label provided — e.g. \`The deploy is on Friday [e2]\` or \`Costs were debated [e1, e3]\`. Multiple labels comma-separated inside one bracket. Only use labels that appear below; never invent labels.
+- Do NOT invent participants, dates, numbers, or decisions that aren't in the source. If messages contradict each other, note the disagreement and cite both.
 - Tags: 3–7 short lowercase tags, hyphenated.
 
 ADDITIONAL INSTRUCTIONS FROM USER:
 {{extra_instructions}}
 
-EMAIL THREAD (oldest first):
-{{labeled_emails}}
+EMAIL THREADS (each thread oldest-first):
+{{labeled_threads}}
 
 Respond with JSON only, matching exactly:
 {"title": "...", "summary": "...", "contentMd": "...", "tags": ["..."], "suggestedCategory": "..." | null}`,

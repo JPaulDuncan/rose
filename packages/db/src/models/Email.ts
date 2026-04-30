@@ -39,6 +39,10 @@ const emailSchema = new Schema(
       index: true,
     },
     pageId: { type: Schema.Types.ObjectId, ref: 'Page', default: null },
+    /** Cached subject+body embedding so page-assignment can compare to
+     *  candidate page centroids without re-embedding on every retry. */
+    embedding: { type: [Number], default: null, select: false },
+    embeddingModel: { type: String, default: null },
     error: { type: String, default: null },
   },
   { timestamps: true },
