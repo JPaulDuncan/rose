@@ -1,12 +1,10 @@
 import { Worker, type Job } from 'bullmq';
 import { Page } from '@rose/db';
-import { OllamaClient } from '@rose/llm';
 import { redis } from '../lib/redis.js';
-import { env } from '../lib/env.js';
 import { logger } from '../lib/logger.js';
+import { resolveProviderForUser } from '../lib/providers.js';
 
 const QUEUE = 'rose.embed-page';
-const ollama = new OllamaClient({ baseUrl: env.OLLAMA_URL });
 
 type EmbedJobData = { pageId: string; userId?: string };
 
@@ -16,10 +14,16 @@ export function startEmbedPageWorker() {
     async (job: Job<EmbedJobData>) => {
       const page = await Page.findById(job.data.pageId);
       if (!page) return;
+      const { provider, model } = await resolveProviderForUser(page.userId, 'embedding');
+      if (!provider.supportsEmbeddings) {
+        throw new Error(
+          `Configured embedding provider (${provider.id}) does not support embeddings`,
+        );
+      }
       const text = `${page.title}\n${page.summary}\n${page.contentMd}`.slice(0, 8000);
-      const embedding = await ollama.embed(env.DEFAULT_EMBEDDING_MODEL, text);
+      const embedding = await provider.embed(model, text);
       page.embedding = embedding;
-      page.embeddingModel = env.DEFAULT_EMBEDDING_MODEL;
+      page.embeddingModel = `${provider.id}:${model}`;
       await page.save();
     },
     { connection: redis, concurrency: 4 },

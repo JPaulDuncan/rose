@@ -1,10 +1,7 @@
 import { Types } from 'mongoose';
-import { OllamaClient } from '@rose/llm';
-import { env } from '../lib/env.js';
 import { Page } from '@rose/db';
 import type { SearchHit, SearchRequest } from '@rose/shared';
-
-const ollama = new OllamaClient({ baseUrl: env.OLLAMA_URL });
+import { resolveProviderForUser } from '../lib/providers.js';
 
 function cosine(a: number[], b: number[]): number {
   if (a.length !== b.length) return 0;
@@ -74,27 +71,30 @@ export async function searchPages(
     req.mode === 'text'
       ? Promise.resolve([] as Array<Hit>)
       : (async () => {
-          // Hard timeout so a slow Ollama doesn't block hybrid search.
-          const ctrl = new AbortController();
-          const timer = setTimeout(() => ctrl.abort(), 4000);
+          // Resolve the user's embedding provider, then run with a hard
+          // timeout so a slow backend doesn't block hybrid search.
           let qVec: number[];
+          let embedTag: string;
           try {
-            const tempClient = new OllamaClient({
-              baseUrl: env.OLLAMA_URL,
-              signal: ctrl.signal,
-            });
-            qVec = await tempClient.embed(env.DEFAULT_EMBEDDING_MODEL, req.q);
+            const { provider, model } = await resolveProviderForUser(userId, 'embedding');
+            if (!provider.supportsEmbeddings) return [];
+            embedTag = `${provider.id}:${model}`;
+            const ctrl = new AbortController();
+            const timer = setTimeout(() => ctrl.abort(), 4000);
+            try {
+              qVec = await provider.embed(model, req.q, ctrl.signal);
+            } finally {
+              clearTimeout(timer);
+            }
           } catch {
             return [];
-          } finally {
-            clearTimeout(timer);
           }
-          // Only compare vectors produced by the same model — different
-          // embedding spaces are not commensurable.
+          // Only compare vectors produced by the same provider:model pair —
+          // different embedding spaces are not commensurable.
           const candidates = await Page.find({
             ...filter,
             embedding: { $ne: null },
-            embeddingModel: env.DEFAULT_EMBEDDING_MODEL,
+            embeddingModel: embedTag,
           })
             .select('+embedding')
             .lean();

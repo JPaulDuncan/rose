@@ -32,15 +32,18 @@ type QueueCounts = {
   delayed?: number;
 };
 
+type ProviderHealth = {
+  providerId: 'ollama' | 'anthropic' | 'openai';
+  model: string;
+  ok: boolean;
+  message?: string;
+};
+
 type Health = {
   queues: { generate: QueueCounts; embed: QueueCounts; imap: QueueCounts };
-  ollama: {
-    reachable: boolean;
-    installedModels: string[];
-    missingModels: string[];
-    generationModel: string;
-    embeddingModel: string;
-  };
+  generation: ProviderHealth;
+  embedding: ProviderHealth;
+  ollama: { installedModels: string[]; missingModels: string[] };
 };
 
 export default function InboxPage() {
@@ -207,37 +210,39 @@ function HealthBanner({
   const gen = health.queues.generate;
   const queued = (gen.waiting ?? 0) + (gen.active ?? 0) + (gen.delayed ?? 0);
   const failed = gen.failed ?? 0;
-  const ollama = health.ollama;
 
-  // Critical: Ollama unreachable or required model missing.
-  if (!ollama.reachable) {
+  // Critical: configured generation provider is unreachable.
+  if (!health.generation.ok) {
     return (
       <div className="mb-4 flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-900 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-100">
         <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
         <div>
-          <div className="font-semibold">Ollama is unreachable</div>
+          <div className="font-semibold">
+            Generation provider <code>{health.generation.providerId}</code> is unreachable
+          </div>
           <div className="mt-0.5 text-xs">
-            The worker can't generate pages without Ollama. Check
-            <code className="mx-1 rounded bg-red-100 px-1 dark:bg-red-900/50">docker compose ps</code>
-            and confirm the <code>ollama</code> service is running.
+            {health.generation.message ?? 'Check Settings → Models.'}
           </div>
         </div>
       </div>
     );
   }
-  if (ollama.missingModels.length > 0) {
+  // Ollama-specific: required models not pulled.
+  if (health.ollama.missingModels.length > 0) {
     return (
       <div className="mb-4 flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100">
         <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
         <div>
           <div className="font-semibold">
-            Required Ollama model{ollama.missingModels.length > 1 ? 's' : ''} not pulled
+            Required Ollama model{health.ollama.missingModels.length > 1 ? 's' : ''} not pulled
           </div>
           <div className="mt-0.5 text-xs">
-            Missing: <code>{ollama.missingModels.join(', ')}</code>. Run:
+            Missing: <code>{health.ollama.missingModels.join(', ')}</code>. Pull from{' '}
+            <Link to="/settings/models" className="underline">Settings → Models</Link>{' '}
+            or run:
           </div>
           <pre className="mt-2 overflow-x-auto rounded bg-amber-100 p-2 text-[11px] dark:bg-amber-900/50">
-            {ollama.missingModels.map((m) => `docker compose exec ollama ollama pull ${m}`).join('\n')}
+            {health.ollama.missingModels.map((m) => `docker compose exec ollama ollama pull ${m}`).join('\n')}
           </pre>
           {stuckCount > 0 && (
             <button
@@ -277,7 +282,12 @@ function HealthBanner({
             )}
           </div>
           <div className="text-xs text-ink-500">
-            CPU-only Ollama is slow (~30–60s per page); a GPU host is much faster. Each page appears in Home and Search as it finishes.
+            Generating with{' '}
+            <code>
+              {health.generation.providerId}/{health.generation.model}
+            </code>
+            . CPU-only Ollama is slow (~30–60s per page); a GPU host or a cloud
+            provider (configure in Settings → Models) is much faster.
           </div>
         </div>
         {(failed > 0 || (stuckCount > 0 && queued === 0)) && (
@@ -297,7 +307,15 @@ function HealthBanner({
   return (
     <div className="mb-4 flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-900 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-100">
       <CheckCircle2 className="h-4 w-4 shrink-0" />
-      Pipeline healthy — Ollama reachable, no backlog.
+      Pipeline healthy — generation:{' '}
+      <code>
+        {health.generation.providerId}/{health.generation.model}
+      </code>
+      , embedding:{' '}
+      <code>
+        {health.embedding.providerId}/{health.embedding.model}
+      </code>
+      , no backlog.
     </div>
   );
 }

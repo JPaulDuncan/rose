@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import type { Request, Response } from 'express';
 import jwt from 'jsonwebtoken';
-import { OllamaClient } from '@rose/llm';
+import { OllamaProvider } from '@rose/llm';
 import {
   generatePageQueue,
   generatePageEvents,
@@ -11,6 +11,7 @@ import {
 import { jobEvents } from '../services/sse.js';
 import { env } from '../lib/env.js';
 import { userIdOf } from '../middleware/auth.js';
+import { resolveProviderForUser } from '../lib/providers.js';
 
 /** Authenticated REST routes. */
 export const jobsRouter: Router = Router();
@@ -28,40 +29,75 @@ jobsRouter.get('/:id', async (req, res) => {
 });
 
 /**
- * Aggregate queue + Ollama health for the diagnostic banner. Cheap call so the
- * Inbox can poll it on a short interval.
+ * Aggregate queue health and per-user provider readiness for the diagnostic
+ * banner. Reports model availability against the user's *configured*
+ * generation/embedding providers — only fetches Ollama tags when at least
+ * one role is configured to use Ollama.
  */
-jobsRouter.get('/health/summary', async (_req, res) => {
+jobsRouter.get('/health/summary', async (req, res) => {
+  const userId = userIdOf(req);
   const [genCounts, embedCounts, imapCounts] = await Promise.all([
     generatePageQueue.getJobCounts('waiting', 'active', 'completed', 'failed', 'delayed'),
     embedPageQueue.getJobCounts('waiting', 'active', 'completed', 'failed'),
     imapSyncQueue.getJobCounts('waiting', 'active', 'completed', 'failed'),
   ]);
 
-  const ollama = new OllamaClient({ baseUrl: env.OLLAMA_URL });
-  const reachable = await ollama.ping();
-  let installedModels: string[] = [];
-  if (reachable) {
+  let gen: { providerId: string; model: string; ok: boolean; message?: string };
+  try {
+    const r = await resolveProviderForUser(userId, 'generation');
+    const ping = await r.provider.ping();
+    gen = { providerId: r.providerId, model: r.model, ok: ping.ok, message: ping.message };
+  } catch (err) {
+    gen = {
+      providerId: 'ollama',
+      model: env.DEFAULT_GENERATION_MODEL,
+      ok: false,
+      message: (err as Error).message,
+    };
+  }
+
+  let embed: { providerId: string; model: string; ok: boolean; message?: string };
+  try {
+    const r = await resolveProviderForUser(userId, 'embedding');
+    const ping = await r.provider.ping();
+    embed = { providerId: r.providerId, model: r.model, ok: ping.ok, message: ping.message };
+  } catch (err) {
+    embed = {
+      providerId: 'ollama',
+      model: env.DEFAULT_EMBEDDING_MODEL,
+      ok: false,
+      message: (err as Error).message,
+    };
+  }
+
+  // Ollama-only: surface installed/missing models for the inbox banner.
+  let ollamaInstalled: string[] = [];
+  let ollamaMissing: string[] = [];
+  if (gen.providerId === 'ollama' || embed.providerId === 'ollama') {
     try {
-      installedModels = await ollama.listModels();
+      const r = await resolveProviderForUser(userId, gen.providerId === 'ollama' ? 'generation' : 'embedding');
+      if (r.provider instanceof OllamaProvider) {
+        const list = await r.provider.listModels();
+        ollamaInstalled = list.map((m) => m.name);
+        const required = [
+          ...(gen.providerId === 'ollama' ? [gen.model] : []),
+          ...(embed.providerId === 'ollama' ? [embed.model] : []),
+        ];
+        ollamaMissing = required.filter(
+          (m) =>
+            !ollamaInstalled.some((installed) => installed === m || installed.startsWith(`${m}:`)),
+        );
+      }
     } catch {
-      // ignored
+      // ignored — gen.ok / embed.ok already flag the issue
     }
   }
-  const required = [env.DEFAULT_GENERATION_MODEL, env.DEFAULT_EMBEDDING_MODEL];
-  const missingModels = required.filter(
-    (m) => !installedModels.some((installed) => installed === m || installed.startsWith(`${m}:`)),
-  );
 
   res.json({
     queues: { generate: genCounts, embed: embedCounts, imap: imapCounts },
-    ollama: {
-      reachable,
-      installedModels,
-      missingModels,
-      generationModel: env.DEFAULT_GENERATION_MODEL,
-      embeddingModel: env.DEFAULT_EMBEDDING_MODEL,
-    },
+    generation: gen,
+    embedding: embed,
+    ollama: { installedModels: ollamaInstalled, missingModels: ollamaMissing },
   });
 });
 

@@ -2,18 +2,16 @@ import { Worker, type Job, Queue } from 'bullmq';
 import { Types } from 'mongoose';
 import { Email, Page, PageRevision, Instruction, Category } from '@rose/db';
 import {
-  OllamaClient,
   SYSTEM_PROMPT_BASE,
   extractJson,
   renderTemplate,
 } from '@rose/llm';
 import { PageGenerationDraft, slugify } from '@rose/shared';
 import { redis } from '../lib/redis.js';
-import { env } from '../lib/env.js';
 import { logger } from '../lib/logger.js';
+import { resolveProviderForUser } from '../lib/providers.js';
 
 const QUEUE = 'rose.generate-page';
-const ollama = new OllamaClient({ baseUrl: env.OLLAMA_URL });
 const embedQueue = new Queue('rose.embed-page', { connection: redis });
 
 type GenerateJobData = { emailId: string; userId: string };
@@ -51,9 +49,15 @@ export function startGeneratePageWorker() {
           'Available categories: ' + (categories.map((c) => c.name).join(', ') || '(none)'),
       });
 
+      const { provider, model: genModel, providerId } = await resolveProviderForUser(
+        userId,
+        'generation',
+      );
+      logger.info({ providerId, model: genModel, emailId: String(email._id) }, 'generating');
+
       let buffered = '';
-      for await (const chunk of ollama.generateStream({
-        model: env.DEFAULT_GENERATION_MODEL,
+      for await (const chunk of provider.generateStream({
+        model: genModel,
         prompt,
         system: SYSTEM_PROMPT_BASE,
         format: 'json',

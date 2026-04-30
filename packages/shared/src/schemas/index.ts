@@ -4,3 +4,4 @@ export * from './page.js';
 export * from './instruction.js';
 export * from './source.js';
 export * from './search.js';
+export * from './provider.js';
