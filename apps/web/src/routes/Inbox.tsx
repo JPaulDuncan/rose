@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
-import { Upload, FileText } from 'lucide-react';
+import { Upload, FileText, RefreshCw, AlertTriangle, CheckCircle2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useApi } from '../lib/api';
 import { useAuth } from '../lib/auth';
@@ -24,6 +24,25 @@ type UploadResult =
   | { kind: 'duplicate'; emailId: string; filename: string }
   | { kind: 'failed'; filename: string; error: string };
 
+type QueueCounts = {
+  waiting?: number;
+  active?: number;
+  completed?: number;
+  failed?: number;
+  delayed?: number;
+};
+
+type Health = {
+  queues: { generate: QueueCounts; embed: QueueCounts; imap: QueueCounts };
+  ollama: {
+    reachable: boolean;
+    installedModels: string[];
+    missingModels: string[];
+    generationModel: string;
+    embeddingModel: string;
+  };
+};
+
 export default function InboxPage() {
   const api = useApi();
   const { token } = useAuth();
@@ -40,6 +59,12 @@ export default function InboxPage() {
   const { data, isLoading } = useQuery({
     queryKey: ['emails'],
     queryFn: () => api.get<{ emails: EmailRow[] }>('/api/emails?limit=100'),
+    refetchInterval: 5000,
+  });
+
+  const { data: health } = useQuery({
+    queryKey: ['jobs-health'],
+    queryFn: () => api.get<Health>('/api/jobs/health/summary'),
     refetchInterval: 5000,
   });
 
@@ -64,10 +89,34 @@ export default function InboxPage() {
     onError: (err: Error) => toast.error(err.message),
   });
 
+  const regenerate = useMutation({
+    mutationFn: async (id: string) =>
+      api.post<{ jobId: string }>(`/api/emails/${id}/regenerate`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['emails'] });
+      qc.invalidateQueries({ queryKey: ['jobs-health'] });
+      toast.success('Regeneration queued');
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
+
+  const regenerateAll = useMutation({
+    mutationFn: async () =>
+      api.post<{ enqueued: number }>('/api/emails/regenerate-stuck', { limit: 5000 }),
+    onSuccess: (r) => {
+      qc.invalidateQueries({ queryKey: ['emails'] });
+      qc.invalidateQueries({ queryKey: ['jobs-health'] });
+      toast.success(`Re-queued ${r.enqueued} email(s)`);
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
+
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     accept: { 'message/rfc822': ['.eml'], 'application/mbox': ['.mbox'] },
     onDrop: (files) => upload.mutate(files),
   });
+
+  const stuckCount = data?.emails.filter((e) => e.ingestStatus === 'parsed').length ?? 0;
 
   return (
     <div className="mx-auto w-full max-w-5xl px-6 py-10">
@@ -75,6 +124,8 @@ export default function InboxPage() {
         <h1 className="text-2xl font-semibold tracking-tight">Inbox</h1>
         <span className="text-sm text-ink-500">{data?.emails.length ?? 0} emails</span>
       </div>
+
+      {health && <HealthBanner health={health} stuckCount={stuckCount} onRetryAll={() => regenerateAll.mutate()} retryPending={regenerateAll.isPending} />}
 
       <div
         {...getRootProps()}
@@ -113,6 +164,19 @@ export default function InboxPage() {
                   View page
                 </Link>
               )}
+              {(e.ingestStatus === 'parsed' || e.ingestStatus === 'failed') && (
+                <button
+                  className="btn-ghost"
+                  onClick={() => regenerate.mutate(e._id)}
+                  disabled={regenerate.isPending}
+                  aria-label="Regenerate page"
+                  title="Regenerate page"
+                >
+                  <RefreshCw
+                    className={`h-4 w-4 ${regenerate.isPending ? 'animate-spin' : ''}`}
+                  />
+                </button>
+              )}
             </li>
           ))}
         </ul>
@@ -129,6 +193,115 @@ export default function InboxPage() {
   );
 }
 
+function HealthBanner({
+  health,
+  stuckCount,
+  onRetryAll,
+  retryPending,
+}: {
+  health: Health;
+  stuckCount: number;
+  onRetryAll: () => void;
+  retryPending: boolean;
+}) {
+  const gen = health.queues.generate;
+  const queued = (gen.waiting ?? 0) + (gen.active ?? 0) + (gen.delayed ?? 0);
+  const failed = gen.failed ?? 0;
+  const ollama = health.ollama;
+
+  // Critical: Ollama unreachable or required model missing.
+  if (!ollama.reachable) {
+    return (
+      <div className="mb-4 flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-900 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-100">
+        <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
+        <div>
+          <div className="font-semibold">Ollama is unreachable</div>
+          <div className="mt-0.5 text-xs">
+            The worker can't generate pages without Ollama. Check
+            <code className="mx-1 rounded bg-red-100 px-1 dark:bg-red-900/50">docker compose ps</code>
+            and confirm the <code>ollama</code> service is running.
+          </div>
+        </div>
+      </div>
+    );
+  }
+  if (ollama.missingModels.length > 0) {
+    return (
+      <div className="mb-4 flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100">
+        <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
+        <div>
+          <div className="font-semibold">
+            Required Ollama model{ollama.missingModels.length > 1 ? 's' : ''} not pulled
+          </div>
+          <div className="mt-0.5 text-xs">
+            Missing: <code>{ollama.missingModels.join(', ')}</code>. Run:
+          </div>
+          <pre className="mt-2 overflow-x-auto rounded bg-amber-100 p-2 text-[11px] dark:bg-amber-900/50">
+            {ollama.missingModels.map((m) => `docker compose exec ollama ollama pull ${m}`).join('\n')}
+          </pre>
+          {stuckCount > 0 && (
+            <button
+              className="btn-secondary mt-2 text-xs"
+              onClick={onRetryAll}
+              disabled={retryPending}
+            >
+              <RefreshCw className={`h-3 w-3 ${retryPending ? 'animate-spin' : ''}`} />
+              Retry {stuckCount} stuck email{stuckCount === 1 ? '' : 's'} after pulling
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  }
+  // Backlog warning.
+  if (queued > 0 || stuckCount > 0) {
+    return (
+      <div className="mb-4 flex items-start gap-3 rounded-xl border border-ink-200 bg-ink-50 p-3 text-sm dark:border-ink-800 dark:bg-ink-900">
+        <RefreshCw className={`mt-0.5 h-4 w-4 shrink-0 text-rose-500 ${queued > 0 ? 'animate-spin' : ''}`} />
+        <div className="flex-1">
+          <div>
+            <span className="font-medium">{queued}</span> generation{queued === 1 ? '' : 's'} in flight
+            {failed > 0 && (
+              <>
+                {' · '}
+                <span className="font-medium text-red-600">{failed}</span> failed
+              </>
+            )}
+            {stuckCount > 0 && queued === 0 && (
+              <>
+                {' · '}
+                <span className="font-medium text-amber-700 dark:text-amber-400">
+                  {stuckCount} stuck at "parsed"
+                </span>
+              </>
+            )}
+          </div>
+          <div className="text-xs text-ink-500">
+            CPU-only Ollama is slow (~30–60s per page); a GPU host is much faster. Each page appears in Home and Search as it finishes.
+          </div>
+        </div>
+        {(failed > 0 || (stuckCount > 0 && queued === 0)) && (
+          <button
+            className="btn-secondary text-xs"
+            onClick={onRetryAll}
+            disabled={retryPending}
+          >
+            <RefreshCw className={`h-3 w-3 ${retryPending ? 'animate-spin' : ''}`} />
+            Retry all
+          </button>
+        )}
+      </div>
+    );
+  }
+  // All clear.
+  return (
+    <div className="mb-4 flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-900 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-100">
+      <CheckCircle2 className="h-4 w-4 shrink-0" />
+      Pipeline healthy — Ollama reachable, no backlog.
+    </div>
+  );
+}
+
 function statusClass(s: string): string {
   const base = 'pill text-xs';
   if (s === 'generated') return base + ' !bg-emerald-100 !text-emerald-800 dark:!bg-emerald-900/30 dark:!text-emerald-300';
@@ -136,4 +309,3 @@ function statusClass(s: string): string {
   if (s === 'parsed') return base + ' !bg-amber-100 !text-amber-800 dark:!bg-amber-900/30 dark:!text-amber-300';
   return base;
 }
-

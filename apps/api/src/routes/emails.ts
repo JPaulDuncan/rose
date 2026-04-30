@@ -4,6 +4,7 @@ import { Types } from 'mongoose';
 import { userIdOf } from '../middleware/auth.js';
 import { Email, Page } from '@rose/db';
 import { ingestRawEmail } from '../services/ingest.js';
+import { generatePageQueue } from '../lib/queues.js';
 
 export const emailsRouter: Router = Router();
 
@@ -79,4 +80,49 @@ emailsRouter.delete('/:id', async (req, res) => {
   const userId = new Types.ObjectId(userIdOf(req));
   await Email.deleteOne({ _id: req.params.id, userId });
   res.json({ ok: true });
+});
+
+/**
+ * Re-enqueue page generation for an email. Useful when the original job
+ * failed (Ollama not running, model not pulled, etc.) and the email is
+ * stuck in `parsed`.
+ */
+emailsRouter.post('/:id/regenerate', async (req, res) => {
+  const userId = new Types.ObjectId(userIdOf(req));
+  const email = await Email.findOne({ _id: req.params.id, userId });
+  if (!email) {
+    res.status(404).json({ error: 'not_found', message: 'Email not found' });
+    return;
+  }
+  email.ingestStatus = 'parsed';
+  email.error = null;
+  await email.save();
+  const job = await generatePageQueue.add(
+    'generate',
+    { emailId: email._id.toString(), userId: userId.toString() },
+    { attempts: 3, removeOnComplete: 500, removeOnFail: 500 },
+  );
+  res.status(202).json({ jobId: job.id });
+});
+
+/**
+ * Bulk re-enqueue every email currently stuck at `parsed`. Bounded to keep
+ * the user from accidentally creating thousands of jobs at once.
+ */
+emailsRouter.post('/regenerate-stuck', async (req, res) => {
+  const userId = new Types.ObjectId(userIdOf(req));
+  const limit = Math.min(Number((req.body as { limit?: number })?.limit ?? 500), 5000);
+  const stuck = await Email.find({ userId, ingestStatus: 'parsed' })
+    .sort({ createdAt: -1 })
+    .limit(limit)
+    .select('_id')
+    .lean();
+  for (const e of stuck) {
+    await generatePageQueue.add(
+      'generate',
+      { emailId: String(e._id), userId: userId.toString() },
+      { attempts: 3, removeOnComplete: 500, removeOnFail: 500 },
+    );
+  }
+  res.status(202).json({ enqueued: stuck.length });
 });

@@ -1,7 +1,13 @@
 import { Router } from 'express';
 import type { Request, Response } from 'express';
 import jwt from 'jsonwebtoken';
-import { generatePageQueue, generatePageEvents } from '../lib/queues.js';
+import { OllamaClient } from '@rose/llm';
+import {
+  generatePageQueue,
+  generatePageEvents,
+  embedPageQueue,
+  imapSyncQueue,
+} from '../lib/queues.js';
 import { jobEvents } from '../services/sse.js';
 import { env } from '../lib/env.js';
 import { userIdOf } from '../middleware/auth.js';
@@ -19,6 +25,44 @@ jobsRouter.get('/:id', async (req, res) => {
   }
   const state = await job.getState();
   res.json({ id: job.id, state, progress: job.progress, returnvalue: job.returnvalue });
+});
+
+/**
+ * Aggregate queue + Ollama health for the diagnostic banner. Cheap call so the
+ * Inbox can poll it on a short interval.
+ */
+jobsRouter.get('/health/summary', async (_req, res) => {
+  const [genCounts, embedCounts, imapCounts] = await Promise.all([
+    generatePageQueue.getJobCounts('waiting', 'active', 'completed', 'failed', 'delayed'),
+    embedPageQueue.getJobCounts('waiting', 'active', 'completed', 'failed'),
+    imapSyncQueue.getJobCounts('waiting', 'active', 'completed', 'failed'),
+  ]);
+
+  const ollama = new OllamaClient({ baseUrl: env.OLLAMA_URL });
+  const reachable = await ollama.ping();
+  let installedModels: string[] = [];
+  if (reachable) {
+    try {
+      installedModels = await ollama.listModels();
+    } catch {
+      // ignored
+    }
+  }
+  const required = [env.DEFAULT_GENERATION_MODEL, env.DEFAULT_EMBEDDING_MODEL];
+  const missingModels = required.filter(
+    (m) => !installedModels.some((installed) => installed === m || installed.startsWith(`${m}:`)),
+  );
+
+  res.json({
+    queues: { generate: genCounts, embed: embedCounts, imap: imapCounts },
+    ollama: {
+      reachable,
+      installedModels,
+      missingModels,
+      generationModel: env.DEFAULT_GENERATION_MODEL,
+      embeddingModel: env.DEFAULT_EMBEDDING_MODEL,
+    },
+  });
 });
 
 /**

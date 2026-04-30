@@ -190,6 +190,9 @@ sourcesRouter.patch('/:id', validateBody(SourceUpdateRequest), async (req, res) 
       mailbox: body.config.mailbox ?? current.mailbox,
       pollIntervalMinutes:
         body.config.pollIntervalMinutes ?? current.pollIntervalMinutes,
+      historicalBackfillDays:
+        body.config.historicalBackfillDays ?? current.historicalBackfillDays ?? 30,
+      maxPerSync: body.config.maxPerSync ?? current.maxPerSync ?? 2000,
     };
     intervalChanged = merged.pollIntervalMinutes !== current.pollIntervalMinutes;
     src.encryptedConfig = encryptJson(merged);
