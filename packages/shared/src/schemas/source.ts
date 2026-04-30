@@ -44,3 +44,38 @@ export const SourceCreateRequest = z.discriminatedUnion('type', [
   z.object({ type: z.literal('gmail'), name: z.string().min(1), authCode: z.string() }),
 ]);
 export type SourceCreateRequest = z.infer<typeof SourceCreateRequest>;
+
+/**
+ * Partial update for IMAP. `password` may be omitted to keep the existing
+ * encrypted value (we never echo it back to the client).
+ */
+export const ImapUpdateConfig = z.object({
+  host: z.string().min(1).optional(),
+  port: z.number().int().min(1).max(65535).optional(),
+  secure: z.boolean().optional(),
+  username: z.string().min(1).optional(),
+  password: z.string().min(1).optional(),
+  mailbox: z.string().min(1).optional(),
+  pollIntervalMinutes: z.number().int().min(1).max(1440).optional(),
+});
+export type ImapUpdateConfig = z.infer<typeof ImapUpdateConfig>;
+
+export const SourceUpdateRequest = z.object({
+  name: z.string().min(1).optional(),
+  config: ImapUpdateConfig.optional(),
+  status: z.enum(['active', 'paused']).optional(),
+});
+export type SourceUpdateRequest = z.infer<typeof SourceUpdateRequest>;
+
+/** Stateless connection test (does not persist). */
+export const SourceTestRequest = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('imap'), config: ImapConfig }),
+]);
+export type SourceTestRequest = z.infer<typeof SourceTestRequest>;
+
+export const SourceTestResponse = z.object({
+  ok: z.boolean(),
+  mailboxes: z.array(z.string()).optional(),
+  message: z.string().optional(),
+});
+export type SourceTestResponse = z.infer<typeof SourceTestResponse>;
