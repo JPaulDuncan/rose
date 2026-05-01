@@ -47,6 +47,12 @@ export async function ingestRawEmail(input: IngestInput): Promise<IngestResult> 
       size: a.size,
       contentId: a.contentId,
     })),
+    priority: cleaned.metadata.priority,
+    topics: cleaned.metadata.topics,
+    links: cleaned.metadata.links,
+    spamScore: cleaned.metadata.spamScore,
+    spamSignals: cleaned.metadata.spamSignals,
+    isMassMailing: cleaned.metadata.isMassMailing,
     ingestStatus: 'parsed',
   });
 

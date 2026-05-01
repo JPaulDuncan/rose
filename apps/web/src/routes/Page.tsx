@@ -5,7 +5,21 @@ import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Placeholder from '@tiptap/extension-placeholder';
 import TiptapLink from '@tiptap/extension-link';
-import { Save, History, Eye, Edit2, Trash2, Mail, ExternalLink } from 'lucide-react';
+import {
+  Save,
+  History,
+  Eye,
+  Edit2,
+  Trash2,
+  Mail,
+  ExternalLink,
+  Flame,
+  ShieldAlert,
+  Megaphone,
+  LinkIcon,
+  Paperclip,
+  Tag as TagIcon,
+} from 'lucide-react';
 import toast from 'react-hot-toast';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -34,6 +48,12 @@ type PageDoc = {
   groupingMode?: 'thread' | 'source-topic' | 'manual';
   citations?: Record<string, Citation>;
   sourceEmailIds?: string[];
+  priority?: 'high' | 'normal' | 'low';
+  topics?: string[];
+  pageLinks?: { url: string; text?: string | null; count: number }[];
+  pageAttachments?: { filename: string; contentType: string; size: number; fromEmailId: string }[];
+  spamScore?: number;
+  flags?: { hasLikelySpam?: boolean; hasMassMailing?: boolean; isSparse?: boolean };
 };
 
 type Revision = {
@@ -168,6 +188,7 @@ export default function PageView() {
             </span>
           </div>
           {mode === 'view' && <Attribution page={page} />}
+          {mode === 'view' && <PageBanners page={page} />}
           {mode === 'edit' && (
             <input
               className="input mt-2 text-xs"
@@ -226,6 +247,13 @@ export default function PageView() {
         )}
       </article>
 
+      {mode === 'view' && <TopicsBlock topics={page.topics ?? []} />}
+      {mode === 'view' && (
+        <LinksBlock links={page.pageLinks ?? []} />
+      )}
+      {mode === 'view' && (
+        <AttachmentsBlock attachments={page.pageAttachments ?? []} />
+      )}
       {mode === 'view' && (
         <SourcesSection
           citations={page.citations ?? {}}
@@ -581,5 +609,153 @@ function Attribution({ page }: { page: PageDoc }) {
         <span className="text-ink-500">· updated {page.version} times</span>
       )}
     </div>
+  );
+}
+
+function PageBanners({ page }: { page: PageDoc }) {
+  const flags = page.flags ?? {};
+  const score = page.spamScore ?? 0;
+  return (
+    <div className="mt-2 flex flex-wrap gap-2 text-xs">
+      {page.priority === 'high' && (
+        <span className="inline-flex items-center gap-1 rounded-full bg-rose-100 px-2 py-0.5 font-medium text-rose-800 dark:bg-rose-950/40 dark:text-rose-200">
+          <Flame className="h-3 w-3" /> High priority
+        </span>
+      )}
+      {flags.hasLikelySpam && (
+        <span
+          className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 font-medium text-red-800 dark:bg-red-950/40 dark:text-red-200"
+          title={`Likely-spam score: ${Math.round(score * 100)}%`}
+        >
+          <ShieldAlert className="h-3 w-3" /> Likely spam · {Math.round(score * 100)}%
+        </span>
+      )}
+      {flags.hasMassMailing && !flags.hasLikelySpam && (
+        <span className="inline-flex items-center gap-1 rounded-full bg-ink-100 px-2 py-0.5 text-ink-700 dark:bg-ink-800 dark:text-ink-200">
+          <Megaphone className="h-3 w-3" /> Bulk mail
+        </span>
+      )}
+      {flags.isSparse && (
+        <span
+          className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200"
+          title="Source emails had little or no body content; this page is metadata-only."
+        >
+          metadata-only
+        </span>
+      )}
+    </div>
+  );
+}
+
+function TopicsBlock({ topics }: { topics: string[] }) {
+  if (!topics.length) return null;
+  return (
+    <section className="card mt-6">
+      <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold">
+        <TagIcon className="h-4 w-4 text-rose-500" />
+        Topics
+      </h2>
+      <div className="flex flex-wrap gap-1.5">
+        {topics.map((t) => (
+          <span key={t} className="pill">
+            {t}
+          </span>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function hostOf(url: string): string {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return url;
+  }
+}
+
+function LinksBlock({
+  links,
+}: {
+  links: { url: string; text?: string | null; count: number }[];
+}) {
+  if (!links.length) return null;
+  return (
+    <section className="card mt-6">
+      <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold">
+        <LinkIcon className="h-4 w-4 text-rose-500" />
+        Links ({links.length})
+      </h2>
+      <ul className="space-y-1.5 text-sm">
+        {links.slice(0, 25).map((l) => (
+          <li key={l.url} className="flex items-start gap-2">
+            <ExternalLink className="mt-0.5 h-3.5 w-3.5 shrink-0 text-ink-400" />
+            <a
+              href={l.url}
+              target="_blank"
+              rel="noreferrer"
+              className="min-w-0 flex-1 truncate text-rose-600 hover:underline dark:text-rose-400"
+              title={l.url}
+            >
+              {l.text || hostOf(l.url)}
+            </a>
+            <span className="shrink-0 text-xs text-ink-400">{hostOf(l.url)}</span>
+            {l.count > 1 && (
+              <span
+                className="shrink-0 rounded bg-ink-100 px-1 text-[10px] text-ink-600 dark:bg-ink-800 dark:text-ink-300"
+                title={`Appeared in ${l.count} source emails`}
+              >
+                ×{l.count}
+              </span>
+            )}
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+function formatBytesPg(n: number): string {
+  if (n < 1024) return `${n} B`;
+  const u = ['KB', 'MB', 'GB'];
+  let v = n / 1024;
+  let i = 0;
+  while (v >= 1024 && i < u.length - 1) {
+    v /= 1024;
+    i += 1;
+  }
+  return `${v.toFixed(1)} ${u[i]}`;
+}
+
+function AttachmentsBlock({
+  attachments,
+}: {
+  attachments: { filename: string; contentType: string; size: number; fromEmailId: string }[];
+}) {
+  if (!attachments.length) return null;
+  return (
+    <section className="card mt-6">
+      <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold">
+        <Paperclip className="h-4 w-4 text-rose-500" />
+        Attachments ({attachments.length})
+      </h2>
+      <ul className="space-y-1.5 text-sm">
+        {attachments.map((a, i) => (
+          <li key={`${a.fromEmailId}-${a.filename}-${i}`} className="flex items-center gap-2">
+            <Paperclip className="h-3.5 w-3.5 shrink-0 text-ink-400" />
+            <span className="min-w-0 flex-1 truncate font-medium">{a.filename}</span>
+            <span className="shrink-0 text-xs text-ink-500">{a.contentType}</span>
+            <span className="shrink-0 text-xs text-ink-400">{formatBytesPg(a.size)}</span>
+            <Link
+              to={`/inbox?email=${a.fromEmailId}`}
+              className="btn-ghost text-xs"
+              title="Source email"
+            >
+              <ExternalLink className="h-3 w-3" />
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }

@@ -2,7 +2,16 @@ import { useEffect, useState } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
-import { Upload, FileText, RefreshCw, AlertTriangle, CheckCircle2 } from 'lucide-react';
+import {
+  Upload,
+  FileText,
+  RefreshCw,
+  AlertTriangle,
+  CheckCircle2,
+  Flame,
+  ShieldAlert,
+  Megaphone,
+} from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useApi } from '../lib/api';
 import { useAuth } from '../lib/auth';
@@ -17,6 +26,10 @@ type EmailRow = {
   pageId?: string;
   pageSlug?: string | null;
   error?: string | null;
+  priority?: 'high' | 'normal' | 'low';
+  spamScore?: number;
+  spamSignals?: string[];
+  isMassMailing?: boolean;
   createdAt: string;
 };
 
@@ -162,6 +175,30 @@ export default function InboxPage() {
                   {e.from?.name || e.from?.address} · {new Date(e.date ?? e.createdAt).toLocaleString()}
                 </div>
               </div>
+              {e.priority === 'high' && (
+                <span
+                  className="pill !bg-rose-100 !text-rose-800 dark:!bg-rose-950/40 dark:!text-rose-300 inline-flex items-center gap-1"
+                  title="High priority"
+                >
+                  <Flame className="h-3 w-3" /> high
+                </span>
+              )}
+              {(e.spamScore ?? 0) >= 0.5 && (
+                <span
+                  className="pill !bg-red-100 !text-red-800 dark:!bg-red-950/40 dark:!text-red-300 inline-flex items-center gap-1"
+                  title={`Likely spam (${Math.round((e.spamScore ?? 0) * 100)}%): ${(e.spamSignals ?? []).join('; ') || 'heuristic match'}`}
+                >
+                  <ShieldAlert className="h-3 w-3" /> spam
+                </span>
+              )}
+              {e.isMassMailing && (e.spamScore ?? 0) < 0.5 && (
+                <span
+                  className="pill inline-flex items-center gap-1"
+                  title="Mass mailing (List-Unsubscribe / List-Id present)"
+                >
+                  <Megaphone className="h-3 w-3" /> bulk
+                </span>
+              )}
               <span
                 className={statusClass(e.ingestStatus)}
                 title={e.error ?? undefined}

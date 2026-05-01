@@ -48,6 +48,52 @@ const pageSchema = new Schema(
       type: Schema.Types.Mixed,
       default: () => ({}),
     },
+    /** Highest priority across contributing emails. */
+    priority: {
+      type: String,
+      enum: ['high', 'normal', 'low'],
+      default: 'normal',
+      index: true,
+    },
+    /** Union of email topics (capitalized phrases / hashtags), deduped. */
+    topics: { type: [String], default: [], index: true },
+    /** Aggregated links across emails. */
+    pageLinks: {
+      type: [
+        new Schema(
+          {
+            url: { type: String, required: true },
+            text: { type: String, default: null },
+            count: { type: Number, default: 1 },
+          },
+          { _id: false },
+        ),
+      ],
+      default: [],
+    },
+    /** Rolled-up attachments with the email each came from for back-reference. */
+    pageAttachments: {
+      type: [
+        new Schema(
+          {
+            filename: { type: String, default: '' },
+            contentType: { type: String, default: '' },
+            size: { type: Number, default: 0 },
+            fromEmailId: { type: Schema.Types.ObjectId, ref: 'Email' },
+          },
+          { _id: false },
+        ),
+      ],
+      default: [],
+    },
+    /** Max spamScore across contributing emails (0..1). */
+    spamScore: { type: Number, default: 0, index: true },
+    /** Page-level flags surfaced in the UI. */
+    flags: {
+      hasLikelySpam: { type: Boolean, default: false },
+      hasMassMailing: { type: Boolean, default: false },
+      isSparse: { type: Boolean, default: false },
+    },
     /** Legacy single-thread field — kept for migration. New code uses threadKeys. */
     threadKey: { type: String, default: null },
     version: { type: Number, default: 1 },

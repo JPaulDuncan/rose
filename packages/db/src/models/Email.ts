@@ -45,6 +45,30 @@ const emailSchema = new Schema(
      *  candidate page centroids without re-embedding on every retry. */
     embedding: { type: [Number], default: null, select: false },
     embeddingModel: { type: String, default: null },
+    /** Header/heuristic-derived priority. */
+    priority: {
+      type: String,
+      enum: ['high', 'normal', 'low'],
+      default: 'normal',
+      index: true,
+    },
+    /** Coarse topics extracted at ingestion (hashtags + capitalized phrases). */
+    topics: { type: [String], default: [], index: true },
+    /** URLs found in body/HTML, deduped. */
+    links: {
+      type: [
+        new Schema(
+          { url: { type: String, required: true }, text: { type: String, default: null } },
+          { _id: false },
+        ),
+      ],
+      default: [],
+    },
+    /** 0..1 — higher means more likely spam. Threshold ≥0.5 surfaces a warning. */
+    spamScore: { type: Number, default: 0, index: true },
+    spamSignals: { type: [String], default: [] },
+    /** Legitimate bulk mail (List-Unsubscribe present). Distinct from spam. */
+    isMassMailing: { type: Boolean, default: false },
     error: { type: String, default: null },
   },
   { timestamps: true },

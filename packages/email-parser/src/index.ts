@@ -2,6 +2,13 @@ import { simpleParser, type ParsedMail, type AddressObject } from 'mailparser';
 import { createHash } from 'node:crypto';
 
 export { formatImapError } from './imapErrors.js';
+export {
+  extractEmailMetadata,
+  type EmailMetadata,
+  type EmailPriority,
+  type EmailLink,
+} from './metadata.js';
+import { extractEmailMetadata, type EmailMetadata } from './metadata.js';
 
 export type CleanedEmail = {
   messageId: string | null;
@@ -31,6 +38,7 @@ export type CleanedEmail = {
     content: Buffer;
   }[];
   rawHash: string;
+  metadata: EmailMetadata;
 };
 
 const SIGNATURE_DELIMITERS = [/^-- $/m, /^—\s*$/m, /^_{2,}\s*$/m];
@@ -171,6 +179,7 @@ export async function parseEmail(raw: Buffer | string): Promise<CleanedEmail> {
   const ccAddrs = pickAddresses(parsed.cc);
   const buffer = Buffer.isBuffer(raw) ? raw : Buffer.from(raw);
   const rawHash = createHash('sha256').update(buffer).digest('hex');
+  const metadata = extractEmailMetadata(parsed, cleaned, html);
 
   return {
     messageId: parsed.messageId ? parsed.messageId.replace(/[<>]/g, '') : null,
@@ -192,5 +201,6 @@ export async function parseEmail(raw: Buffer | string): Promise<CleanedEmail> {
       content: a.content,
     })),
     rawHash,
+    metadata,
   };
 }

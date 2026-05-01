@@ -280,35 +280,6 @@ export function startGeneratePageWorker() {
       const totalChars = totalBodyChars(pageEmails);
       const isThin = totalChars < 30;
 
-      // If the trigger email *itself* has no usable signal (no subject,
-      // no sender, no body), and we're not joining an existing page, skip
-      // it entirely. A page that only says "(no subject) — from unknown"
-      // is worse than no page at all.
-      const triggerHasSubject = (triggerEmail.subject ?? '').trim().length > 0;
-      const triggerHasSender = !!triggerEmail.from?.address;
-      const triggerHasBody =
-        ((triggerEmail.text ?? '') || (triggerEmail.rawText ?? '')).trim().length > 0;
-      const triggerIsUseless = !triggerHasSubject && !triggerHasSender && !triggerHasBody;
-      if (
-        !assignment.page &&
-        pageEmails.length === 1 &&
-        triggerIsUseless
-      ) {
-        logger.info(
-          { emailId: String(triggerEmail._id) },
-          'skipping useless email (no subject, no sender, no body)',
-        );
-        triggerEmail.ingestStatus = 'skipped';
-        triggerEmail.error =
-          'Skipped: email has no subject, no sender, and no body — nothing to summarize.';
-        await triggerEmail.save();
-        await job.updateProgress({
-          type: 'completed',
-          jobId: String(job.id),
-        });
-        return { skipped: true };
-      }
-
       let draft;
       if (isThin) {
         // Bodies are empty or near-empty but at least one of subject/sender
@@ -426,6 +397,58 @@ export function startGeneratePageWorker() {
       ];
       const sourceEmailIds = pageEmails.map((e) => e._id) as Types.ObjectId[];
 
+      // ---- metadata rollup ---------------------------------------------------
+      const priorityRank = { high: 2, normal: 1, low: 0 } as const;
+      let priority: 'high' | 'normal' | 'low' = 'normal';
+      let topSpamScore = 0;
+      let hasMassMailing = false;
+      const topicCounts = new Map<string, number>();
+      const linkAccum = new Map<string, { url: string; text?: string | null; count: number }>();
+      const pageAttachments: {
+        filename: string;
+        contentType: string;
+        size: number;
+        fromEmailId: Types.ObjectId;
+      }[] = [];
+      for (const e of pageEmails) {
+        const p = (e.priority as 'high' | 'normal' | 'low' | undefined) ?? 'normal';
+        if (priorityRank[p] > priorityRank[priority]) priority = p;
+        topSpamScore = Math.max(topSpamScore, (e.spamScore as number | undefined) ?? 0);
+        if (e.isMassMailing) hasMassMailing = true;
+        for (const t of (e.topics as string[] | undefined) ?? []) {
+          topicCounts.set(t, (topicCounts.get(t) ?? 0) + 1);
+        }
+        for (const l of (e.links as { url: string; text?: string | null }[] | undefined) ?? []) {
+          if (!l?.url) continue;
+          const prev = linkAccum.get(l.url);
+          if (prev) prev.count += 1;
+          else linkAccum.set(l.url, { url: l.url, text: l.text ?? null, count: 1 });
+        }
+        for (const a of (e.attachments as { filename?: string; contentType?: string; size?: number }[] | undefined) ?? []) {
+          if (!a?.filename) continue;
+          pageAttachments.push({
+            filename: a.filename,
+            contentType: a.contentType ?? 'application/octet-stream',
+            size: a.size ?? 0,
+            fromEmailId: e._id as Types.ObjectId,
+          });
+        }
+      }
+      const topics = [...topicCounts.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 12)
+        .map(([t]) => t);
+      const pageLinks = [...linkAccum.values()]
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 50);
+      const flags = {
+        hasLikelySpam: topSpamScore >= 0.5,
+        hasMassMailing,
+        isSparse: isThin,
+      };
+      // -------------------------------------------------------------------------
+
+
       let pageId: Types.ObjectId;
       let slug: string;
 
@@ -440,6 +463,15 @@ export function startGeneratePageWorker() {
         page.threadKeys = threadKeys;
         page.senderAddresses = senderAddresses;
         page.subjectTemplates = subjectTemplates;
+        page.priority = priority;
+        page.topics = topics;
+        page.set('pageLinks', pageLinks);
+        page.set('pageAttachments', pageAttachments);
+        page.spamScore = topSpamScore;
+        page.set('flags', flags);
+        page.markModified('flags');
+        page.markModified('pageLinks');
+        page.markModified('pageAttachments');
         page.groupingMode =
           assignment.mode === 'thread'
             ? 'thread'
@@ -481,6 +513,12 @@ export function startGeneratePageWorker() {
           threadKeys,
           senderAddresses,
           subjectTemplates,
+          priority,
+          topics,
+          pageLinks,
+          pageAttachments,
+          spamScore: topSpamScore,
+          flags,
           groupingMode: triggerEmail.threadKey ? 'thread' : 'source-topic',
           citations,
           version: 1,
