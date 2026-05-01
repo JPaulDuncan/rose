@@ -52,6 +52,7 @@ sourcesRouter.post('/', validateBody(SourceCreateRequest), async (req, res) => {
       type: 'imap',
       name: body.name,
       encryptedConfig: encryptJson(body.config),
+      pollIntervalMinutes: body.config.pollIntervalMinutes,
     });
     const payload = { sourceId: src._id.toString(), userId: userId.toString() };
     // Repeatable job fires every N minutes starting at +N — kick off an
@@ -88,11 +89,12 @@ sourcesRouter.post('/', validateBody(SourceCreateRequest), async (req, res) => {
       type: 'gmail',
       name: body.name,
       encryptedConfig: encryptJson({ authCode: body.authCode }),
+      pollIntervalMinutes: body.pollIntervalMinutes,
       status: 'active',
     });
     const payload = { sourceId: src._id.toString(), userId: userId.toString() };
     await gmailSyncQueue.add('sync', payload, {
-      repeat: { every: 5 * 60_000 },
+      repeat: { every: body.pollIntervalMinutes * 60_000 },
       jobId: `gmail:${src._id.toString()}`,
     });
     await gmailSyncQueue.add('sync', payload, {
@@ -177,7 +179,13 @@ sourcesRouter.patch('/:id', validateBody(SourceUpdateRequest), async (req, res) 
   if (body.name) src.name = body.name;
   if (body.status) src.status = body.status;
 
-  let intervalChanged = false;
+  // Resolve a top-level interval update from either body.pollIntervalMinutes
+  // or body.config.pollIntervalMinutes (IMAP edit form puts it inside config).
+  const requestedInterval =
+    body.pollIntervalMinutes ?? body.config?.pollIntervalMinutes ?? null;
+  const oldInterval = src.pollIntervalMinutes ?? 5;
+  let newInterval = oldInterval;
+
   if (body.config && src.type === 'imap' && src.encryptedConfig) {
     const current = decryptJson<ImapConfig>(src.encryptedConfig);
     // Password is sticky — empty/undefined means "keep what's stored".
@@ -194,21 +202,25 @@ sourcesRouter.patch('/:id', validateBody(SourceUpdateRequest), async (req, res) 
         body.config.historicalBackfillDays ?? current.historicalBackfillDays ?? 30,
       maxPerSync: body.config.maxPerSync ?? current.maxPerSync ?? 2000,
     };
-    intervalChanged = merged.pollIntervalMinutes !== current.pollIntervalMinutes;
     src.encryptedConfig = encryptJson(merged);
-
-    if (intervalChanged) {
-      const repeatKey = `imap:${src._id.toString()}`;
-      await imapSyncQueue.removeRepeatableByKey(repeatKey).catch((err: Error) => {
-        logger.warn({ err, repeatKey }, 'failed to remove old repeatable');
-      });
-      await imapSyncQueue.add(
-        'sync',
-        { sourceId: src._id.toString(), userId: userId.toString() },
-        { repeat: { every: merged.pollIntervalMinutes * 60_000 }, jobId: repeatKey },
-      );
-    }
+    newInterval = merged.pollIntervalMinutes;
+  } else if (requestedInterval !== null) {
+    newInterval = requestedInterval;
   }
+
+  if (newInterval !== oldInterval && (src.type === 'imap' || src.type === 'gmail')) {
+    const queue = src.type === 'imap' ? imapSyncQueue : gmailSyncQueue;
+    const repeatKey = `${src.type}:${src._id.toString()}`;
+    await queue.removeRepeatableByKey(repeatKey).catch((err: Error) => {
+      logger.warn({ err, repeatKey }, 'failed to remove old repeatable');
+    });
+    await queue.add(
+      'sync',
+      { sourceId: src._id.toString(), userId: userId.toString() },
+      { repeat: { every: newInterval * 60_000 }, jobId: repeatKey },
+    );
+  }
+  src.pollIntervalMinutes = newInterval;
 
   src.lastError = null;
   await src.save();

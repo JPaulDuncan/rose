@@ -10,6 +10,7 @@ import {
   PlugZap,
   CheckCircle2,
   XCircle,
+  Clock,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useApi } from '../../lib/api';
@@ -19,6 +20,7 @@ type Source = {
   type: 'imap' | 'webhook' | 'gmail' | 'upload';
   name: string;
   status: string;
+  pollIntervalMinutes?: number;
   lastSyncAt?: string;
   lastError?: string | null;
 };
@@ -104,6 +106,32 @@ export default function SourcesSettings() {
     onError: (err: Error) => toast.error(err.message),
   });
 
+  const setIntervalMut = useMutation({
+    mutationFn: async ({ id, minutes }: { id: string; minutes: number }) =>
+      api.patch<Source>(`/api/sources/${id}`, { pollIntervalMinutes: minutes }),
+    onSuccess: (_data, vars) => {
+      toast.success(`Polling every ${vars.minutes} minute${vars.minutes === 1 ? '' : 's'}`);
+      qc.invalidateQueries({ queryKey: ['sources'] });
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
+
+  function promptForInterval(s: Source) {
+    const current = s.pollIntervalMinutes ?? 5;
+    const raw = window.prompt(
+      `Polling interval for "${s.name}" (in minutes, 1–1440):`,
+      String(current),
+    );
+    if (raw === null) return;
+    const n = Math.floor(Number(raw));
+    if (!Number.isFinite(n) || n < 1 || n > 1440) {
+      toast.error('Enter a whole number between 1 and 1440');
+      return;
+    }
+    if (n === current) return;
+    setIntervalMut.mutate({ id: s._id, minutes: n });
+  }
+
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-3 gap-2">
@@ -166,10 +194,34 @@ export default function SourcesSettings() {
                   <div className="font-medium">
                     {s.name} <span className="text-xs text-ink-500">({s.type})</span>
                   </div>
-                  <div className="text-xs text-ink-500">
-                    {s.status} · last sync{' '}
-                    {s.lastSyncAt ? new Date(s.lastSyncAt).toLocaleString() : 'never'}
-                    {s.lastError ? ` · error: ${s.lastError}` : ''}
+                  <div className="flex flex-wrap items-center gap-x-2 text-xs text-ink-500">
+                    <span>{s.status}</span>
+                    <span>·</span>
+                    <span>
+                      last sync{' '}
+                      {s.lastSyncAt ? new Date(s.lastSyncAt).toLocaleString() : 'never'}
+                    </span>
+                    {(s.type === 'imap' || s.type === 'gmail') && (
+                      <>
+                        <span>·</span>
+                        <button
+                          type="button"
+                          onClick={() => promptForInterval(s)}
+                          disabled={setIntervalMut.isPending}
+                          className="inline-flex items-center gap-1 rounded bg-ink-100 px-1.5 py-0.5 font-medium text-ink-700 hover:bg-ink-200 disabled:opacity-50 dark:bg-ink-800 dark:text-ink-200 dark:hover:bg-ink-700"
+                          title="Click to change polling interval"
+                        >
+                          <Clock className="h-3 w-3" />
+                          every {s.pollIntervalMinutes ?? 5} min
+                        </button>
+                      </>
+                    )}
+                    {s.lastError && (
+                      <>
+                        <span>·</span>
+                        <span className="text-red-600">error: {s.lastError}</span>
+                      </>
+                    )}
                   </div>
                 </div>
                 <div className="flex items-center gap-1">

@@ -47,7 +47,12 @@ export type Source = z.infer<typeof Source>;
 export const SourceCreateRequest = z.discriminatedUnion('type', [
   z.object({ type: z.literal('imap'), name: z.string().min(1), config: ImapConfig }),
   z.object({ type: z.literal('webhook'), name: z.string().min(1) }),
-  z.object({ type: z.literal('gmail'), name: z.string().min(1), authCode: z.string() }),
+  z.object({
+    type: z.literal('gmail'),
+    name: z.string().min(1),
+    authCode: z.string(),
+    pollIntervalMinutes: z.number().int().min(1).max(1440).default(5),
+  }),
 ]);
 export type SourceCreateRequest = z.infer<typeof SourceCreateRequest>;
 
@@ -72,6 +77,8 @@ export const SourceUpdateRequest = z.object({
   name: z.string().min(1).optional(),
   config: ImapUpdateConfig.optional(),
   status: z.enum(['active', 'paused']).optional(),
+  /** Top-level interval — accepted for any pollable source (IMAP / Gmail). */
+  pollIntervalMinutes: z.number().int().min(1).max(1440).optional(),
 });
 export type SourceUpdateRequest = z.infer<typeof SourceUpdateRequest>;
 
