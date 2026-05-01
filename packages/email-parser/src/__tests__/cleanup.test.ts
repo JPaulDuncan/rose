@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { cleanBody, extractSubjectTemplate } from '../index.js';
+import { cleanBody, extractSubjectTemplate, htmlToPlain } from '../index.js';
 
 describe('cleanBody', () => {
   it('strips quoted reply lines', () => {
@@ -56,5 +56,23 @@ describe('extractSubjectTemplate', () => {
   it('returns null for empty input', () => {
     expect(extractSubjectTemplate(null)).toBeNull();
     expect(extractSubjectTemplate('')).toBeNull();
+  });
+});
+
+describe('htmlToPlain', () => {
+  it('strips tags and decodes common entities', () => {
+    const html =
+      '<style>.x{color:red}</style><p>Hello&nbsp;world &amp; <strong>friends</strong>!</p>';
+    const out = htmlToPlain(html);
+    expect(out).toContain('Hello world & friends!');
+    expect(out).not.toContain('<');
+    expect(out).not.toContain('color:red');
+  });
+
+  it('preserves paragraph breaks', () => {
+    const out = htmlToPlain('<p>Line one</p><p>Line two</p>');
+    expect(out).toContain('Line one');
+    expect(out).toContain('Line two');
+    expect(out.indexOf('Line one')).toBeLessThan(out.indexOf('Line two'));
   });
 });

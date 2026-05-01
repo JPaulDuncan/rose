@@ -280,11 +280,41 @@ export function startGeneratePageWorker() {
       const totalChars = totalBodyChars(pageEmails);
       const isThin = totalChars < 30;
 
+      // If the trigger email *itself* has no usable signal (no subject,
+      // no sender, no body), and we're not joining an existing page, skip
+      // it entirely. A page that only says "(no subject) — from unknown"
+      // is worse than no page at all.
+      const triggerHasSubject = (triggerEmail.subject ?? '').trim().length > 0;
+      const triggerHasSender = !!triggerEmail.from?.address;
+      const triggerHasBody =
+        ((triggerEmail.text ?? '') || (triggerEmail.rawText ?? '')).trim().length > 0;
+      const triggerIsUseless = !triggerHasSubject && !triggerHasSender && !triggerHasBody;
+      if (
+        !assignment.page &&
+        pageEmails.length === 1 &&
+        triggerIsUseless
+      ) {
+        logger.info(
+          { emailId: String(triggerEmail._id) },
+          'skipping useless email (no subject, no sender, no body)',
+        );
+        triggerEmail.ingestStatus = 'skipped';
+        triggerEmail.error =
+          'Skipped: email has no subject, no sender, and no body — nothing to summarize.';
+        await triggerEmail.save();
+        await job.updateProgress({
+          type: 'completed',
+          jobId: String(job.id),
+        });
+        return { skipped: true };
+      }
+
       let draft;
       if (isThin) {
-        // Bodies are empty or near-empty. Skip the LLM entirely and produce
-        // a metadata-only placeholder so the page still anchors the source
-        // emails and offers a back-link, but doesn't hallucinate filler.
+        // Bodies are empty or near-empty but at least one of subject/sender
+        // is present. Skip the LLM and produce a metadata-only placeholder
+        // so the page still anchors the source emails and offers a
+        // back-link, but doesn't hallucinate filler.
         logger.info(
           { totalChars, emailCount: pageEmails.length },
           'thin content — using metadata placeholder instead of LLM call',

@@ -127,9 +127,44 @@ function deriveThreadKey(parsed: ParsedMail): string | null {
   return null;
 }
 
+/**
+ * Convert raw HTML to plain text for emails whose text/plain alternative
+ * is empty or missing. Strips scripts/styles, decodes a handful of common
+ * entities, collapses whitespace. Not intended to be a full HTML→text
+ * converter — just a good-enough fallback so notification-style emails
+ * with HTML-only bodies don't read as "no content".
+ */
+export function htmlToPlain(html: string): string {
+  if (!html) return '';
+  return html
+    .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<\/(p|div|li|tr|br|h[1-6])>/gi, '\n')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;|&#160;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;|&#34;/g, '"')
+    .replace(/&apos;|&#39;/g, "'")
+    .replace(/&#(\d+);/g, (_, n: string) => String.fromCodePoint(Number(n)))
+    .replace(/ /g, ' ')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n[ \t]+/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/ +([,.;:!?])/g, '$1')
+    .trim();
+}
+
 export async function parseEmail(raw: Buffer | string): Promise<CleanedEmail> {
   const parsed = await simpleParser(raw, { skipHtmlToText: false });
-  const text = parsed.text ?? '';
+  // mailparser auto-converts HTML→text when skipHtmlToText is false, but its
+  // converter sometimes drops everything (especially heavily-styled marketing
+  // emails). If text comes back empty but HTML is present, try our own pass.
+  const html = typeof parsed.html === 'string' ? parsed.html : null;
+  let text = (parsed.text ?? '').trim();
+  if (!text && html) text = htmlToPlain(html);
   const cleaned = cleanBody(text);
   const fromAddrs = pickAddresses(parsed.from);
   const toAddrs = pickAddresses(parsed.to);
@@ -148,7 +183,7 @@ export async function parseEmail(raw: Buffer | string): Promise<CleanedEmail> {
     date: parsed.date ?? null,
     text: cleaned,
     rawText: text,
-    html: typeof parsed.html === 'string' ? parsed.html : null,
+    html,
     attachments: (parsed.attachments ?? []).map((a) => ({
       filename: a.filename ?? 'attachment',
       contentType: a.contentType ?? 'application/octet-stream',

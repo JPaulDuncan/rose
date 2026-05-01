@@ -16,6 +16,7 @@ type EmailRow = {
   ingestStatus: string;
   pageId?: string;
   pageSlug?: string | null;
+  error?: string | null;
   createdAt: string;
 };
 
@@ -161,13 +162,20 @@ export default function InboxPage() {
                   {e.from?.name || e.from?.address} · {new Date(e.date ?? e.createdAt).toLocaleString()}
                 </div>
               </div>
-              <span className={statusClass(e.ingestStatus)}>{e.ingestStatus}</span>
+              <span
+                className={statusClass(e.ingestStatus)}
+                title={e.error ?? undefined}
+              >
+                {e.ingestStatus}
+              </span>
               {e.pageSlug && (
                 <Link to={`/p/${e.pageSlug}`} className="btn-ghost text-xs">
                   View page
                 </Link>
               )}
-              {(e.ingestStatus === 'parsed' || e.ingestStatus === 'failed') && (
+              {(e.ingestStatus === 'parsed' ||
+                e.ingestStatus === 'failed' ||
+                e.ingestStatus === 'skipped') && (
                 <button
                   className="btn-ghost"
                   onClick={() => regenerate.mutate(e._id)}
@@ -325,5 +333,6 @@ function statusClass(s: string): string {
   if (s === 'generated') return base + ' !bg-emerald-100 !text-emerald-800 dark:!bg-emerald-900/30 dark:!text-emerald-300';
   if (s === 'failed') return base + ' !bg-red-100 !text-red-800 dark:!bg-red-900/30 dark:!text-red-300';
   if (s === 'parsed') return base + ' !bg-amber-100 !text-amber-800 dark:!bg-amber-900/30 dark:!text-amber-300';
+  if (s === 'skipped') return base + ' !bg-ink-200 !text-ink-700 dark:!bg-ink-800 dark:!text-ink-300';
   return base;
 }
