@@ -196,9 +196,15 @@ export function startGeneratePageWorker() {
     QUEUE,
     async (job: Job<GenerateJobData>) => {
       const userId = new Types.ObjectId(job.data.userId);
-      const triggerEmail = await Email.findOne({ _id: job.data.emailId, userId }).select(
-        '+embedding embeddingModel',
-      );
+      // NOTE: `.select('+embedding embeddingModel')` switches Mongoose into
+      // inclusion mode and returns ONLY those two fields — that bug erased
+      // subject/from/date/text and produced "(no subject) — unknown sender"
+      // pages for every email. Using a single `+`-prefixed field correctly
+      // augments the default selection.
+      const triggerEmail = await Email.findOne({
+        _id: job.data.emailId,
+        userId,
+      }).select('+embedding');
       if (!triggerEmail) throw new Error('Email not found');
 
       await job.updateProgress({ type: 'started', jobId: String(job.id) });

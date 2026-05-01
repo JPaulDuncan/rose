@@ -150,7 +150,7 @@ export async function recomputeCentroid(page: PageDoc): Promise<number[] | null>
   const ids = (page.sourceEmailIds ?? []) as Types.ObjectId[];
   if (!ids.length) return null;
   const emails = await Email.find({ _id: { $in: ids } })
-    .select('+embedding embeddingModel')
+    .select('+embedding')
     .lean();
   const vecs = emails
     .map((e) => e.embedding as number[] | null)
