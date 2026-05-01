@@ -53,6 +53,7 @@ REQUIREMENTS
 - Body: markdown. Pick H2 sections that fit the source, drawn from this set: "Overview", "Participants", "Timeline", "Decisions", "Action Items", "Open Questions", "Key Points", "References". When more than one thread is present, include a "Threads" section with one short paragraph per thread (subject, date range, what was decided), each citing the messages in that thread. Use bullet lists for action items.
 - Citations: every factual claim, decision, action item, quote, or attributed statement MUST be followed by an inline citation referencing the source email using the exact label provided — e.g. \`The deploy is on Friday [e2]\` or \`Costs were debated [e1, e3]\`. Multiple labels comma-separated inside one bracket. Only use labels that appear below; never invent labels.
 - Do NOT invent participants, dates, numbers, or decisions that aren't in the source. If messages contradict each other, note the disagreement and cite both.
+- NEVER write filler or meta-commentary about the source — phrases like "the email is empty", "no content provided", "this thread has no information", "the message contains only a subject" are forbidden. If body text is sparse, work from the available metadata (subject, sender, date) instead. If there is genuinely nothing to say, output an "Overview" with one sentence using only that metadata.
 - Tags: 3–7 short lowercase tags, hyphenated.
 
 ADDITIONAL INSTRUCTIONS FROM USER:

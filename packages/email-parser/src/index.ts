@@ -37,11 +37,16 @@ const SIGNATURE_DELIMITERS = [/^-- $/m, /^—\s*$/m, /^_{2,}\s*$/m];
 const QUOTE_LINE = /^>\s?/;
 const ON_WROTE = /^(On\s.+wrote:|From:.+\nSent:.+\nTo:.+\nSubject:.+)/m;
 const FORWARDED = /^-{2,}\s*Forwarded message\s*-{2,}/im;
+/** Below this threshold the original message is so short that any of our
+ *  strip rules might erase the meaningful content. We bail and return the
+ *  trimmed input instead of an empty string. */
+const MIN_KEEP_LEN = 30;
 
 /** Strip quoted replies and signatures while keeping useful body text. */
 export function cleanBody(input: string): string {
   if (!input) return '';
-  let text = input.replace(/\r\n/g, '\n');
+  const original = input.replace(/\r\n/g, '\n').trim();
+  let text = original;
 
   for (const delim of SIGNATURE_DELIMITERS) {
     const idx = text.search(delim);
@@ -59,7 +64,15 @@ export function cleanBody(input: string): string {
     .filter((line) => !QUOTE_LINE.test(line))
     .join('\n');
 
-  return text.replace(/\n{3,}/g, '\n\n').trim();
+  const cleaned = text.replace(/\n{3,}/g, '\n\n').trim();
+  // Safety net: when the heuristics erase everything (e.g. a body that
+  // starts with "-- " or a single quoted line), fall back to the trimmed
+  // original so downstream generation has *something* to work with — but
+  // only when the original was non-trivial.
+  if (cleaned.length === 0 && original.length >= MIN_KEEP_LEN) {
+    return original;
+  }
+  return cleaned;
 }
 
 function pickAddresses(addr: AddressObject | AddressObject[] | undefined) {

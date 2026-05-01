@@ -226,8 +226,11 @@ export default function PageView() {
         )}
       </article>
 
-      {mode === 'view' && page.citations && Object.keys(page.citations).length > 0 && (
-        <SourcesSection citations={page.citations} />
+      {mode === 'view' && (
+        <SourcesSection
+          citations={page.citations ?? {}}
+          sourceEmailIds={page.sourceEmailIds ?? []}
+        />
       )}
 
       {showRevisions && revisions && (
@@ -403,21 +406,63 @@ function CitationChip({
   );
 }
 
-function SourcesSection({ citations }: { citations: Record<string, Citation> }) {
-  const labels = Object.keys(citations).sort((a, b) => {
-    const na = Number(a.slice(1));
-    const nb = Number(b.slice(1));
-    return na - nb;
+type EmailMeta = {
+  _id: string;
+  subject?: string;
+  from?: { name?: string; address?: string } | null;
+  date?: string | null;
+};
+
+function SourcesSection({
+  citations,
+  sourceEmailIds,
+}: {
+  citations: Record<string, Citation>;
+  sourceEmailIds: string[];
+}) {
+  const api = useApi();
+  // Ids that aren't already represented in citations — we batch-fetch
+  // metadata for these so the section is always populated, even when the
+  // LLM didn't emit any [eN] tokens (thin emails, edited markdown, etc.).
+  const citedIds = new Set(Object.values(citations).map((c) => c.emailId));
+  const uncitedIds = sourceEmailIds.filter((id) => !citedIds.has(id));
+
+  const { data } = useQuery({
+    queryKey: ['emails-by-ids', uncitedIds],
+    queryFn: () =>
+      api.post<{ emails: EmailMeta[] }>('/api/emails/by-ids', { ids: uncitedIds }),
+    enabled: uncitedIds.length > 0,
+    staleTime: 30_000,
   });
+
+  // Synthesize stable labels (s1, s2, …) for sources with no citation token.
+  const synthesized: { label: string; data: Citation }[] = (data?.emails ?? []).map(
+    (e, i) => ({
+      label: `s${i + 1}`,
+      data: {
+        emailId: e._id,
+        subject: e.subject ?? '',
+        from: e.from?.name ?? e.from?.address ?? null,
+        date: e.date ?? null,
+      },
+    }),
+  );
+  const cited: { label: string; data: Citation }[] = Object.entries(citations)
+    .map(([label, c]) => ({ label, data: c }))
+    .sort((a, b) => Number(a.label.slice(1)) - Number(b.label.slice(1)));
+
+  const all = [...cited, ...synthesized];
+  if (all.length === 0) return null;
+
   return (
     <section className="card mt-6">
       <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold">
         <Mail className="h-4 w-4 text-rose-500" />
-        Sources ({labels.length})
+        Sources ({all.length})
       </h2>
       <ol className="space-y-2 text-sm">
-        {labels.map((label) => {
-          const c = citations[label]!;
+        {all.map(({ label, data: c }) => {
+          const isCited = label.startsWith('e');
           return (
             <li
               key={label}
@@ -425,9 +470,18 @@ function SourcesSection({ citations }: { citations: Record<string, Citation> }) 
               className="rounded-lg border border-ink-200 p-2 transition-colors dark:border-ink-800"
             >
               <div className="flex items-start gap-2">
-                <span className="rounded bg-rose-100 px-1.5 py-0.5 text-[10px] font-semibold text-rose-700 dark:bg-rose-950/50 dark:text-rose-300">
-                  {label}
-                </span>
+                {isCited ? (
+                  <span className="rounded bg-rose-100 px-1.5 py-0.5 text-[10px] font-semibold text-rose-700 dark:bg-rose-950/50 dark:text-rose-300">
+                    {label}
+                  </span>
+                ) : (
+                  <span
+                    className="rounded bg-ink-100 px-1.5 py-0.5 text-[10px] font-semibold text-ink-600 dark:bg-ink-800 dark:text-ink-300"
+                    title="Source email — not directly cited in the body"
+                  >
+                    src
+                  </span>
+                )}
                 <div className="min-w-0 flex-1">
                   <div className="truncate font-medium">{c.subject || '(no subject)'}</div>
                   <div className="text-xs text-ink-500">

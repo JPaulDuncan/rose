@@ -23,6 +23,14 @@ describe('cleanBody', () => {
     expect(out).toContain('Reply text');
     expect(out).not.toContain('old stuff');
   });
+
+  it('does not over-strip a short body that looks signature-like', () => {
+    // Without the safety net, the leading "-- " would erase everything.
+    const input = `-- \nThe quick brown fox jumps over the lazy dog and goes home.`;
+    const out = cleanBody(input);
+    expect(out.length).toBeGreaterThan(0);
+    expect(out).toContain('quick brown fox');
+  });
 });
 
 describe('extractSubjectTemplate', () => {

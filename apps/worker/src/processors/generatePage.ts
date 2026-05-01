@@ -173,6 +173,13 @@ function isNotificationStream(emails: EmailDoc[]): {
   return { yes: ratio >= 0.7, template: topTemplate, ratio };
 }
 
+/** Total length of meaningful body text across all emails on the page. */
+function totalBodyChars(emails: EmailDoc[]): number {
+  let n = 0;
+  for (const e of emails) n += (e.text || e.rawText || '').trim().length;
+  return n;
+}
+
 function dateRangeOf(emails: EmailDoc[]): string {
   const ds = emails
     .map((e) => (e.date ? new Date(e.date) : null))
@@ -270,30 +277,84 @@ export function startGeneratePageWorker() {
         'generating',
       );
 
-      let buffered = '';
-      for await (const chunk of provider.generateStream({
-        model: genModel,
-        prompt,
-        system: SYSTEM_PROMPT_BASE,
-        format: 'json',
-        temperature: 0.2,
-      })) {
-        buffered += chunk.response;
-        if (chunk.response) {
-          await job.updateProgress({
-            type: 'token',
-            jobId: String(job.id),
-            token: chunk.response,
-          });
-        }
-      }
+      const totalChars = totalBodyChars(pageEmails);
+      const isThin = totalChars < 30;
 
       let draft;
-      try {
-        draft = PageGenerationDraft.parse(extractJson(buffered));
-      } catch (err) {
-        logger.warn({ err, raw: buffered.slice(0, 400) }, 'failed to parse generation draft');
-        throw new Error('LLM returned invalid JSON for page generation');
+      if (isThin) {
+        // Bodies are empty or near-empty. Skip the LLM entirely and produce
+        // a metadata-only placeholder so the page still anchors the source
+        // emails and offers a back-link, but doesn't hallucinate filler.
+        logger.info(
+          { totalChars, emailCount: pageEmails.length },
+          'thin content — using metadata placeholder instead of LLM call',
+        );
+        const senderList = [
+          ...new Set(
+            pageEmails
+              .map((e) => e.from?.address?.toLowerCase())
+              .filter((a): a is string => !!a),
+          ),
+        ];
+        const dr = dateRangeOf(pageEmails);
+        const subj = pageEmails[0]?.subject?.trim() || '(no subject)';
+        const title =
+          (subj && subj.length <= 80
+            ? subj
+            : senderList[0]
+              ? `Messages from ${senderList[0]}`
+              : 'Messages with no body') || 'Untitled page';
+        const summary =
+          `${pageEmails.length} message${pageEmails.length === 1 ? '' : 's'} ` +
+          (senderList.length
+            ? `from ${senderList.slice(0, 2).join(', ')}${senderList.length > 2 ? ` +${senderList.length - 2} more` : ''}`
+            : 'from unknown sender(s)') +
+          (dr ? ` (${dr})` : '') +
+          '. Bodies are empty or very short — see the source emails below for the original content.';
+        const lines = labels
+          .map(({ label, email: e }) => {
+            const dt = e.date ? new Date(e.date).toLocaleString() : '';
+            const fromAddr = e.from?.address ?? 'unknown';
+            const sub = (e.subject || '(no subject)').replace(/\s+/g, ' ').slice(0, 120);
+            return `- **${sub}** — from ${fromAddr}${dt ? ` on ${dt}` : ''} [${label}]`;
+          })
+          .join('\n');
+        draft = {
+          title,
+          summary: summary.slice(0, 280),
+          contentMd: `## Overview\n\nThis page tracks ${pageEmails.length} message${
+            pageEmails.length === 1 ? ' that has' : 's that have'
+          } no usable body content; only the headers (sender, subject, date) are available.\n\n## Messages\n\n${lines}`,
+          tags: ['empty-body'],
+          suggestedCategory: null,
+        };
+      } else {
+        let buffered = '';
+        for await (const chunk of provider.generateStream({
+          model: genModel,
+          prompt,
+          system: SYSTEM_PROMPT_BASE,
+          format: 'json',
+          temperature: 0.2,
+        })) {
+          buffered += chunk.response;
+          if (chunk.response) {
+            await job.updateProgress({
+              type: 'token',
+              jobId: String(job.id),
+              token: chunk.response,
+            });
+          }
+        }
+        try {
+          draft = PageGenerationDraft.parse(extractJson(buffered));
+        } catch (err) {
+          logger.warn(
+            { err, raw: buffered.slice(0, 400) },
+            'failed to parse generation draft',
+          );
+          throw new Error('LLM returned invalid JSON for page generation');
+        }
       }
 
       // Categories

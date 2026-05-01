@@ -62,6 +62,27 @@ emailsRouter.get('/', async (req, res) => {
   res.json({ emails: enriched });
 });
 
+/**
+ * Batch lookup so the page view can resolve sourceEmailIds → metadata in
+ * one round trip. Returns at most 200 rows; ids that don't belong to the
+ * caller or don't exist are silently dropped.
+ */
+emailsRouter.post('/by-ids', async (req, res) => {
+  const userId = new Types.ObjectId(userIdOf(req));
+  const ids = ((req.body as { ids?: unknown })?.ids ?? []) as unknown[];
+  const valid = ids
+    .filter((x): x is string => typeof x === 'string' && Types.ObjectId.isValid(x))
+    .slice(0, 200);
+  if (!valid.length) {
+    res.json({ emails: [] });
+    return;
+  }
+  const emails = await Email.find({ userId, _id: { $in: valid } })
+    .select('_id subject from date pageId ingestStatus')
+    .lean();
+  res.json({ emails });
+});
+
 emailsRouter.get('/:id', async (req, res) => {
   const userId = new Types.ObjectId(userIdOf(req));
   if (!Types.ObjectId.isValid(req.params.id)) {
