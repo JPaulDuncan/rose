@@ -21,6 +21,7 @@ import { digestRouter } from './routes/digest.js';
 import { tagsRouter } from './routes/tags.js';
 import { spamRouter } from './routes/spam.js';
 import { featuredTagsRouter } from './routes/featuredTags.js';
+import { weatherRouter } from './routes/weather.js';
 import { webhookRouter } from './routes/webhook.js';
 import { providersRouter } from './routes/providers.js';
 import { modelsRouter, modelsStreamRouter } from './routes/models.js';
@@ -78,6 +79,7 @@ export async function createServer(): Promise<Express> {
   app.use('/api/tags', requireAuth, tagsRouter);
   app.use('/api/spam', requireAuth, spamRouter);
   app.use('/api/featured-tags', requireAuth, featuredTagsRouter);
+  app.use('/api/weather', requireAuth, weatherRouter);
   app.use('/api/providers', requireAuth, providersRouter);
   // Streaming pull auth via query param; mount before the protected models router.
   app.use('/api/models', modelsStreamRouter);

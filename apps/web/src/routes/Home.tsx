@@ -96,6 +96,7 @@ export default function HomePage() {
   return (
     <div className="mx-auto w-full max-w-6xl px-6 py-10">
       <Masthead edition={data.edition} stats={data.stats} />
+      <WeatherCard />
 
       <div className="grid gap-8 lg:grid-cols-[1fr_280px]">
         <div className="min-w-0 space-y-10">
@@ -313,9 +314,11 @@ function BucketSection({
         <div className="h-px flex-1 bg-ink-200 dark:bg-ink-800" />
         <span className="text-xs text-ink-400">{pages.length}</span>
       </div>
-      <div className="grid gap-3 sm:grid-cols-2">
+      <div className="gap-3 sm:columns-2 xl:columns-3 [&>*]:mb-3">
         {pages.map((p) => (
-          <PageCard key={p._id} page={p} />
+          <div key={p._id} className="break-inside-avoid">
+            <PageCard page={p} />
+          </div>
         ))}
       </div>
     </section>
@@ -700,5 +703,112 @@ function FeaturedTagsWidget({ featuredTags }: { featuredTags: string[] }) {
         </div>
       )}
     </div>
+  );
+}
+
+type WeatherPeriod = {
+  number: number;
+  name: string;
+  temperature: number;
+  temperatureUnit: string;
+  shortForecast: string;
+  windSpeed: string;
+  icon?: string;
+  isDaytime: boolean;
+};
+
+type WeatherOk = {
+  configured: true;
+  location: { lat: number; lon: number; label: string };
+  current: WeatherPeriod | null;
+  periods: WeatherPeriod[];
+  brief: string;
+  fetchedAt: string;
+  cached: boolean;
+  error?: undefined;
+};
+type WeatherErr = { configured: true; error: string; message?: string };
+type WeatherUnconfigured = { configured: false };
+type Weather = WeatherUnconfigured | WeatherOk | WeatherErr;
+
+function WeatherCard() {
+  const api = useApi();
+  const { data } = useQuery({
+    queryKey: ['weather'],
+    queryFn: () => api.get<Weather>('/api/weather'),
+    refetchInterval: 30 * 60_000,
+    staleTime: 5 * 60_000,
+  });
+
+  if (!data || data.configured === false) {
+    return (
+      <div className="-mt-4 mb-8 rounded-xl border border-dashed border-ink-300 px-4 py-3 text-xs text-ink-500 dark:border-ink-700">
+        Set your location in{' '}
+        <Link
+          to="/settings/newsletter"
+          className="font-medium text-rose-600 hover:underline dark:text-rose-300"
+        >
+          Settings → Newsletter
+        </Link>{' '}
+        to see today's weather here.
+      </div>
+    );
+  }
+
+  if (data.error) {
+    const err = data as WeatherErr;
+    return (
+      <div className="-mt-4 mb-8 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-xs text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100">
+        Weather temporarily unavailable: {err.message ?? err.error}
+      </div>
+    );
+  }
+
+  const ok = data as WeatherOk;
+  const cur = ok.current;
+  return (
+    <section className="-mt-4 mb-8 overflow-hidden rounded-xl border border-ink-200 bg-gradient-to-r from-sky-50 via-white to-rose-50 dark:border-ink-800 dark:from-sky-950/30 dark:via-ink-900 dark:to-rose-950/20">
+      <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center">
+        {cur?.icon && (
+          <img
+            src={cur.icon}
+            alt={cur.shortForecast}
+            className="h-16 w-16 shrink-0 rounded-lg border border-ink-200 bg-white object-cover dark:border-ink-700"
+            referrerPolicy="no-referrer"
+          />
+        )}
+        <div className="min-w-0 flex-1">
+          <div className="text-[10px] uppercase tracking-widest text-ink-500">
+            Forecast for {ok.location.label}
+          </div>
+          {cur && (
+            <div className="mt-0.5 flex items-baseline gap-2">
+              <span className="font-serif text-3xl font-bold tracking-tight">
+                {cur.temperature}°{cur.temperatureUnit}
+              </span>
+              <span className="text-sm text-ink-700 dark:text-ink-200">
+                {cur.shortForecast}
+              </span>
+              <span className="text-xs text-ink-500">· {cur.windSpeed}</span>
+            </div>
+          )}
+          {ok.brief && (
+            <p className="mt-2 text-sm leading-relaxed text-ink-700 dark:text-ink-200">
+              {ok.brief}
+            </p>
+          )}
+          {ok.periods.length > 1 && (
+            <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-ink-500">
+              {ok.periods.slice(1, 4).map((p: WeatherPeriod) => (
+                <span key={p.number}>
+                  <span className="font-medium text-ink-700 dark:text-ink-200">{p.name}</span>{' '}
+                  {p.temperature}°{p.temperatureUnit} · {p.shortForecast}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </section>
   );
 }

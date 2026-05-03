@@ -17,6 +17,7 @@ import SourcesSettings from './routes/settings/Sources';
 import InstructionsSettings from './routes/settings/Instructions';
 import ModelsSettings from './routes/settings/Models';
 import SpamSettings from './routes/settings/Spam';
+import NewsletterSettings from './routes/settings/Newsletter';
 
 function ProtectedShell() {
   const { user, ready } = useAuth();
@@ -60,6 +61,7 @@ export default function App() {
           <Route path="instructions" element={<InstructionsSettings />} />
           <Route path="models" element={<ModelsSettings />} />
           <Route path="spam" element={<SpamSettings />} />
+          <Route path="newsletter" element={<NewsletterSettings />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>

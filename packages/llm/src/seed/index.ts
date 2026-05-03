@@ -100,4 +100,22 @@ NEIGHBOR:
 Return JSON only:
 {"isDuplicate": <bool>, "confidence": <0..1>, "reason": "<one sentence>"}`,
   },
+  {
+    name: 'weather.brief',
+    scope: 'weather',
+    description:
+      "Concise weather brief shown at the top of the user's daily newsletter, written from NOAA forecast data.",
+    variables: ['location', 'now', 'forecast_data'],
+    isDefault: true,
+    template: `You are writing a brief weather update for "{{location}}" to sit at the top of a daily newsletter. Use ONLY the NOAA forecast JSON below — never invent specifics.
+
+Output 2-3 short sentences (≤ 80 words total). Mention current conditions, today's high/low if knowable from the periods, and any meaningful change in the next 24 hours (rain moving in, temp drop, wind picking up). Friendly, plain-spoken tone — no caveats like "according to the forecast", no preamble, no markdown headers.
+
+Current time: {{now}}
+
+NOAA periods:
+{{forecast_data}}
+
+Output the brief only.`,
+  },
 ];

@@ -3,6 +3,7 @@ import clsx from 'clsx';
 
 const TABS = [
   { to: 'account', label: 'Account' },
+  { to: 'newsletter', label: 'Newsletter' },
   { to: 'sources', label: 'Sources' },
   { to: 'instructions', label: 'Instructions' },
   { to: 'models', label: 'Models' },

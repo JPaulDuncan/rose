@@ -1,6 +1,13 @@
 import { z } from 'zod';
 
-export const InstructionScope = z.enum(['parse', 'categorize', 'generate', 'link', 'dedupe']);
+export const InstructionScope = z.enum([
+  'parse',
+  'categorize',
+  'generate',
+  'link',
+  'dedupe',
+  'weather',
+]);
 export type InstructionScope = z.infer<typeof InstructionScope>;
 
 export const Instruction = z.object({

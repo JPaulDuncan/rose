@@ -6,7 +6,7 @@ const instructionSchema = new Schema(
     name: { type: String, required: true },
     scope: {
       type: String,
-      enum: ['parse', 'categorize', 'generate', 'link', 'dedupe'],
+      enum: ['parse', 'categorize', 'generate', 'link', 'dedupe', 'weather'],
       required: true,
     },
     description: { type: String, default: '' },

@@ -56,6 +56,13 @@ const userSchema = new Schema(
      * (the array order is the section order in the UI).
      */
     featuredTags: { type: [String], default: [] },
+    /** Optional location for the newsletter weather widget. */
+    weatherLocation: {
+      lat: { type: Number, default: null },
+      lon: { type: Number, default: null },
+      label: { type: String, default: null },
+      setAt: { type: Date, default: null },
+    },
   },
   { timestamps: true },
 );
