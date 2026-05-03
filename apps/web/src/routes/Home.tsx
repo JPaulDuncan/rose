@@ -16,6 +16,7 @@ import {
   Star,
   Plus,
   X,
+  MapPin,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useApi } from '../lib/api';
@@ -101,6 +102,7 @@ export default function HomePage() {
       <div className="grid gap-8 lg:grid-cols-[1fr_280px]">
         <div className="min-w-0 space-y-10">
           {data.lead && <LeadStory page={data.lead} />}
+          <UpcomingEvents />
           {data.featuredSections.length > 0 && (
             <FeaturedSections sections={data.featuredSections} excludeId={data.lead?._id} />
           )}
@@ -861,5 +863,119 @@ function WeatherCard() {
         </div>
       </div>
     </section>
+  );
+}
+
+type UpcomingEvent = {
+  _id: string;
+  title: string;
+  start: string;
+  end: string | null;
+  allDay: boolean;
+  location: string | null;
+  description: string;
+  pageSlug: string | null;
+  pageId: string | null;
+  sourceEmailId: string;
+};
+
+function UpcomingEvents() {
+  const api = useApi();
+  const { data } = useQuery({
+    queryKey: ['events-upcoming-newsletter'],
+    queryFn: () =>
+      api.get<{ events: UpcomingEvent[] }>('/api/events/upcoming?limit=8'),
+    refetchInterval: 5 * 60_000,
+  });
+
+  if (!data || data.events.length === 0) return null;
+
+  return (
+    <section className="space-y-4 border-t-4 border-double border-ink-900 pt-8 dark:border-ink-100">
+      <div className="border-b-2 border-ink-900 pb-2 dark:border-ink-100">
+        <div className="text-[10px] uppercase tracking-[0.25em] text-ink-500">
+          Datebook
+        </div>
+        <div className="mt-0.5 flex items-baseline justify-between gap-4">
+          <h2 className="font-serif text-4xl font-black leading-none tracking-tight">
+            The Week Ahead
+          </h2>
+          <Link
+            to="/calendar"
+            className="shrink-0 text-[11px] uppercase tracking-widest text-ink-500 hover:text-ink-900 dark:hover:text-ink-100"
+          >
+            {data.events.length} upcoming ·{' '}
+            <span className="font-medium text-rose-600 dark:text-rose-300">
+              See calendar →
+            </span>
+          </Link>
+        </div>
+      </div>
+
+      <ul className="divide-y divide-ink-200 dark:divide-ink-800">
+        {data.events.map((e) => (
+          <DatebookRow key={e._id} e={e} />
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+function DatebookRow({ e }: { e: UpcomingEvent }) {
+  const start = new Date(e.start);
+  const dateLabel = start
+    .toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+    .toUpperCase();
+  const weekday = start.toLocaleDateString(undefined, { weekday: 'short' });
+  return (
+    <li className="grid gap-4 py-4 sm:grid-cols-[120px_1fr]">
+      <div className="text-center sm:border-r sm:border-ink-200 sm:pr-4 sm:text-right sm:dark:border-ink-800">
+        <div className="font-serif text-2xl font-bold leading-none tracking-tight">
+          {dateLabel}
+        </div>
+        <div className="mt-1 text-[10px] uppercase tracking-widest text-ink-500">
+          {weekday}
+        </div>
+        <div className="mt-1 text-xs font-medium text-ink-700 dark:text-ink-200">
+          {e.allDay
+            ? 'All day'
+            : start.toLocaleTimeString(undefined, {
+                hour: 'numeric',
+                minute: start.getMinutes() === 0 ? undefined : '2-digit',
+              })}
+        </div>
+      </div>
+      <div className="min-w-0">
+        <h3 className="font-serif text-lg font-semibold leading-snug">
+          {e.title}
+        </h3>
+        {e.location && (
+          <div className="mt-1 inline-flex items-center gap-1 text-xs text-ink-500">
+            <MapPin className="h-3 w-3" /> {e.location}
+          </div>
+        )}
+        {e.description && (
+          <p className="mt-1 text-sm text-ink-600 line-clamp-2 dark:text-ink-300">
+            {e.description}
+          </p>
+        )}
+        <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs">
+          {e.pageSlug && (
+            <Link
+              to={`/p/${e.pageSlug}`}
+              className="font-medium text-rose-600 hover:underline dark:text-rose-300"
+            >
+              Open wiki page →
+            </Link>
+          )}
+          <Link
+            to={`/e/${e.sourceEmailId}`}
+            className="text-ink-500 hover:text-ink-900 dark:hover:text-ink-100"
+          >
+            Source email
+          </Link>
+        </div>
+      </div>
+    </li>
   );
 }
