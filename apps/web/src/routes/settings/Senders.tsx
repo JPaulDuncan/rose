@@ -304,8 +304,14 @@ function SenderDetailPanel({ brandKey }: { brandKey: string }) {
           )}
 
           <div className="flex flex-wrap gap-2">
-            <button
+            <Link
+              to={`/s/${encodeURIComponent(brandKey)}`}
               className="btn-secondary text-xs"
+            >
+              <ExternalLink className="h-3.5 w-3.5" /> Open page
+            </Link>
+            <button
+              className="btn-ghost text-xs"
               onClick={() => refresh.mutate()}
               disabled={refresh.isPending}
             >

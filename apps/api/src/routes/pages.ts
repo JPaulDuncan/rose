@@ -3,8 +3,32 @@ import { Types } from 'mongoose';
 import { PageUpdateRequest } from '@rose/shared';
 import { userIdOf } from '../middleware/auth.js';
 import { validateBody } from '../middleware/validate.js';
-import { Page } from '@rose/db';
+import { Page, Sender } from '@rose/db';
 import { PageRevision } from '@rose/db';
+
+/**
+ * Resolve every senderAddress on a page to its (brandKey, name, logoUrl).
+ * The Page route includes this map so the wiki view can render brand
+ * chips and link each sender to its address-book page (`/s/:brandKey`)
+ * without per-address requests.
+ */
+async function senderBrandsForPage(
+  userId: Types.ObjectId,
+  addresses: string[],
+): Promise<Record<string, { brandKey: string; name: string; logoUrl: string | null }>> {
+  if (!addresses?.length) return {};
+  const senders = await Sender.find({ userId, addresses: { $in: addresses } })
+    .select('brandKey name logoUrl addresses')
+    .lean();
+  const out: Record<string, { brandKey: string; name: string; logoUrl: string | null }> =
+    {};
+  for (const s of senders) {
+    for (const a of s.addresses ?? []) {
+      out[a] = { brandKey: s.brandKey, name: s.name, logoUrl: s.logoUrl ?? null };
+    }
+  }
+  return out;
+}
 import { embedPageQueue } from '../lib/queues.js';
 import { recordRevision, uniqueSlug } from '../services/wiki.js';
 
@@ -31,7 +55,8 @@ pagesRouter.get('/by-slug/:slug', async (req, res) => {
     res.status(404).json({ error: 'not_found', message: 'Page not found' });
     return;
   }
-  res.json(page);
+  const senderBrands = await senderBrandsForPage(userId, page.senderAddresses ?? []);
+  res.json({ ...page, senderBrands });
 });
 
 pagesRouter.get('/:id', async (req, res) => {
@@ -45,7 +70,8 @@ pagesRouter.get('/:id', async (req, res) => {
     res.status(404).json({ error: 'not_found', message: 'Page not found' });
     return;
   }
-  res.json(page);
+  const senderBrands = await senderBrandsForPage(userId, page.senderAddresses ?? []);
+  res.json({ ...page, senderBrands });
 });
 
 pagesRouter.patch('/:id', validateBody(PageUpdateRequest), async (req, res) => {

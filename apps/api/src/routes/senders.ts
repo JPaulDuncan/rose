@@ -47,6 +47,25 @@ sendersRouter.get('/', async (req, res) => {
 });
 
 /**
+ * Resolve any email address to its Sender record's brandKey. The web
+ * client uses this to make every sender chip / attribution link
+ * deep-linkable to /s/:brandKey without needing to know the brand
+ * convention. Returns 404 when we don't have an entry yet.
+ */
+sendersRouter.get('/by-address/:address', async (req, res) => {
+  const userId = new Types.ObjectId(userIdOf(req));
+  const addr = req.params.address.toLowerCase();
+  const sender = await Sender.findOne({ userId, addresses: addr })
+    .select('brandKey name')
+    .lean();
+  if (!sender) {
+    res.status(404).json({ error: 'not_found' });
+    return;
+  }
+  res.json({ brandKey: sender.brandKey, name: sender.name });
+});
+
+/**
  * Look up by `brandKey` instead of ObjectId — the URL stays stable when
  * the same Sender doc gets recreated by reset-wiki. Returns the sender
  * plus its 8 most recent contributing pages (slug/title) so the detail

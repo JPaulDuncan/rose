@@ -380,6 +380,9 @@ function PageCard({ page }: { page: DigestPage }) {
   const primaryAddress = page.senderAddresses?.[0];
   const brand = useBrandFor(primaryAddress);
   const senderLabel = brand?.name ?? primaryAddress;
+  const senderHref = brand
+    ? `/s/${encodeURIComponent(brand.brandKey)}`
+    : null;
   return (
     <Link
       to={`/p/${page.slug}`}
@@ -401,8 +404,26 @@ function PageCard({ page }: { page: DigestPage }) {
           </h3>
           {(senderLabel || page.sourceEmailIds.length > 0) && (
             <div className="mt-0.5 flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-ink-500">
-              {primaryAddress && <BrandChip address={primaryAddress} />}
-              {senderLabel && <span className="truncate">By {senderLabel}</span>}
+              {senderHref && senderLabel ? (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    navigate(senderHref);
+                  }}
+                  className="inline-flex items-center gap-1.5 truncate rounded hover:text-rose-700 dark:hover:text-rose-300"
+                  title={`Open ${senderLabel}'s page`}
+                >
+                  {primaryAddress && <BrandChip address={primaryAddress} />}
+                  <span className="truncate">By {senderLabel}</span>
+                </button>
+              ) : (
+                <>
+                  {primaryAddress && <BrandChip address={primaryAddress} />}
+                  {senderLabel && <span className="truncate">By {senderLabel}</span>}
+                </>
+              )}
               {page.senderAddresses && page.senderAddresses.length > 1 && (
                 <span className="text-ink-400">+{page.senderAddresses.length - 1}</span>
               )}
@@ -695,9 +716,13 @@ function SectionCarousel({ pages }: { pages: DigestPage[] }) {
 }
 
 function FeatureLead({ page }: { page: DigestPage }) {
+  const navigate = useNavigate();
   const primaryAddress = page.senderAddresses?.[0];
   const brand = useBrandFor(primaryAddress);
   const senderLabel = brand?.name ?? primaryAddress;
+  const senderHref = brand
+    ? `/s/${encodeURIComponent(brand.brandKey)}`
+    : null;
   return (
     <Link
       to={`/p/${page.slug}`}
@@ -718,8 +743,26 @@ function FeatureLead({ page }: { page: DigestPage }) {
         </h3>
         {(senderLabel || page.sourceEmailIds.length > 0) && (
           <div className="mt-2 flex items-center gap-2 text-[11px] uppercase tracking-widest text-ink-500">
-            {primaryAddress && <BrandChip address={primaryAddress} size="lg" />}
-            {senderLabel && <span>By {senderLabel}</span>}
+            {senderHref && senderLabel ? (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  navigate(senderHref);
+                }}
+                className="inline-flex items-center gap-2 hover:text-rose-700 dark:hover:text-rose-300"
+                title={`Open ${senderLabel}'s page`}
+              >
+                {primaryAddress && <BrandChip address={primaryAddress} size="lg" />}
+                <span>By {senderLabel}</span>
+              </button>
+            ) : (
+              <>
+                {primaryAddress && <BrandChip address={primaryAddress} size="lg" />}
+                {senderLabel && <span>By {senderLabel}</span>}
+              </>
+            )}
             {page.senderAddresses && page.senderAddresses.length > 1 && (
               <span className="text-ink-400">+{page.senderAddresses.length - 1}</span>
             )}

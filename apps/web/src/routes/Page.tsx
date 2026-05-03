@@ -68,6 +68,10 @@ type PageDoc = {
     userMarkedSpam?: boolean;
     isNotificationStream?: boolean;
   };
+  senderBrands?: Record<
+    string,
+    { brandKey: string; name: string; logoUrl: string | null }
+  >;
 };
 
 type Revision = {
@@ -629,14 +633,42 @@ function Attribution({ page }: { page: PageDoc }) {
       {senders.length > 0 && (
         <span className="flex flex-wrap items-center gap-1 text-ink-500">
           · From{' '}
-          {senders.slice(0, 3).map((s) => (
-            <code
-              key={s}
-              className="rounded bg-ink-100 px-1 py-0.5 text-[10px] dark:bg-ink-800"
-            >
-              {s}
-            </code>
-          ))}
+          {senders.slice(0, 3).map((s) => {
+            const brand = page.senderBrands?.[s];
+            const label = brand?.name ?? s;
+            const inner = (
+              <>
+                {brand?.logoUrl && (
+                  <img
+                    src={brand.logoUrl}
+                    alt=""
+                    className="h-3 w-3 rounded-sm bg-white object-contain ring-1 ring-ink-200 dark:ring-ink-700"
+                    onError={(e) => {
+                      (e.currentTarget as HTMLImageElement).style.display = 'none';
+                    }}
+                  />
+                )}
+                <span>{label}</span>
+              </>
+            );
+            return brand ? (
+              <Link
+                key={s}
+                to={`/s/${encodeURIComponent(brand.brandKey)}`}
+                className="inline-flex items-center gap-1 rounded bg-ink-100 px-1 py-0.5 text-[10px] hover:bg-rose-100 hover:text-rose-700 dark:bg-ink-800 dark:hover:bg-rose-950/40 dark:hover:text-rose-300"
+                title={`Open ${label}'s address-book entry`}
+              >
+                {inner}
+              </Link>
+            ) : (
+              <code
+                key={s}
+                className="rounded bg-ink-100 px-1 py-0.5 text-[10px] dark:bg-ink-800"
+              >
+                {s}
+              </code>
+            );
+          })}
           {senders.length > 3 && <span>+{senders.length - 3} more</span>}
         </span>
       )}

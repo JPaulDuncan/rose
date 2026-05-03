@@ -389,25 +389,29 @@ function PersonaeView({ personae }: { personae: Persona[] }) {
       </div>
       <ul className="mt-6 grid gap-4 sm:grid-cols-2">
         {personae.map((p) => (
-          <li
-            key={p.brandKey}
-            className="flex gap-3 rounded-lg border border-ink-200 p-3 dark:border-ink-800"
-          >
-            <PersonaPortrait persona={p} />
-            <div className="min-w-0 flex-1">
-              <div className="font-serif text-base font-semibold">{p.name}</div>
-              {p.domain && (
-                <div className="text-xs text-ink-500">{p.domain}</div>
-              )}
-              <div className="mt-1 text-[10px] uppercase tracking-widest text-ink-400">
-                {p.pageCount} entries · {p.emailCount} messages
+          <li key={p.brandKey}>
+            <Link
+              to={`/s/${encodeURIComponent(p.brandKey)}`}
+              className="group flex gap-3 rounded-lg border border-ink-200 p-3 hover:border-rose-300 dark:border-ink-800 dark:hover:border-rose-800"
+            >
+              <PersonaPortrait persona={p} />
+              <div className="min-w-0 flex-1">
+                <div className="font-serif text-base font-semibold group-hover:text-rose-700 dark:group-hover:text-rose-300">
+                  {p.name}
+                </div>
+                {p.domain && (
+                  <div className="text-xs text-ink-500">{p.domain}</div>
+                )}
+                <div className="mt-1 text-[10px] uppercase tracking-widest text-ink-400">
+                  {p.pageCount} entries · {p.emailCount} messages
+                </div>
+                {p.summary && (
+                  <p className="mt-2 line-clamp-3 text-xs leading-snug text-ink-600 dark:text-ink-300">
+                    {p.summary}
+                  </p>
+                )}
               </div>
-              {p.summary && (
-                <p className="mt-2 line-clamp-3 text-xs leading-snug text-ink-600 dark:text-ink-300">
-                  {p.summary}
-                </p>
-              )}
-            </div>
+            </Link>
           </li>
         ))}
       </ul>
@@ -425,15 +429,20 @@ function DramatisRail({ personae }: { personae: Persona[] }) {
       </div>
       <ul className="space-y-2 text-sm">
         {personae.map((p) => (
-          <li key={p.brandKey} className="flex items-start gap-2">
-            <PersonaPortrait persona={p} small />
-            <div className="min-w-0 flex-1">
-              <div className="truncate text-sm font-medium">{p.name}</div>
-              <div className="text-[10px] uppercase tracking-widest text-ink-400">
-                {p.pageCount} entries
+          <li key={p.brandKey}>
+            <Link
+              to={`/s/${encodeURIComponent(p.brandKey)}`}
+              className="group flex items-start gap-2 rounded hover:text-rose-700 dark:hover:text-rose-300"
+            >
+              <PersonaPortrait persona={p} small />
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-sm font-medium">{p.name}</div>
+                <div className="text-[10px] uppercase tracking-widest text-ink-400">
+                  {p.pageCount} entries
+                </div>
               </div>
-            </div>
-            <ChevronRight className="h-3 w-3 text-ink-300" />
+              <ChevronRight className="h-3 w-3 text-ink-300 group-hover:text-rose-400" />
+            </Link>
           </li>
         ))}
       </ul>
