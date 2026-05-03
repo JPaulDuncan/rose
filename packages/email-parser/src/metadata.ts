@@ -24,6 +24,10 @@ export type EmailMetadata = {
   spamSignals: string[];
   /** True for legitimate mass mailings (List-Unsubscribe present). Distinct from spam. */
   isMassMailing: boolean;
+  /** Best logo guess from the email body (for the Sender address book). */
+  logoCandidate: { url: string; alt: string | null; confidence: number } | null;
+  /** Unsubscribe URLs scraped from List-Unsubscribe header + obvious links. */
+  unsubscribeUrls: string[];
 };
 
 const URL_RE = /\bhttps?:\/\/[^\s<>"')]+/gi;
@@ -296,6 +300,99 @@ export function senderDomainTag(addr: string | null | undefined): string | null 
   return label.charAt(0).toUpperCase() + label.slice(1);
 }
 
+/**
+ * Pull a logo candidate out of the HTML head — the most likely brand
+ * mark for the sender. Heuristics, in order of preference:
+ *   - alt text or filename matches /logo|brand|wordmark|icon/
+ *   - hosted on (or near) the sender's brand domain
+ *   - small dimensions when supplied (≤ 360px on the longer edge)
+ *   - within the first 2.5KB of HTML (header region)
+ * Returns null if nothing in the body survives these gates.
+ */
+function extractLogoCandidate(
+  html: string | null,
+  fromAddr: string | null,
+): { url: string; alt: string | null; confidence: number } | null {
+  if (!html) return null;
+  const head = html.slice(0, 2500);
+  const brandHost = (() => {
+    if (!fromAddr) return null;
+    const at = fromAddr.lastIndexOf('@');
+    if (at < 0) return null;
+    return fromAddr.slice(at + 1).toLowerCase();
+  })();
+  const brandLabel = brandHost ? brandHost.split('.').slice(-2, -1)[0] ?? null : null;
+
+  let best: { url: string; alt: string | null; confidence: number } | null = null;
+  for (const m of head.matchAll(/<img\b[^>]*>/gi)) {
+    const tag = m[0];
+    const srcMatch = tag.match(/\bsrc\s*=\s*["']([^"']+)["']/i);
+    if (!srcMatch) continue;
+    const url = srcMatch[1]!.trim();
+    if (!/^https?:\/\//i.test(url)) continue;
+    let host = '';
+    try {
+      host = new URL(url).hostname.toLowerCase();
+    } catch {
+      continue;
+    }
+    if (TRACKING_HOSTS.test(host)) continue;
+    if (/\/(open|track|pixel|beacon|metric|impression)[/.?]/i.test(url)) continue;
+
+    const alt = tag.match(/\balt\s*=\s*["']([^"']*)["']/i)?.[1]?.trim() ?? null;
+    const w = Number(tag.match(/\bwidth\s*=\s*["']?(\d+)/i)?.[1] ?? '');
+    const h = Number(tag.match(/\bheight\s*=\s*["']?(\d+)/i)?.[1] ?? '');
+    // Reject obvious giant hero images.
+    if (Number.isFinite(w) && w > 360) continue;
+    if (Number.isFinite(h) && h > 360) continue;
+    // Reject tracking pixels that slipped through the host filter.
+    if (Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0 && w <= 4 && h <= 4)
+      continue;
+
+    let score = 0.2;
+    const haystack = `${alt ?? ''} ${url}`.toLowerCase();
+    if (/\b(logo|wordmark|brand-?mark|brand[-_/]?logo|header[-_]?logo)\b/.test(haystack))
+      score += 0.4;
+    if (/\.(svg|png|gif)(\?|$)/i.test(url)) score += 0.05;
+    if (brandLabel && haystack.includes(brandLabel)) score += 0.2;
+    if (brandHost && (host === brandHost || host.endsWith('.' + brandHost)))
+      score += 0.2;
+    // Penalise CDNs that aren't on the brand domain — can be a logo, but
+    // less confident.
+    if (brandHost && !(host === brandHost || host.endsWith('.' + brandHost)))
+      score -= 0.05;
+
+    if (!best || score > best.confidence) {
+      best = { url, alt, confidence: Math.max(0, Math.min(1, score)) };
+    }
+  }
+  if (!best || best.confidence < 0.3) return null;
+  return best;
+}
+
+/**
+ * Pull unsubscribe URLs from the parsed `List-Unsubscribe` header. RFC
+ * 2369 allows a comma-separated list of <mailto:> and <https://> URLs.
+ * Mailto entries are skipped — we want clickable links for the UI.
+ */
+function extractUnsubscribeUrls(parsed: ParsedMail): string[] {
+  const headers = (parsed.headers ?? new Map()) as Map<string, unknown>;
+  const raw =
+    (headers.get('list-unsubscribe') as string | string[] | undefined) ??
+    (parsed.headerLines ?? [])
+      .filter((h) => h.key.toLowerCase() === 'list-unsubscribe')
+      .map((h) => h.line.replace(/^[^:]+:\s*/, ''))
+      .join(', ');
+  if (!raw) return [];
+  const text = Array.isArray(raw) ? raw.join(', ') : String(raw);
+  const out = new Set<string>();
+  for (const m of text.matchAll(/<\s*([^>]+?)\s*>/g)) {
+    const url = m[1]!.trim();
+    if (/^https?:\/\//i.test(url)) out.add(url);
+  }
+  return [...out].slice(0, 4);
+}
+
 export function extractEmailMetadata(
   parsed: ParsedMail,
   cleanedText: string,
@@ -321,6 +418,8 @@ export function extractEmailMetadata(
     links,
     fromAddr,
   );
+  const logoCandidate = extractLogoCandidate(html, fromAddr);
+  const unsubscribeUrls = extractUnsubscribeUrls(parsed);
   return {
     priority,
     topics,
@@ -328,6 +427,8 @@ export function extractEmailMetadata(
     images,
     spamScore: score,
     spamSignals: signals,
+    logoCandidate,
+    unsubscribeUrls,
     isMassMailing,
   };
 }

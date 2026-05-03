@@ -134,6 +134,36 @@ Respond with JSON only, matching exactly:
 ]}`,
   },
   {
+    name: 'sender.summary',
+    scope: 'sender',
+    description:
+      "One-paragraph 'who is this' brief for a sender in the address book, written from the metadata Rose has accumulated about them.",
+    variables: [
+      'name',
+      'domain',
+      'addresses',
+      'websites',
+      'recent_subjects',
+      'email_count',
+      'page_count',
+    ],
+    isDefault: true,
+    template: `Write a single concise paragraph (≤ 80 words) describing the sender below — what kind of organization or person they are, what they typically send, and why a reader would care. Use ONLY the supplied evidence; if you genuinely don't know, say so plainly. No marketing language, no caveats like "based on the data", no markdown.
+
+SENDER
+- Display name: {{name}}
+- Primary domain: {{domain}}
+- Addresses seen: {{addresses}}
+- Websites referenced: {{websites}}
+- Lifetime emails: {{email_count}}
+- Wiki pages they've contributed to: {{page_count}}
+
+RECENT SUBJECTS
+{{recent_subjects}}
+
+Output the paragraph only.`,
+  },
+  {
     name: 'weather.brief',
     scope: 'weather',
     description:

@@ -15,10 +15,12 @@ import EmailView from './routes/Email';
 import SettingsLayout from './routes/settings/Layout';
 import AccountSettings from './routes/settings/Account';
 import SourcesSettings from './routes/settings/Sources';
+import SendersSettings from './routes/settings/Senders';
 import InstructionsSettings from './routes/settings/Instructions';
 import ModelsSettings from './routes/settings/Models';
 import SpamSettings from './routes/settings/Spam';
 import NewsletterSettings from './routes/settings/Newsletter';
+import CodexPage from './routes/Codex';
 
 function ProtectedShell() {
   const { user, ready } = useAuth();
@@ -56,10 +58,12 @@ export default function App() {
         <Route path="/search" element={<SearchPage />} />
         <Route path="/calendar" element={<CalendarPage />} />
         <Route path="/streams" element={<StreamsPage />} />
+        <Route path="/codex" element={<CodexPage />} />
         <Route path="/settings" element={<SettingsLayout />}>
           <Route index element={<Navigate to="account" replace />} />
           <Route path="account" element={<AccountSettings />} />
           <Route path="sources" element={<SourcesSettings />} />
+          <Route path="senders" element={<SendersSettings />} />
           <Route path="instructions" element={<InstructionsSettings />} />
           <Route path="models" element={<ModelsSettings />} />
           <Route path="spam" element={<SpamSettings />} />

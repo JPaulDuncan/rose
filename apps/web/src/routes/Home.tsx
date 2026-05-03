@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { createContext, useContext, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -40,6 +40,26 @@ type DigestPage = {
   version: number;
 };
 
+type SenderBrand = {
+  brandKey: string;
+  name: string;
+  domain: string | null;
+  logoUrl: string | null;
+};
+
+/**
+ * Co-located context that lets every PageCard / FeatureLead reach into
+ * the sender-brand index returned with the digest, without prop-drilling
+ * through every section + bucket level of the newsletter layout.
+ */
+const BrandIndexContext = createContext<Record<string, SenderBrand>>({});
+
+function useBrandFor(address: string | undefined | null): SenderBrand | null {
+  const idx = useContext(BrandIndexContext);
+  if (!address) return null;
+  return idx[address.toLowerCase()] ?? null;
+}
+
 type Digest = {
   edition: { date: string; label: string };
   stats: {
@@ -55,6 +75,7 @@ type Digest = {
   topTopics: { topic: string; count: number }[];
   featuredTags: string[];
   featuredSections: { tag: string; pageCount: number; pages: DigestPage[] }[];
+  senderBrands: Record<string, SenderBrand>;
 };
 
 export default function HomePage() {
@@ -94,8 +115,10 @@ export default function HomePage() {
   }
 
   const populated = data.buckets.filter((b) => b.pages.length > 0);
+  const brandIndex = data.senderBrands ?? {};
 
   return (
+    <BrandIndexContext.Provider value={brandIndex}>
     <div className="mx-auto w-full max-w-6xl px-6 py-10">
       <Masthead edition={data.edition} stats={data.stats} />
       <WeatherCard />
@@ -140,6 +163,7 @@ export default function HomePage() {
         </aside>
       </div>
     </div>
+    </BrandIndexContext.Provider>
   );
 }
 
@@ -328,8 +352,34 @@ function BucketSection({
   );
 }
 
+function BrandChip({ address, size = 'sm' }: { address: string; size?: 'sm' | 'lg' }) {
+  const brand = useBrandFor(address);
+  const className = size === 'lg' ? 'h-6 w-6' : 'h-4 w-4';
+  if (brand?.logoUrl) {
+    return (
+      <SafeImage
+        src={brand.logoUrl}
+        alt={brand.name}
+        className={`${className} shrink-0 rounded-sm bg-white object-contain ring-1 ring-ink-200 dark:ring-ink-700`}
+      />
+    );
+  }
+  // Fallback initial bubble keeps the row aligned even when we have no logo.
+  const initial = (brand?.name ?? address).charAt(0).toUpperCase();
+  return (
+    <span
+      className={`${className} inline-flex shrink-0 items-center justify-center rounded-sm bg-ink-100 text-[10px] font-semibold text-ink-600 ring-1 ring-ink-200 dark:bg-ink-800 dark:text-ink-200 dark:ring-ink-700`}
+    >
+      {initial}
+    </span>
+  );
+}
+
 function PageCard({ page }: { page: DigestPage }) {
   const navigate = useNavigate();
+  const primaryAddress = page.senderAddresses?.[0];
+  const brand = useBrandFor(primaryAddress);
+  const senderLabel = brand?.name ?? primaryAddress;
   return (
     <Link
       to={`/p/${page.slug}`}
@@ -349,17 +399,16 @@ function PageCard({ page }: { page: DigestPage }) {
           <h3 className="font-serif text-base font-semibold leading-snug group-hover:text-rose-700 dark:group-hover:text-rose-300">
             {page.title}
           </h3>
-          {(page.senderAddresses?.[0] || page.sourceEmailIds.length > 0) && (
-            <div className="mt-0.5 text-[11px] uppercase tracking-wide text-ink-500">
-              {page.senderAddresses?.[0] && (
-                <span>By {page.senderAddresses[0]}</span>
-              )}
+          {(senderLabel || page.sourceEmailIds.length > 0) && (
+            <div className="mt-0.5 flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-ink-500">
+              {primaryAddress && <BrandChip address={primaryAddress} />}
+              {senderLabel && <span className="truncate">By {senderLabel}</span>}
               {page.senderAddresses && page.senderAddresses.length > 1 && (
-                <span className="text-ink-400"> +{page.senderAddresses.length - 1}</span>
+                <span className="text-ink-400">+{page.senderAddresses.length - 1}</span>
               )}
               {page.sourceEmailIds.length > 0 && (
                 <span className="text-ink-400">
-                  {' '}· {page.sourceEmailIds.length} msg
+                  · {page.sourceEmailIds.length} msg
                   {page.sourceEmailIds.length === 1 ? '' : 's'}
                 </span>
               )}
@@ -646,6 +695,9 @@ function SectionCarousel({ pages }: { pages: DigestPage[] }) {
 }
 
 function FeatureLead({ page }: { page: DigestPage }) {
+  const primaryAddress = page.senderAddresses?.[0];
+  const brand = useBrandFor(primaryAddress);
+  const senderLabel = brand?.name ?? primaryAddress;
   return (
     <Link
       to={`/p/${page.slug}`}
@@ -664,15 +716,16 @@ function FeatureLead({ page }: { page: DigestPage }) {
         <h3 className="font-serif text-3xl font-bold leading-tight tracking-tight text-ink-900 group-hover:text-rose-700 dark:text-ink-50 dark:group-hover:text-rose-300">
           {page.title}
         </h3>
-        {(page.senderAddresses?.[0] || page.sourceEmailIds.length > 0) && (
-          <div className="mt-2 text-[11px] uppercase tracking-widest text-ink-500">
-            {page.senderAddresses?.[0] && <span>By {page.senderAddresses[0]}</span>}
+        {(senderLabel || page.sourceEmailIds.length > 0) && (
+          <div className="mt-2 flex items-center gap-2 text-[11px] uppercase tracking-widest text-ink-500">
+            {primaryAddress && <BrandChip address={primaryAddress} size="lg" />}
+            {senderLabel && <span>By {senderLabel}</span>}
             {page.senderAddresses && page.senderAddresses.length > 1 && (
-              <span className="text-ink-400"> +{page.senderAddresses.length - 1}</span>
+              <span className="text-ink-400">+{page.senderAddresses.length - 1}</span>
             )}
             {page.sourceEmailIds.length > 0 && (
               <span className="text-ink-400">
-                {' '}· {page.sourceEmailIds.length} message
+                · {page.sourceEmailIds.length} message
                 {page.sourceEmailIds.length === 1 ? '' : 's'}
               </span>
             )}

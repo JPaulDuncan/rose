@@ -16,3 +16,5 @@ export { ApiToken } from './models/ApiToken.js';
 export type { ApiTokenDoc } from './models/ApiToken.js';
 export { CalendarEvent } from './models/Event.js';
 export type { EventDoc } from './models/Event.js';
+export { Sender } from './models/Sender.js';
+export type { SenderDoc } from './models/Sender.js';

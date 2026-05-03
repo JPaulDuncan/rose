@@ -86,6 +86,15 @@ const emailSchema = new Schema(
     spamSignals: { type: [String], default: [] },
     /** Legitimate bulk mail (List-Unsubscribe present). Distinct from spam. */
     isMassMailing: { type: Boolean, default: false },
+    /** Brand-logo candidate scraped from the email head — fed into the
+     *  Sender address book on generation. Not surfaced in the UI directly. */
+    logoCandidate: {
+      url: { type: String, default: null },
+      alt: { type: String, default: null },
+      confidence: { type: Number, default: 0 },
+    },
+    /** Unsubscribe URLs from List-Unsubscribe header. */
+    unsubscribeUrls: { type: [String], default: [] },
     /** Timestamp of the last extract.events run for this email. The worker
      *  uses presence of this field to skip already-extracted emails on
      *  re-generation; clear it to force re-extraction. */

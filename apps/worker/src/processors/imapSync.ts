@@ -95,6 +95,8 @@ export function startImapSyncWorker() {
                 spamScore: cleaned.metadata.spamScore,
                 spamSignals: cleaned.metadata.spamSignals,
                 isMassMailing: cleaned.metadata.isMassMailing,
+                logoCandidate: cleaned.metadata.logoCandidate ?? undefined,
+                unsubscribeUrls: cleaned.metadata.unsubscribeUrls,
                 ingestStatus: 'parsed',
               });
               await generateQueue.add(

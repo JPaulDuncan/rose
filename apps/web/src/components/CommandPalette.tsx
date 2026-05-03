@@ -10,6 +10,7 @@ import {
   Settings,
   FileText,
   Upload,
+  BookOpen,
 } from 'lucide-react';
 import { useApi } from '../lib/api';
 
@@ -68,6 +69,9 @@ export function CommandPalette({
               </Command.Item>
               <Command.Item onSelect={() => go('/streams')}>
                 <Activity className="h-4 w-4" /> Streams
+              </Command.Item>
+              <Command.Item onSelect={() => go('/codex')}>
+                <BookOpen className="h-4 w-4" /> Codex
               </Command.Item>
               <Command.Item onSelect={() => go('/settings')}>
                 <Settings className="h-4 w-4" /> Settings

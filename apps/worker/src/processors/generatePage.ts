@@ -25,6 +25,7 @@ import {
   findTopicPageForItem,
   recomputeCentroid,
 } from '../services/pageAssignment.js';
+import { upsertSendersFromPage } from '../services/senderUpsert.js';
 import {
   extractEventsForPage,
   syncEventsToPage,
@@ -618,12 +619,24 @@ export function startGeneratePageWorker() {
       // Extract calendar events from each contributing email (idempotent;
       // skips emails already extracted unless forced). Cheap wrapper around
       // an LLM JSON call per email — ignored on failure.
+      const pageWasNew = !assignment.page;
       try {
         const refreshed = (await Email.find({ _id: { $in: sourceEmailIds } })) as unknown as EmailDoc[];
         const pageObj = (assignment.page ?? (await Page.findById(pageId))) as PageDoc | null;
         if (pageObj) {
           await extractEventsForPage(pageObj, refreshed);
           await syncEventsToPage(pageId, pageObj.slug);
+          // Update the address book of senders with everything we learned
+          // from this page's contributing emails. Best-effort; never fails
+          // the generation job.
+          try {
+            await upsertSendersFromPage(userId, pageObj, refreshed, pageWasNew);
+          } catch (err) {
+            logger.warn(
+              { err, pageId: String(pageId) },
+              'sender upsert step failed',
+            );
+          }
         }
       } catch (err) {
         logger.warn({ err, pageId: String(pageId) }, 'event extraction step failed');

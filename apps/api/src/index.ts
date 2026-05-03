@@ -26,6 +26,8 @@ import { weatherRouter } from './routes/weather.js';
 import { webhookRouter } from './routes/webhook.js';
 import { providersRouter } from './routes/providers.js';
 import { modelsRouter, modelsStreamRouter } from './routes/models.js';
+import { sendersRouter } from './routes/senders.js';
+import { codexRouter } from './routes/codex.js';
 import { errorHandler } from './middleware/error.js';
 import { requireAuth } from './middleware/auth.js';
 import { apiLimiter } from './middleware/rateLimit.js';
@@ -86,6 +88,8 @@ export async function createServer(): Promise<Express> {
   // Streaming pull auth via query param; mount before the protected models router.
   app.use('/api/models', modelsStreamRouter);
   app.use('/api/models', requireAuth, modelsRouter);
+  app.use('/api/senders', requireAuth, sendersRouter);
+  app.use('/api/codex', requireAuth, codexRouter);
 
   app.use(errorHandler);
 

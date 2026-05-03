@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { Types } from 'mongoose';
-import { Page, Email, User } from '@rose/db';
+import { Page, Email, User, Sender } from '@rose/db';
 import { userIdOf } from '../middleware/auth.js';
 
 export const digestRouter: Router = Router();
@@ -110,6 +110,31 @@ digestRouter.get('/', async (req, res) => {
     .sort((a, b) => b[1] - a[1])
     .slice(0, 8)
     .map(([address, pageCount]) => ({ address, pageCount }));
+
+  // Sender brand index — every address that appears on any page above
+  // gets a single lookup to the Sender record, so the client can render
+  // brand logos + display names alongside attribution without a second
+  // round-trip per card. Keyed by lowercased email address.
+  const allAddrs = [...senderCounts.keys()];
+  const senderRecords = allAddrs.length
+    ? await Sender.find({ userId, addresses: { $in: allAddrs } })
+        .select('brandKey name domain logoUrl addresses')
+        .lean()
+    : [];
+  const senderBrands: Record<
+    string,
+    { brandKey: string; name: string; domain: string | null; logoUrl: string | null }
+  > = {};
+  for (const s of senderRecords) {
+    for (const a of s.addresses ?? []) {
+      senderBrands[a] = {
+        brandKey: s.brandKey,
+        name: s.name,
+        domain: s.domain ?? null,
+        logoUrl: s.logoUrl ?? null,
+      };
+    }
+  }
   const topTopics = [...topicCounts.entries()]
     .sort((a, b) => b[1] - a[1])
     .slice(0, 12)
@@ -165,5 +190,6 @@ digestRouter.get('/', async (req, res) => {
     buckets,
     topSenders,
     topTopics,
+    senderBrands,
   });
 });

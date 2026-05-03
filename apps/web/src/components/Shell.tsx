@@ -11,6 +11,7 @@ import {
   Moon,
   Command,
   LogOut,
+  BookOpen,
 } from 'lucide-react';
 import clsx from 'clsx';
 import { useAuth } from '../lib/auth';
@@ -24,6 +25,7 @@ const NAV = [
   { to: '/search', label: 'Search', icon: Search, key: '/' },
   { to: '/calendar', label: 'Calendar', icon: CalendarIcon, key: 'g c' },
   { to: '/streams', label: 'Streams', icon: Activity, key: 'g t' },
+  { to: '/codex', label: 'Codex', icon: BookOpen, key: 'g x' },
   { to: '/settings', label: 'Settings', icon: Settings, key: 'g s' },
 ];
 
@@ -45,6 +47,7 @@ export function Shell({ children }: { children: ReactNode }) {
     'g i': () => navigate('/inbox'),
     'g c': () => navigate('/calendar'),
     'g t': () => navigate('/streams'),
+    'g x': () => navigate('/codex'),
     'g s': () => navigate('/settings'),
     n: (e) => {
       const tag = (e.target as HTMLElement)?.tagName;
