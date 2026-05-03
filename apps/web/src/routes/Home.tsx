@@ -1,4 +1,4 @@
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
   Upload,
@@ -269,6 +269,7 @@ function BucketSection({
 }
 
 function PageCard({ page }: { page: DigestPage }) {
+  const navigate = useNavigate();
   return (
     <Link
       to={`/p/${page.slug}`}
@@ -286,9 +287,18 @@ function PageCard({ page }: { page: DigestPage }) {
       <div className="mt-3 flex flex-wrap items-center gap-1.5 text-xs">
         <PageBadges page={page} compact />
         {page.tags.slice(0, 2).map((t) => (
-          <span key={t} className="pill text-[10px]">
+          <button
+            key={t}
+            type="button"
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              navigate(`/t/${encodeURIComponent(t)}`);
+            }}
+            className="pill text-[10px] hover:bg-rose-100 hover:text-rose-800 dark:hover:bg-rose-950/40 dark:hover:text-rose-300"
+          >
             #{t}
-          </span>
+          </button>
         ))}
         <span className="ml-auto text-ink-400">
           {timeAgo(page.updatedAt)}
@@ -395,7 +405,7 @@ function Sidebar({
             {topTopics.map((t) => (
               <Link
                 key={t.topic}
-                to={`/search?q=${encodeURIComponent(t.topic)}`}
+                to={`/t/${encodeURIComponent(t.topic)}`}
                 className="pill text-[11px] hover:bg-rose-100 hover:text-rose-800 dark:hover:bg-rose-950/40 dark:hover:text-rose-300"
               >
                 {t.topic}

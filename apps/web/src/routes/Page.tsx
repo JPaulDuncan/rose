@@ -177,11 +177,20 @@ export default function PageView() {
           )}
           <div className="mt-3 flex flex-wrap items-center gap-2">
             {(mode === 'edit' ? tags.split(',').map((t) => t.trim()).filter(Boolean) : page.tags).map(
-              (t) => (
-                <span key={t} className="pill">
-                  #{t}
-                </span>
-              ),
+              (t) =>
+                mode === 'edit' ? (
+                  <span key={t} className="pill">
+                    #{t}
+                  </span>
+                ) : (
+                  <Link
+                    key={t}
+                    to={`/t/${encodeURIComponent(t)}`}
+                    className="pill hover:bg-rose-100 hover:text-rose-800 dark:hover:bg-rose-950/40 dark:hover:text-rose-300"
+                  >
+                    #{t}
+                  </Link>
+                ),
             )}
             <span className="text-xs text-ink-400">
               v{page.version} · {new Date(page.updatedAt).toLocaleString()}
@@ -657,9 +666,13 @@ function TopicsBlock({ topics }: { topics: string[] }) {
       </h2>
       <div className="flex flex-wrap gap-1.5">
         {topics.map((t) => (
-          <span key={t} className="pill">
+          <Link
+            key={t}
+            to={`/t/${encodeURIComponent(t)}`}
+            className="pill hover:bg-rose-100 hover:text-rose-800 dark:hover:bg-rose-950/40 dark:hover:text-rose-300"
+          >
             {t}
-          </span>
+          </Link>
         ))}
       </div>
     </section>
