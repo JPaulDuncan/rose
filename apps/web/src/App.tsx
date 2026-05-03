@@ -10,6 +10,7 @@ import PageView from './routes/Page';
 import SearchPage from './routes/Search';
 import GraphPage from './routes/Graph';
 import TagPage from './routes/Tag';
+import EmailView from './routes/Email';
 import SettingsLayout from './routes/settings/Layout';
 import AccountSettings from './routes/settings/Account';
 import SourcesSettings from './routes/settings/Sources';
@@ -48,6 +49,7 @@ export default function App() {
         <Route index element={<HomePage />} />
         <Route path="/inbox" element={<InboxPage />} />
         <Route path="/p/:slug" element={<PageView />} />
+        <Route path="/e/:id" element={<EmailView />} />
         <Route path="/t/:tag" element={<TagPage />} />
         <Route path="/search" element={<SearchPage />} />
         <Route path="/graph" element={<GraphPage />} />

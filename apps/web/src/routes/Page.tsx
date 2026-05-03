@@ -543,9 +543,9 @@ function SourcesSection({
                   </div>
                 </div>
                 <Link
-                  to={`/inbox?email=${c.emailId}`}
+                  to={`/e/${c.emailId}`}
                   className="btn-ghost text-xs"
-                  title="Show source email"
+                  title="Open the original email"
                 >
                   <ExternalLink className="h-3 w-3" />
                 </Link>
@@ -779,9 +779,9 @@ function AttachmentsBlock({
             <span className="shrink-0 text-xs text-ink-500">{a.contentType}</span>
             <span className="shrink-0 text-xs text-ink-400">{formatBytesPg(a.size)}</span>
             <Link
-              to={`/inbox?email=${a.fromEmailId}`}
+              to={`/e/${a.fromEmailId}`}
               className="btn-ghost text-xs"
-              title="Source email"
+              title="Open the original email"
             >
               <ExternalLink className="h-3 w-3" />
             </Link>

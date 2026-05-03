@@ -205,6 +205,13 @@ export default function InboxPage() {
               >
                 {e.ingestStatus}
               </span>
+              <Link
+                to={`/e/${e._id}`}
+                className="btn-ghost text-xs"
+                title="Open original email"
+              >
+                Open
+              </Link>
               {e.pageSlug && (
                 <Link to={`/p/${e.pageSlug}`} className="btn-ghost text-xs">
                   View page
