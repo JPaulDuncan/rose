@@ -32,6 +32,7 @@ type DigestPage = {
   sourceEmailIds: string[];
   senderAddresses: string[];
   topics: string[];
+  heroImageUrl?: string | null;
   updatedAt: string;
   createdAt: string;
   version: number;
@@ -200,8 +201,16 @@ function LeadStory({ page }: { page: DigestPage }) {
   return (
     <Link
       to={`/p/${page.slug}`}
-      className="group block rounded-2xl border border-rose-200 bg-gradient-to-br from-rose-50 to-white p-6 shadow-soft transition-all hover:border-rose-400 hover:shadow-lg dark:border-rose-900/50 dark:from-rose-950/20 dark:to-ink-900"
+      className="group block overflow-hidden rounded-2xl border border-rose-200 bg-gradient-to-br from-rose-50 to-white shadow-soft transition-all hover:border-rose-400 hover:shadow-lg dark:border-rose-900/50 dark:from-rose-950/20 dark:to-ink-900"
     >
+      {page.heroImageUrl && (
+        <SafeImage
+          src={page.heroImageUrl}
+          alt={page.title}
+          className="block max-h-72 w-full object-cover"
+        />
+      )}
+      <div className={page.heroImageUrl ? 'p-6' : 'p-6'}>
       <div className="mb-2 flex items-center gap-2 text-xs uppercase tracking-widest text-rose-600 dark:text-rose-300">
         <Flame className="h-3.5 w-3.5" />
         Top story
@@ -233,7 +242,31 @@ function LeadStory({ page }: { page: DigestPage }) {
           Read <ChevronRight className="h-3 w-3 transition-transform group-hover:translate-x-0.5" />
         </span>
       </div>
+      </div>
     </Link>
+  );
+}
+
+function SafeImage({
+  src,
+  alt,
+  className,
+}: {
+  src: string;
+  alt: string;
+  className?: string;
+}) {
+  const [failed, setFailed] = useState(false);
+  if (failed) return null;
+  return (
+    <img
+      src={src}
+      alt={alt}
+      className={className}
+      loading="lazy"
+      referrerPolicy="no-referrer"
+      onError={() => setFailed(true)}
+    />
   );
 }
 
@@ -294,10 +327,18 @@ function PageCard({ page }: { page: DigestPage }) {
   return (
     <Link
       to={`/p/${page.slug}`}
-      className="group flex flex-col rounded-xl border border-ink-200 bg-white p-4 transition-colors hover:border-rose-300 dark:border-ink-800 dark:bg-ink-900 dark:hover:border-rose-800"
+      className="group flex flex-col overflow-hidden rounded-xl border border-ink-200 bg-white transition-colors hover:border-rose-300 dark:border-ink-800 dark:bg-ink-900 dark:hover:border-rose-800"
     >
+      {page.heroImageUrl && (
+        <SafeImage
+          src={page.heroImageUrl}
+          alt={page.title}
+          className="block aspect-[16/8] w-full object-cover"
+        />
+      )}
+      <div className="flex flex-col p-4">
       <div className="flex items-start gap-2">
-        <FileText className="mt-0.5 h-4 w-4 shrink-0 text-ink-400" />
+        {!page.heroImageUrl && <FileText className="mt-0.5 h-4 w-4 shrink-0 text-ink-400" />}
         <div className="min-w-0 flex-1">
           <h3 className="font-serif text-base font-semibold leading-snug group-hover:text-rose-700 dark:group-hover:text-rose-300">
             {page.title}
@@ -342,6 +383,7 @@ function PageCard({ page }: { page: DigestPage }) {
         <span className="ml-auto text-ink-400">
           {timeAgo(page.updatedAt)}
         </span>
+      </div>
       </div>
     </Link>
   );

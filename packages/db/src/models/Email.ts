@@ -64,6 +64,16 @@ const emailSchema = new Schema(
       ],
       default: [],
     },
+    /** Image URLs from HTML, with optional alt text. Trackers/data URIs filtered. */
+    images: {
+      type: [
+        new Schema(
+          { url: { type: String, required: true }, alt: { type: String, default: null } },
+          { _id: false },
+        ),
+      ],
+      default: [],
+    },
     /** 0..1 — higher means more likely spam. Threshold ≥0.5 surfaces a warning. */
     spamScore: { type: Number, default: 0, index: true },
     spamSignals: { type: [String], default: [] },

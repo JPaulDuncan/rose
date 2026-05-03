@@ -8,10 +8,16 @@ export type EmailLink = {
   text?: string;
 };
 
+export type EmailImage = {
+  url: string;
+  alt?: string;
+};
+
 export type EmailMetadata = {
   priority: EmailPriority;
   topics: string[];
   links: EmailLink[];
+  images: EmailImage[];
   /** 0..1 — higher means more likely spam. */
   spamScore: number;
   /** Human-readable reasons that fed into spamScore, for the UI tooltip. */
@@ -90,6 +96,41 @@ const STOPWORDS = new Set(
     ' ',
   ),
 );
+
+/**
+ * Pull <img> URLs out of HTML. Skips tracking pixels (1x1, hosts in
+ * TRACKING_HOSTS), data: URIs, and non-https schemes. Includes alt text
+ * when present so the page UI has something to label thumbnails with.
+ */
+function extractImages(html: string | null): EmailImage[] {
+  if (!html) return [];
+  const out = new Map<string, EmailImage>();
+  for (const m of html.matchAll(/<img\b[^>]*>/gi)) {
+    const tag = m[0];
+    const srcMatch = tag.match(/\bsrc\s*=\s*["']([^"']+)["']/i);
+    if (!srcMatch) continue;
+    const url = srcMatch[1]!.trim();
+    if (!/^https?:\/\//i.test(url)) continue;
+    let host = '';
+    try {
+      host = new URL(url).hostname;
+    } catch {
+      continue;
+    }
+    if (TRACKING_HOSTS.test(host)) continue;
+    // Heuristic 1×1 / 2×2 pixel filter via attribute width/height.
+    const w = Number(tag.match(/\bwidth\s*=\s*["']?(\d+)/i)?.[1] ?? '');
+    const h = Number(tag.match(/\bheight\s*=\s*["']?(\d+)/i)?.[1] ?? '');
+    if (Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0 && w <= 2 && h <= 2)
+      continue;
+    // Heuristic URL paths that scream tracker.
+    if (/\/(open|track|pixel|beacon|metric|impression)[/.?]/i.test(url)) continue;
+    if (out.has(url)) continue;
+    const alt = tag.match(/\balt\s*=\s*["']([^"']*)["']/i)?.[1]?.trim();
+    out.set(url, alt ? { url, alt } : { url });
+  }
+  return [...out.values()].slice(0, 30);
+}
 
 function extractTopics(subject: string, body: string): string[] {
   const seen = new Map<string, number>();
@@ -187,6 +228,7 @@ export function extractEmailMetadata(
   const subject = (parsed.subject ?? '').trim();
   const fromAddr = parsed.from?.value?.[0]?.address?.toLowerCase() ?? null;
   const links = extractLinks(cleanedText || '', html);
+  const images = extractImages(html);
   const topics = extractTopics(subject, cleanedText || '');
   const priority = derivePriority(parsed, subject);
   const { score, signals, isMassMailing } = computeSpam(
@@ -200,6 +242,7 @@ export function extractEmailMetadata(
     priority,
     topics,
     links,
+    images,
     spamScore: score,
     spamSignals: signals,
     isMassMailing,

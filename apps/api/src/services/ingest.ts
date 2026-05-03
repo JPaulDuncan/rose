@@ -50,6 +50,7 @@ export async function ingestRawEmail(input: IngestInput): Promise<IngestResult> 
     priority: cleaned.metadata.priority,
     topics: cleaned.metadata.topics,
     links: cleaned.metadata.links,
+    images: cleaned.metadata.images,
     spamScore: cleaned.metadata.spamScore,
     spamSignals: cleaned.metadata.spamSignals,
     isMassMailing: cleaned.metadata.isMassMailing,

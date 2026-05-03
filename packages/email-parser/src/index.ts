@@ -7,6 +7,7 @@ export {
   type EmailMetadata,
   type EmailPriority,
   type EmailLink,
+  type EmailImage,
 } from './metadata.js';
 import { extractEmailMetadata, type EmailMetadata } from './metadata.js';
 

@@ -411,6 +411,10 @@ export function startGeneratePageWorker() {
       let hasMassMailing = false;
       const topicCounts = new Map<string, number>();
       const linkAccum = new Map<string, { url: string; text?: string | null; count: number }>();
+      const imageAccum = new Map<
+        string,
+        { url: string; alt?: string | null; count: number; fromEmailId: Types.ObjectId }
+      >();
       const pageAttachments: {
         filename: string;
         contentType: string;
@@ -431,6 +435,18 @@ export function startGeneratePageWorker() {
           if (prev) prev.count += 1;
           else linkAccum.set(l.url, { url: l.url, text: l.text ?? null, count: 1 });
         }
+        for (const img of (e.images as { url: string; alt?: string | null }[] | undefined) ?? []) {
+          if (!img?.url) continue;
+          const prev = imageAccum.get(img.url);
+          if (prev) prev.count += 1;
+          else
+            imageAccum.set(img.url, {
+              url: img.url,
+              alt: img.alt ?? null,
+              count: 1,
+              fromEmailId: e._id as Types.ObjectId,
+            });
+        }
         for (const a of (e.attachments as { filename?: string; contentType?: string; size?: number }[] | undefined) ?? []) {
           if (!a?.filename) continue;
           pageAttachments.push({
@@ -448,6 +464,10 @@ export function startGeneratePageWorker() {
       const pageLinks = [...linkAccum.values()]
         .sort((a, b) => b.count - a.count)
         .slice(0, 50);
+      const pageImages = [...imageAccum.values()]
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 30);
+      const heroImageUrl = pageImages[0]?.url ?? null;
       // Apply the user's manual spam policy. Any contributing sender or any
       // tag in the policy lists trips userMarkedSpam.
       const userPolicy = (await User.findById(userId).select('spamPolicy').lean()) as
@@ -490,6 +510,8 @@ export function startGeneratePageWorker() {
         page.priority = priority;
         page.topics = topics;
         page.set('pageLinks', pageLinks);
+        page.set('pageImages', pageImages);
+        page.heroImageUrl = heroImageUrl;
         page.set('pageAttachments', pageAttachments);
         page.spamScore = topSpamScore;
         page.set('flags', flags);
@@ -540,6 +562,8 @@ export function startGeneratePageWorker() {
           priority,
           topics,
           pageLinks,
+          pageImages,
+          heroImageUrl,
           pageAttachments,
           spamScore: topSpamScore,
           flags,

@@ -19,6 +19,7 @@ import {
   LinkIcon,
   Paperclip,
   Tag as TagIcon,
+  ImageIcon,
   MoreHorizontal,
   Ban,
   UserX,
@@ -56,6 +57,8 @@ type PageDoc = {
   priority?: 'high' | 'normal' | 'low';
   topics?: string[];
   pageLinks?: { url: string; text?: string | null; count: number }[];
+  pageImages?: { url: string; alt?: string | null; count: number; fromEmailId?: string }[];
+  heroImageUrl?: string | null;
   pageAttachments?: { filename: string; contentType: string; size: number; fromEmailId: string }[];
   spamScore?: number;
   flags?: {
@@ -256,6 +259,10 @@ export default function PageView() {
         </div>
       </div>
 
+      {mode === 'view' && page.heroImageUrl && (
+        <HeroImage url={page.heroImageUrl} alt={page.title} />
+      )}
+
       <article className="card prose prose-rose max-w-none dark:prose-invert">
         {mode === 'view' ? (
           <MarkdownWithCitations
@@ -268,6 +275,9 @@ export default function PageView() {
       </article>
 
       {mode === 'view' && <TopicsBlock topics={page.topics ?? []} />}
+      {mode === 'view' && (
+        <ImagesBlock images={page.pageImages ?? []} heroUrl={page.heroImageUrl ?? null} />
+      )}
       {mode === 'view' && (
         <LinksBlock links={page.pageLinks ?? []} />
       )}
@@ -931,5 +941,87 @@ function SpamMenu({ page }: { page: PageDoc }) {
         </>
       )}
     </div>
+  );
+}
+
+function HeroImage({ url, alt }: { url: string; alt: string }) {
+  const [failed, setFailed] = useState(false);
+  if (failed) return null;
+  return (
+    <div className="-mt-2 mb-6 overflow-hidden rounded-2xl border border-ink-200 bg-ink-50 dark:border-ink-800 dark:bg-ink-900">
+      <img
+        src={url}
+        alt={alt}
+        className="block max-h-80 w-full object-cover"
+        loading="eager"
+        referrerPolicy="no-referrer"
+        onError={() => setFailed(true)}
+      />
+    </div>
+  );
+}
+
+function ImagesBlock({
+  images,
+  heroUrl,
+}: {
+  images: { url: string; alt?: string | null; count: number; fromEmailId?: string }[];
+  heroUrl: string | null;
+}) {
+  const rest = images.filter((i) => i.url !== heroUrl);
+  if (rest.length === 0) return null;
+  return (
+    <section className="card mt-6">
+      <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold">
+        <ImageIcon className="h-4 w-4 text-rose-500" />
+        Images ({images.length})
+      </h2>
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4">
+        {rest.slice(0, 16).map((img) => (
+          <Thumb key={img.url} {...img} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function Thumb({
+  url,
+  alt,
+  fromEmailId,
+}: {
+  url: string;
+  alt?: string | null;
+  count?: number;
+  fromEmailId?: string;
+}) {
+  const [failed, setFailed] = useState(false);
+  if (failed) return null;
+  const inner = (
+    <div className="aspect-video overflow-hidden rounded-lg border border-ink-200 bg-ink-50 dark:border-ink-800 dark:bg-ink-900">
+      <img
+        src={url}
+        alt={alt ?? ''}
+        className="block h-full w-full object-cover transition-transform group-hover:scale-105"
+        loading="lazy"
+        referrerPolicy="no-referrer"
+        onError={() => setFailed(true)}
+      />
+    </div>
+  );
+  return fromEmailId ? (
+    <Link to={`/e/${fromEmailId}`} className="group block" title={alt ?? url}>
+      {inner}
+    </Link>
+  ) : (
+    <a
+      href={url}
+      target="_blank"
+      rel="noreferrer noopener"
+      className="group block"
+      title={alt ?? url}
+    >
+      {inner}
+    </a>
   );
 }

@@ -71,6 +71,23 @@ const pageSchema = new Schema(
       ],
       default: [],
     },
+    /** Rolled-up image URLs across the page's source emails. */
+    pageImages: {
+      type: [
+        new Schema(
+          {
+            url: { type: String, required: true },
+            alt: { type: String, default: null },
+            count: { type: Number, default: 1 },
+            fromEmailId: { type: Schema.Types.ObjectId, ref: 'Email' },
+          },
+          { _id: false },
+        ),
+      ],
+      default: [],
+    },
+    /** A representative image surfaced as a hero banner on the wiki page. */
+    heroImageUrl: { type: String, default: null },
     /** Rolled-up attachments with the email each came from for back-reference. */
     pageAttachments: {
       type: [

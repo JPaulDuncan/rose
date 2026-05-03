@@ -25,6 +25,7 @@ type TagPage = {
   flags?: { hasMassMailing?: boolean; hasLikelySpam?: boolean; isSparse?: boolean };
   sourceEmailIds: string[];
   senderAddresses: string[];
+  heroImageUrl?: string | null;
   updatedAt: string;
 };
 
@@ -227,7 +228,20 @@ function PageRow({ page }: { page: TagPage }) {
       className="card group block hover:border-rose-300 dark:hover:border-rose-800"
     >
       <div className="flex items-start gap-3">
-        <FileText className="mt-1 h-4 w-4 shrink-0 text-ink-400" />
+        {page.heroImageUrl ? (
+          <img
+            src={page.heroImageUrl}
+            alt=""
+            className="h-16 w-16 flex-shrink-0 rounded-lg object-cover"
+            loading="lazy"
+            referrerPolicy="no-referrer"
+            onError={(e) => {
+              (e.target as HTMLImageElement).style.display = 'none';
+            }}
+          />
+        ) : (
+          <FileText className="mt-1 h-4 w-4 shrink-0 text-ink-400" />
+        )}
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <h3 className="truncate font-medium group-hover:text-rose-700 dark:group-hover:text-rose-300">
