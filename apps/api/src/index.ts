@@ -19,6 +19,7 @@ import { jobsRouter, jobsStreamRouter } from './routes/jobs.js';
 import { graphRouter } from './routes/graph.js';
 import { digestRouter } from './routes/digest.js';
 import { tagsRouter } from './routes/tags.js';
+import { spamRouter } from './routes/spam.js';
 import { webhookRouter } from './routes/webhook.js';
 import { providersRouter } from './routes/providers.js';
 import { modelsRouter, modelsStreamRouter } from './routes/models.js';
@@ -74,6 +75,7 @@ export async function createServer(): Promise<Express> {
   app.use('/api/graph', requireAuth, graphRouter);
   app.use('/api/digest', requireAuth, digestRouter);
   app.use('/api/tags', requireAuth, tagsRouter);
+  app.use('/api/spam', requireAuth, spamRouter);
   app.use('/api/providers', requireAuth, providersRouter);
   // Streaming pull auth via query param; mount before the protected models router.
   app.use('/api/models', modelsStreamRouter);

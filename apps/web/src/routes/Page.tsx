@@ -19,6 +19,11 @@ import {
   LinkIcon,
   Paperclip,
   Tag as TagIcon,
+  MoreHorizontal,
+  Ban,
+  UserX,
+  TagIcon as TagXIcon,
+  CheckSquare,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import ReactMarkdown from 'react-markdown';
@@ -53,7 +58,12 @@ type PageDoc = {
   pageLinks?: { url: string; text?: string | null; count: number }[];
   pageAttachments?: { filename: string; contentType: string; size: number; fromEmailId: string }[];
   spamScore?: number;
-  flags?: { hasLikelySpam?: boolean; hasMassMailing?: boolean; isSparse?: boolean };
+  flags?: {
+    hasLikelySpam?: boolean;
+    hasMassMailing?: boolean;
+    isSparse?: boolean;
+    userMarkedSpam?: boolean;
+  };
 };
 
 type Revision = {
@@ -233,6 +243,7 @@ export default function PageView() {
               <Eye className="h-4 w-4" />
             </button>
           )}
+          <SpamMenu page={page} />
           <button
             className="btn-ghost text-red-600"
             onClick={() => {
@@ -631,7 +642,15 @@ function PageBanners({ page }: { page: PageDoc }) {
           <Flame className="h-3 w-3" /> High priority
         </span>
       )}
-      {flags.hasLikelySpam && (
+      {flags.userMarkedSpam && (
+        <span
+          className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 font-medium text-red-800 dark:bg-red-950/40 dark:text-red-200"
+          title="You marked this page as spam — hidden from the digest."
+        >
+          <Ban className="h-3 w-3" /> Marked spam
+        </span>
+      )}
+      {flags.hasLikelySpam && !flags.userMarkedSpam && (
         <span
           className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 font-medium text-red-800 dark:bg-red-950/40 dark:text-red-200"
           title={`Likely-spam score: ${Math.round(score * 100)}%`}
@@ -770,5 +789,147 @@ function AttachmentsBlock({
         ))}
       </ul>
     </section>
+  );
+}
+
+function SpamMenu({ page }: { page: PageDoc }) {
+  const api = useApi();
+  const qc = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const isMarked = !!page.flags?.userMarkedSpam;
+
+  const markPage = useMutation({
+    mutationFn: async () =>
+      api.post<{ ok: true }>(`/api/spam/page/${page._id}`),
+    onSuccess: () => {
+      toast.success('Page marked as spam — hidden from the digest.');
+      qc.invalidateQueries({ queryKey: ['page'] });
+      qc.invalidateQueries({ queryKey: ['digest'] });
+      setOpen(false);
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+  const unmarkPage = useMutation({
+    mutationFn: async () =>
+      api.del<{ ok: true }>(`/api/spam/page/${page._id}`),
+    onSuccess: () => {
+      toast.success('Page unmarked.');
+      qc.invalidateQueries({ queryKey: ['page'] });
+      qc.invalidateQueries({ queryKey: ['digest'] });
+      setOpen(false);
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+  const blockSender = useMutation({
+    mutationFn: async (address: string) =>
+      api.post<{ pagesAffected: number }>('/api/spam/sender', { address }),
+    onSuccess: (r) => {
+      toast.success(
+        `Blocked sender — ${r.pagesAffected} page${r.pagesAffected === 1 ? '' : 's'} marked as spam.`,
+      );
+      qc.invalidateQueries({ queryKey: ['page'] });
+      qc.invalidateQueries({ queryKey: ['digest'] });
+      qc.invalidateQueries({ queryKey: ['spam'] });
+      setOpen(false);
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+  const blockTag = useMutation({
+    mutationFn: async (tag: string) =>
+      api.post<{ pagesAffected: number }>('/api/spam/tag', { tag }),
+    onSuccess: (r) => {
+      toast.success(
+        `Blocked tag — ${r.pagesAffected} page${r.pagesAffected === 1 ? '' : 's'} marked as spam.`,
+      );
+      qc.invalidateQueries({ queryKey: ['page'] });
+      qc.invalidateQueries({ queryKey: ['digest'] });
+      qc.invalidateQueries({ queryKey: ['spam'] });
+      setOpen(false);
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  return (
+    <div className="relative">
+      <button
+        className="btn-ghost"
+        onClick={() => setOpen((s) => !s)}
+        aria-label="Spam controls"
+        title="Spam / blocklist controls"
+      >
+        <MoreHorizontal className="h-4 w-4" />
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
+          <div className="absolute right-0 top-full z-40 mt-1 w-64 rounded-xl border border-ink-200 bg-white p-1 text-sm shadow-soft dark:border-ink-800 dark:bg-ink-900">
+            {isMarked ? (
+              <button
+                className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-ink-100 dark:hover:bg-ink-800"
+                onClick={() => unmarkPage.mutate()}
+                disabled={unmarkPage.isPending}
+              >
+                <CheckSquare className="h-4 w-4 text-emerald-600" />
+                Unmark this page
+              </button>
+            ) : (
+              <button
+                className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-ink-100 dark:hover:bg-ink-800"
+                onClick={() => markPage.mutate()}
+                disabled={markPage.isPending}
+              >
+                <Ban className="h-4 w-4 text-red-600" />
+                Mark this page as spam
+              </button>
+            )}
+            {(page.senderAddresses ?? []).length > 0 && (
+              <>
+                <div className="my-1 border-t border-ink-200 dark:border-ink-800" />
+                <div className="px-2 py-1 text-[10px] uppercase tracking-widest text-ink-500">
+                  Block senders
+                </div>
+                {(page.senderAddresses ?? []).map((s) => (
+                  <button
+                    key={s}
+                    className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left hover:bg-ink-100 dark:hover:bg-ink-800"
+                    onClick={() => blockSender.mutate(s)}
+                  >
+                    <UserX className="h-4 w-4 shrink-0 text-red-600" />
+                    <code className="truncate text-xs">{s}</code>
+                  </button>
+                ))}
+              </>
+            )}
+            {(page.tags ?? []).length > 0 && (
+              <>
+                <div className="my-1 border-t border-ink-200 dark:border-ink-800" />
+                <div className="px-2 py-1 text-[10px] uppercase tracking-widest text-ink-500">
+                  Block tags
+                </div>
+                {(page.tags ?? []).slice(0, 6).map((t) => (
+                  <button
+                    key={t}
+                    className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left hover:bg-ink-100 dark:hover:bg-ink-800"
+                    onClick={() => blockTag.mutate(t)}
+                  >
+                    <TagXIcon className="h-4 w-4 shrink-0 text-red-600" />
+                    <span>#{t}</span>
+                  </button>
+                ))}
+              </>
+            )}
+            <div className="my-1 border-t border-ink-200 dark:border-ink-800" />
+            <Link
+              to="/settings/spam"
+              className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-ink-500 hover:bg-ink-100 dark:hover:bg-ink-800"
+              onClick={() => setOpen(false)}
+            >
+              <ShieldAlert className="h-4 w-4" />
+              Manage spam policy…
+            </Link>
+          </div>
+        </>
+      )}
+    </div>
   );
 }

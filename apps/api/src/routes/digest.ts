@@ -40,7 +40,10 @@ digestRouter.get('/', async (req, res) => {
   const includeSpam = req.query.includeSpam === '1';
 
   const filter: Record<string, unknown> = { userId };
-  if (!includeSpam) filter['flags.hasLikelySpam'] = { $ne: true };
+  if (!includeSpam) {
+    filter['flags.hasLikelySpam'] = { $ne: true };
+    filter['flags.userMarkedSpam'] = { $ne: true };
+  }
 
   const allPages = (await Page.find(filter)
     .sort({ updatedAt: -1 })
@@ -50,7 +53,10 @@ digestRouter.get('/', async (req, res) => {
   const [totalPages, totalEmails, spamPages, highPriPages] = await Promise.all([
     Page.countDocuments({ userId }),
     Email.countDocuments({ userId }),
-    Page.countDocuments({ userId, 'flags.hasLikelySpam': true }),
+    Page.countDocuments({
+      userId,
+      $or: [{ 'flags.hasLikelySpam': true }, { 'flags.userMarkedSpam': true }],
+    }),
     Page.countDocuments({ userId, priority: 'high' }),
   ]);
 

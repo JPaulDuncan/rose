@@ -41,6 +41,15 @@ const userSchema = new Schema(
         baseUrl: { type: String, default: '' },
       },
     },
+    /**
+     * User-curated spam policy. Membership in any of these lists is enough
+     * to mark a wiki page (and its source emails) as spam, distinct from the
+     * heuristic `flags.hasLikelySpam`.
+     */
+    spamPolicy: {
+      senders: { type: [String], default: [], index: true },
+      tags: { type: [String], default: [], index: true },
+    },
   },
   { timestamps: true },
 );

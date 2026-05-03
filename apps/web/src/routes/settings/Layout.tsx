@@ -6,6 +6,7 @@ const TABS = [
   { to: 'sources', label: 'Sources' },
   { to: 'instructions', label: 'Instructions' },
   { to: 'models', label: 'Models' },
+  { to: 'spam', label: 'Spam' },
 ];
 
 export default function SettingsLayout() {

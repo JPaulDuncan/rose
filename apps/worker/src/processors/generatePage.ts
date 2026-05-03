@@ -6,6 +6,7 @@ import {
   PageRevision,
   Instruction,
   Category,
+  User,
   type EmailDoc,
 } from '@rose/db';
 import {
@@ -447,10 +448,27 @@ export function startGeneratePageWorker() {
       const pageLinks = [...linkAccum.values()]
         .sort((a, b) => b.count - a.count)
         .slice(0, 50);
+      // Apply the user's manual spam policy. Any contributing sender or any
+      // tag in the policy lists trips userMarkedSpam.
+      const userPolicy = (await User.findById(userId).select('spamPolicy').lean()) as
+        | { spamPolicy?: { senders?: string[]; tags?: string[] } }
+        | null;
+      const policySenders = new Set(userPolicy?.spamPolicy?.senders ?? []);
+      const policyTags = new Set(userPolicy?.spamPolicy?.tags ?? []);
+      const senderHit = pageEmails.some((e) =>
+        policySenders.has((e.from?.address ?? '').toLowerCase()),
+      );
+      const tagHit =
+        (draft.tags ?? []).some((t) => policyTags.has(t)) ||
+        topics.some((t) => policyTags.has(t));
+      // Preserve an existing user flag if the page already had one.
+      const previousUserMarked = !!(assignment.page?.flags as { userMarkedSpam?: boolean } | undefined)
+        ?.userMarkedSpam;
       const flags = {
         hasLikelySpam: topSpamScore >= 0.5,
         hasMassMailing,
         isSparse: isThin,
+        userMarkedSpam: previousUserMarked || senderHit || tagHit,
       };
       // -------------------------------------------------------------------------
 
