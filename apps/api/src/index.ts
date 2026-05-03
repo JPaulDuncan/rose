@@ -16,8 +16,8 @@ import { instructionsRouter } from './routes/instructions.js';
 import { sourcesRouter } from './routes/sources.js';
 import { categoriesRouter } from './routes/categories.js';
 import { jobsRouter, jobsStreamRouter } from './routes/jobs.js';
-import { graphRouter } from './routes/graph.js';
 import { digestRouter } from './routes/digest.js';
+import { eventsRouter } from './routes/events.js';
 import { tagsRouter } from './routes/tags.js';
 import { spamRouter } from './routes/spam.js';
 import { featuredTagsRouter } from './routes/featuredTags.js';
@@ -74,8 +74,8 @@ export async function createServer(): Promise<Express> {
   // SSE stream auth via query param; mount before requireAuth-protected jobs.
   app.use('/api/jobs', jobsStreamRouter);
   app.use('/api/jobs', requireAuth, jobsRouter);
-  app.use('/api/graph', requireAuth, graphRouter);
   app.use('/api/digest', requireAuth, digestRouter);
+  app.use('/api/events', requireAuth, eventsRouter);
   app.use('/api/tags', requireAuth, tagsRouter);
   app.use('/api/spam', requireAuth, spamRouter);
   app.use('/api/featured-tags', requireAuth, featuredTagsRouter);

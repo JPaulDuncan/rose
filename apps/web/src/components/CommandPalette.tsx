@@ -5,7 +5,7 @@ import {
   Search,
   Inbox,
   Home,
-  Network,
+  Calendar as CalendarIcon,
   Settings,
   FileText,
   Upload,
@@ -62,8 +62,8 @@ export function CommandPalette({
               <Command.Item onSelect={() => go('/search')}>
                 <Search className="h-4 w-4" /> Search
               </Command.Item>
-              <Command.Item onSelect={() => go('/graph')}>
-                <Network className="h-4 w-4" /> Graph
+              <Command.Item onSelect={() => go('/calendar')}>
+                <CalendarIcon className="h-4 w-4" /> Calendar
               </Command.Item>
               <Command.Item onSelect={() => go('/settings')}>
                 <Settings className="h-4 w-4" /> Settings

@@ -79,6 +79,10 @@ const emailSchema = new Schema(
     spamSignals: { type: [String], default: [] },
     /** Legitimate bulk mail (List-Unsubscribe present). Distinct from spam. */
     isMassMailing: { type: Boolean, default: false },
+    /** Timestamp of the last extract.events run for this email. The worker
+     *  uses presence of this field to skip already-extracted emails on
+     *  re-generation; clear it to force re-extraction. */
+    eventsExtractedAt: { type: Date, default: null },
     error: { type: String, default: null },
   },
   { timestamps: true },

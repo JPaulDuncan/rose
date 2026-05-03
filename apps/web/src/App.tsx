@@ -8,7 +8,7 @@ import HomePage from './routes/Home';
 import InboxPage from './routes/Inbox';
 import PageView from './routes/Page';
 import SearchPage from './routes/Search';
-import GraphPage from './routes/Graph';
+import CalendarPage from './routes/Calendar';
 import TagPage from './routes/Tag';
 import EmailView from './routes/Email';
 import SettingsLayout from './routes/settings/Layout';
@@ -53,7 +53,7 @@ export default function App() {
         <Route path="/e/:id" element={<EmailView />} />
         <Route path="/t/:tag" element={<TagPage />} />
         <Route path="/search" element={<SearchPage />} />
-        <Route path="/graph" element={<GraphPage />} />
+        <Route path="/calendar" element={<CalendarPage />} />
         <Route path="/settings" element={<SettingsLayout />}>
           <Route index element={<Navigate to="account" replace />} />
           <Route path="account" element={<AccountSettings />} />

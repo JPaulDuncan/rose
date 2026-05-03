@@ -8,6 +8,7 @@ import {
   Category,
   User,
   type EmailDoc,
+  type PageDoc,
 } from '@rose/db';
 import {
   SYSTEM_PROMPT_BASE,
@@ -23,6 +24,10 @@ import {
   findPageForEmail,
   recomputeCentroid,
 } from '../services/pageAssignment.js';
+import {
+  extractEventsForPage,
+  syncEventsToPage,
+} from '../services/eventExtraction.js';
 
 const QUEUE = 'rose.generate-page';
 const embedQueue = new Queue('rose.embed-page', { connection: redis });
@@ -589,6 +594,20 @@ export function startGeneratePageWorker() {
         { _id: { $in: sourceEmailIds } },
         { $set: { ingestStatus: 'generated', pageId } },
       );
+
+      // Extract calendar events from each contributing email (idempotent;
+      // skips emails already extracted unless forced). Cheap wrapper around
+      // an LLM JSON call per email — ignored on failure.
+      try {
+        const refreshed = (await Email.find({ _id: { $in: sourceEmailIds } })) as unknown as EmailDoc[];
+        const pageObj = (assignment.page ?? (await Page.findById(pageId))) as PageDoc | null;
+        if (pageObj) {
+          await extractEventsForPage(pageObj, refreshed);
+          await syncEventsToPage(pageId, pageObj.slug);
+        }
+      } catch (err) {
+        logger.warn({ err, pageId: String(pageId) }, 'event extraction step failed');
+      }
 
       await embedQueue.add(
         'embed',

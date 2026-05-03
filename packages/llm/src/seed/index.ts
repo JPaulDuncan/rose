@@ -101,6 +101,39 @@ Return JSON only:
 {"isDuplicate": <bool>, "confidence": <0..1>, "reason": "<one sentence>"}`,
   },
   {
+    name: 'extract.events',
+    scope: 'events',
+    description:
+      'Extract concrete future events (concerts, meetings, deadlines, deliveries, appointments) mentioned in an email.',
+    variables: ['email_subject', 'email_from', 'email_date', 'email_body'],
+    isDefault: true,
+    template: `Identify any concrete future events that are explicitly mentioned in the email below. Examples: a concert on a specific date, a meeting with a specific time, a delivery window, an appointment, a deadline.
+
+REQUIREMENTS
+- Only events that have a clear date (and a time, if specified) — do NOT make up dates.
+- Resolve relative dates ("next Friday at 6pm", "in 2 weeks") using the email's send date as the anchor.
+- Use ISO-8601 with timezone offset when the email implies a timezone; otherwise emit the local time without offset (e.g. "2026-08-12T18:00:00").
+- If a time is not given, set "allDay": true and omit the time component (e.g. "2026-08-12").
+- Title: ≤ 80 chars, the thing happening (not the email subject).
+- Skip generic dates already in the past relative to the email's send date.
+- If the email contains no concrete events, return {"events": []}.
+
+EMAIL METADATA
+- Subject: {{email_subject}}
+- From:    {{email_from}}
+- Sent:    {{email_date}}
+
+EMAIL BODY
+"""
+{{email_body}}
+"""
+
+Respond with JSON only, matching exactly:
+{"events": [
+  {"title": "...", "start": "<ISO-8601>", "end": null | "<ISO-8601>", "allDay": <bool>, "location": null | "...", "description": "<one sentence>"}
+]}`,
+  },
+  {
     name: 'weather.brief',
     scope: 'weather',
     description:

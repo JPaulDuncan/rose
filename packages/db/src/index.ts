@@ -14,3 +14,5 @@ export { Source } from './models/Source.js';
 export type { SourceDoc } from './models/Source.js';
 export { ApiToken } from './models/ApiToken.js';
 export type { ApiTokenDoc } from './models/ApiToken.js';
+export { CalendarEvent } from './models/Event.js';
+export type { EventDoc } from './models/Event.js';

@@ -7,6 +7,7 @@ export const InstructionScope = z.enum([
   'link',
   'dedupe',
   'weather',
+  'events',
 ]);
 export type InstructionScope = z.infer<typeof InstructionScope>;
 
