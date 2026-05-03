@@ -534,54 +534,105 @@ function FeaturedSections({
   excludeId?: string;
 }) {
   return (
-    <div className="space-y-8">
-      <div className="flex items-center gap-3">
-        <Star className="h-4 w-4 text-rose-500" fill="currentColor" />
-        <h2 className="text-xs font-semibold uppercase tracking-[0.2em] text-rose-600 dark:text-rose-300">
-          Featured topics
-        </h2>
-        <div className="h-px flex-1 bg-rose-200 dark:bg-rose-900/40" />
-      </div>
+    <div className="space-y-12 border-t-4 border-double border-ink-900 pt-8 dark:border-ink-100">
       {sections.map((s) => {
         const pages = s.pages.filter((p) => p._id !== excludeId);
+        const lead = pages[0];
+        const rest = pages.slice(1);
         return (
           <section
             key={s.tag}
             id={`featured-${slugifyAnchor(s.tag)}`}
-            className="space-y-3"
+            className="space-y-5"
           >
-            <div className="flex items-baseline gap-3 border-b-2 border-ink-900 pb-1 dark:border-ink-100">
-              <Link
-                to={`/t/${encodeURIComponent(s.tag)}`}
-                className="font-serif text-2xl font-bold tracking-tight hover:text-rose-700 dark:hover:text-rose-300"
-              >
-                #{s.tag}
-              </Link>
-              <span className="text-xs text-ink-500">
-                {s.pageCount} page{s.pageCount === 1 ? '' : 's'}
-              </span>
-              <Link
-                to={`/t/${encodeURIComponent(s.tag)}`}
-                className="ml-auto text-xs font-medium text-rose-600 hover:underline dark:text-rose-300"
-              >
-                See all →
-              </Link>
+            {/* Newspaper-style section nameplate */}
+            <div className="border-b-2 border-ink-900 pb-2 dark:border-ink-100">
+              <div className="text-[10px] uppercase tracking-[0.25em] text-ink-500">
+                Section
+              </div>
+              <div className="mt-0.5 flex items-baseline justify-between gap-4">
+                <Link
+                  to={`/t/${encodeURIComponent(s.tag)}`}
+                  className="font-serif text-4xl font-black leading-none tracking-tight hover:text-rose-700 dark:hover:text-rose-300"
+                >
+                  #{s.tag}
+                </Link>
+                <Link
+                  to={`/t/${encodeURIComponent(s.tag)}`}
+                  className="shrink-0 text-[11px] uppercase tracking-widest text-ink-500 hover:text-ink-900 dark:hover:text-ink-100"
+                >
+                  {s.pageCount} {s.pageCount === 1 ? 'story' : 'stories'} ·{' '}
+                  <span className="font-medium text-rose-600 dark:text-rose-300">
+                    See all →
+                  </span>
+                </Link>
+              </div>
             </div>
+
             {pages.length === 0 ? (
-              <div className="text-xs text-ink-500">
-                No recent activity in this section.
-              </div>
+              <p className="text-xs italic text-ink-500">No recent dispatches in this section.</p>
             ) : (
-              <div className="grid gap-3 sm:grid-cols-2">
-                {pages.map((p) => (
-                  <PageCard key={p._id} page={p} />
-                ))}
-              </div>
+              <>
+                {lead && <FeatureLead page={lead} />}
+                {rest.length > 0 && (
+                  <>
+                    <div className="border-t border-ink-200 dark:border-ink-800" />
+                    <div className="gap-4 sm:columns-2 lg:columns-3 [&>*]:mb-4">
+                      {rest.slice(0, 6).map((p) => (
+                        <div key={p._id} className="break-inside-avoid">
+                          <PageCard page={p} />
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </>
             )}
           </section>
         );
       })}
     </div>
+  );
+}
+
+function FeatureLead({ page }: { page: DigestPage }) {
+  return (
+    <Link
+      to={`/p/${page.slug}`}
+      className="group grid gap-5 md:grid-cols-[3fr_2fr]"
+    >
+      {page.heroImageUrl ? (
+        <div className="overflow-hidden rounded-md border border-ink-200 bg-ink-50 dark:border-ink-800 dark:bg-ink-900">
+          <SafeImage
+            src={page.heroImageUrl}
+            alt={page.title}
+            className="aspect-[4/3] w-full object-cover transition-transform duration-300 group-hover:scale-[1.02]"
+          />
+        </div>
+      ) : null}
+      <div className={page.heroImageUrl ? '' : 'md:col-span-2'}>
+        <h3 className="font-serif text-3xl font-bold leading-tight tracking-tight text-ink-900 group-hover:text-rose-700 dark:text-ink-50 dark:group-hover:text-rose-300">
+          {page.title}
+        </h3>
+        {(page.senderAddresses?.[0] || page.sourceEmailIds.length > 0) && (
+          <div className="mt-2 text-[11px] uppercase tracking-widest text-ink-500">
+            {page.senderAddresses?.[0] && <span>By {page.senderAddresses[0]}</span>}
+            {page.senderAddresses && page.senderAddresses.length > 1 && (
+              <span className="text-ink-400"> +{page.senderAddresses.length - 1}</span>
+            )}
+            {page.sourceEmailIds.length > 0 && (
+              <span className="text-ink-400">
+                {' '}· {page.sourceEmailIds.length} message
+                {page.sourceEmailIds.length === 1 ? '' : 's'}
+              </span>
+            )}
+          </div>
+        )}
+        <p className="mt-3 text-base leading-relaxed text-ink-700 first-letter:font-serif first-letter:text-3xl first-letter:font-bold first-letter:leading-none first-letter:mr-1 first-letter:float-left first-letter:mt-1 dark:text-ink-200">
+          {page.summary}
+        </p>
+      </div>
+    </Link>
   );
 }
 
