@@ -59,7 +59,16 @@ export default function EmailView() {
     enabled: !!data?.pageId,
   });
 
-  const [view, setView] = useState<'text' | 'html' | 'raw'>('text');
+  // Default to HTML when present (it's almost always the most useful render
+  // for marketing/notification mail); fall back to plain text otherwise.
+  const initialView: 'text' | 'html' | 'raw' = data?.html
+    ? 'html'
+    : data?.text || data?.rawText
+      ? 'text'
+      : 'raw';
+  const [viewOverride, setViewOverride] = useState<'text' | 'html' | 'raw' | null>(null);
+  const view = viewOverride ?? initialView;
+  const setView = (v: 'text' | 'html' | 'raw') => setViewOverride(v);
 
   if (isLoading || !data) {
     if (error) {
@@ -274,14 +283,14 @@ function BodyTabs({
 }) {
   return (
     <div className="flex gap-1 border-b border-ink-200 dark:border-ink-800">
-      <TabButton active={view === 'text'} onClick={() => setView('text')}>
-        <FileText className="h-3.5 w-3.5" /> Plain text
-      </TabButton>
       {hasHtml && (
         <TabButton active={view === 'html'} onClick={() => setView('html')}>
           <Code2 className="h-3.5 w-3.5" /> HTML
         </TabButton>
       )}
+      <TabButton active={view === 'text'} onClick={() => setView('text')}>
+        <FileText className="h-3.5 w-3.5" /> Plain text
+      </TabButton>
       {hasRaw && (
         <TabButton active={view === 'raw'} onClick={() => setView('raw')}>
           Raw
