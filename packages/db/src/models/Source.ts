@@ -3,7 +3,7 @@ import { Schema, model, type InferSchemaType, type HydratedDocument } from 'mong
 const sourceSchema = new Schema(
   {
     userId: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
-    type: { type: String, enum: ['upload', 'imap', 'webhook', 'gmail'], required: true },
+    type: { type: String, enum: ['upload', 'imap', 'webhook', 'gmail', 'rss'], required: true },
     name: { type: String, required: true },
     status: { type: String, enum: ['active', 'paused', 'error'], default: 'active' },
     /** AES-256-GCM encrypted JSON of source-specific config. */
@@ -16,6 +16,12 @@ const sourceSchema = new Schema(
     pollIntervalMinutes: { type: Number, default: 5, min: 1, max: 1440 },
     lastSyncAt: { type: Date, default: null },
     lastError: { type: String, default: null },
+    /** RSS-only conditional GET caches so we re-fetch cheaply. */
+    rssEtag: { type: String, default: null },
+    rssLastModified: { type: String, default: null },
+    /** RSS feed metadata captured on first successful fetch (display only). */
+    rssFeedTitle: { type: String, default: null },
+    rssFeedUrl: { type: String, default: null },
   },
   { timestamps: true },
 );

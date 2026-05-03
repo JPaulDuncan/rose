@@ -11,18 +11,44 @@ import {
   CheckCircle2,
   XCircle,
   Clock,
+  Rss,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useApi } from '../../lib/api';
 
 type Source = {
   _id: string;
-  type: 'imap' | 'webhook' | 'gmail' | 'upload';
+  type: 'imap' | 'webhook' | 'gmail' | 'upload' | 'rss';
   name: string;
   status: string;
   pollIntervalMinutes?: number;
   lastSyncAt?: string;
   lastError?: string | null;
+  rssFeedUrl?: string | null;
+  rssFeedTitle?: string | null;
+};
+
+type RssConfig = {
+  url: string;
+  pollIntervalMinutes?: number;
+  historicalBackfillDays: number;
+  maxPerSync: number;
+};
+
+type RssFormValues = {
+  name: string;
+  url: string;
+  pollIntervalMinutes: number;
+  historicalBackfillDays: number;
+  maxPerSync: number;
+};
+
+const DEFAULT_RSS: RssFormValues = {
+  name: '',
+  url: '',
+  pollIntervalMinutes: 30,
+  historicalBackfillDays: 14,
+  maxPerSync: 100,
 };
 
 type ImapConfig = {
@@ -35,7 +61,7 @@ type ImapConfig = {
   pollIntervalMinutes: number;
 };
 
-type SourceWithConfig = Source & { config: ImapConfig | null };
+type SourceWithConfig = Source & { config: ImapConfig | RssConfig | null };
 
 type ImapFormValues = ImapConfig & { name: string };
 
@@ -61,6 +87,8 @@ export default function SourcesSettings() {
   const [form, setForm] = useState<
     | { kind: 'create-imap' }
     | { kind: 'edit-imap'; id: string }
+    | { kind: 'create-rss' }
+    | { kind: 'edit-rss'; id: string }
     | { kind: 'webhook' }
     | null
   >(null);
@@ -134,9 +162,13 @@ export default function SourcesSettings() {
 
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-3 gap-2">
+      <RssGlobalDefaults />
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
         <button className="btn-secondary" onClick={() => setForm({ kind: 'create-imap' })}>
           <Mail className="h-4 w-4" /> Connect IMAP
+        </button>
+        <button className="btn-secondary" onClick={() => setForm({ kind: 'create-rss' })}>
+          <Rss className="h-4 w-4" /> Add RSS feed
         </button>
         <button className="btn-secondary" onClick={() => setForm({ kind: 'webhook' })}>
           <Webhook className="h-4 w-4" /> Add Webhook
@@ -172,6 +204,27 @@ export default function SourcesSettings() {
           }}
         />
       )}
+      {form?.kind === 'create-rss' && (
+        <RssForm
+          mode="create"
+          initial={DEFAULT_RSS}
+          onCancel={() => setForm(null)}
+          onSubmit={(values) => {
+            const { name, ...config } = values;
+            create.mutate({ type: 'rss', name, config });
+          }}
+        />
+      )}
+      {form?.kind === 'edit-rss' && (
+        <EditRssForm
+          id={form.id}
+          onCancel={() => setForm(null)}
+          onSubmit={(values) => {
+            const { name, ...rssConfig } = values;
+            update.mutate({ id: form.id, body: { name, rssConfig } });
+          }}
+        />
+      )}
       {form?.kind === 'webhook' && (
         <WebhookForm
           onCancel={() => setForm(null)}
@@ -194,6 +247,18 @@ export default function SourcesSettings() {
                   <div className="font-medium">
                     {s.name} <span className="text-xs text-ink-500">({s.type})</span>
                   </div>
+                  {s.type === 'rss' && s.rssFeedUrl && (
+                    <div className="truncate text-xs text-ink-500">
+                      <a
+                        href={s.rssFeedUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="hover:underline"
+                      >
+                        {s.rssFeedUrl}
+                      </a>
+                    </div>
+                  )}
                   <div className="flex flex-wrap items-center gap-x-2 text-xs text-ink-500">
                     <span>{s.status}</span>
                     <span>·</span>
@@ -201,7 +266,7 @@ export default function SourcesSettings() {
                       last sync{' '}
                       {s.lastSyncAt ? new Date(s.lastSyncAt).toLocaleString() : 'never'}
                     </span>
-                    {(s.type === 'imap' || s.type === 'gmail') && (
+                    {(s.type === 'imap' || s.type === 'gmail' || s.type === 'rss') && (
                       <>
                         <span>·</span>
                         <button
@@ -235,7 +300,17 @@ export default function SourcesSettings() {
                       <Pencil className="h-4 w-4" />
                     </button>
                   )}
-                  {(s.type === 'imap' || s.type === 'gmail') && (
+                  {s.type === 'rss' && (
+                    <button
+                      className="btn-ghost"
+                      onClick={() => setForm({ kind: 'edit-rss', id: s._id })}
+                      aria-label="Edit"
+                      title="Edit"
+                    >
+                      <Pencil className="h-4 w-4" />
+                    </button>
+                  )}
+                  {(s.type === 'imap' || s.type === 'gmail' || s.type === 'rss') && (
                     <button
                       className="btn-ghost"
                       onClick={() => syncNow.mutate(s._id)}
@@ -287,18 +362,19 @@ function EditImapForm({
   if (isLoading || !data) {
     return <div className="card text-sm text-ink-500">Loading source…</div>;
   }
-  if (!data.config) {
+  const cfg = data.config as ImapConfig | null;
+  if (!cfg || !('host' in cfg)) {
     return <div className="card text-sm text-ink-500">This source isn’t editable here.</div>;
   }
   const initial: ImapFormValues = {
     name: data.name,
-    host: data.config.host,
-    port: data.config.port,
-    secure: data.config.secure,
-    username: data.config.username,
+    host: cfg.host,
+    port: cfg.port,
+    secure: cfg.secure,
+    username: cfg.username,
     password: '',
-    mailbox: data.config.mailbox,
-    pollIntervalMinutes: data.config.pollIntervalMinutes,
+    mailbox: cfg.mailbox,
+    pollIntervalMinutes: cfg.pollIntervalMinutes,
   };
   return (
     <ImapForm
@@ -562,6 +638,273 @@ function Field({
       {children}
       {hint && <span className="mt-1 block text-xs text-ink-500">{hint}</span>}
     </label>
+  );
+}
+
+function RssGlobalDefaults() {
+  const api = useApi();
+  const qc = useQueryClient();
+  const { data } = useQuery({
+    queryKey: ['me'],
+    queryFn: () =>
+      api.get<{ settings?: { rssPollIntervalMinutes?: number } }>('/api/me'),
+  });
+  const current = data?.settings?.rssPollIntervalMinutes ?? 30;
+  const [value, setValue] = useState<number>(current);
+  useEffect(() => {
+    setValue(current);
+  }, [current]);
+  const save = useMutation({
+    mutationFn: async (minutes: number) =>
+      api.patch<unknown>('/api/me', {
+        settings: { ...(data?.settings ?? {}), rssPollIntervalMinutes: minutes },
+      }),
+    onSuccess: () => {
+      toast.success('Default RSS poll interval saved');
+      qc.invalidateQueries({ queryKey: ['me'] });
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
+  return (
+    <div className="card flex flex-wrap items-end gap-3">
+      <div className="flex items-center gap-2 text-sm text-ink-700 dark:text-ink-200">
+        <Rss className="h-4 w-4 text-rose-500" />
+        <span className="font-medium">Default RSS poll interval</span>
+      </div>
+      <Field label="Minutes" hint="Applies to new feeds. Per-feed overrides win.">
+        <input
+          className="input w-32"
+          type="number"
+          min={5}
+          max={1440}
+          value={value}
+          onChange={(e) => setValue(Number(e.target.value))}
+        />
+      </Field>
+      <button
+        className="btn-secondary"
+        onClick={() => save.mutate(value)}
+        disabled={save.isPending || value === current}
+      >
+        Save
+      </button>
+    </div>
+  );
+}
+
+function EditRssForm({
+  id,
+  onCancel,
+  onSubmit,
+}: {
+  id: string;
+  onCancel: () => void;
+  onSubmit: (values: RssFormValues) => void;
+}) {
+  const api = useApi();
+  const { data, isLoading } = useQuery({
+    queryKey: ['source', id],
+    queryFn: () => api.get<SourceWithConfig>(`/api/sources/${id}`),
+  });
+  if (isLoading || !data) {
+    return <div className="card text-sm text-ink-500">Loading feed…</div>;
+  }
+  const cfg = data.config as RssConfig | null;
+  if (!cfg || !('url' in cfg)) {
+    return <div className="card text-sm text-ink-500">This source isn’t editable here.</div>;
+  }
+  const initial: RssFormValues = {
+    name: data.name,
+    url: cfg.url,
+    pollIntervalMinutes: cfg.pollIntervalMinutes ?? 30,
+    historicalBackfillDays: cfg.historicalBackfillDays,
+    maxPerSync: cfg.maxPerSync,
+  };
+  return <RssForm mode="edit" initial={initial} onCancel={onCancel} onSubmit={onSubmit} />;
+}
+
+function RssForm({
+  mode,
+  initial,
+  onCancel,
+  onSubmit,
+}: {
+  mode: 'create' | 'edit';
+  initial: RssFormValues;
+  onCancel: () => void;
+  onSubmit: (values: RssFormValues) => void;
+}) {
+  const api = useApi();
+  const [values, setValues] = useState<RssFormValues>(initial);
+  const [testResult, setTestResult] = useState<
+    | { state: 'idle' }
+    | { state: 'pending' }
+    | { state: 'ok'; feedTitle: string; sampleItems: { title: string; link: string | null }[] }
+    | { state: 'fail'; message: string }
+  >({ state: 'idle' });
+
+  useEffect(() => {
+    setValues(initial);
+    setTestResult({ state: 'idle' });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initial.url, mode]);
+
+  function set<K extends keyof RssFormValues>(key: K, val: RssFormValues[K]) {
+    setValues((v) => ({ ...v, [key]: val }));
+  }
+
+  async function runTest() {
+    if (!values.url) {
+      toast.error('Enter a feed URL first');
+      return;
+    }
+    setTestResult({ state: 'pending' });
+    try {
+      const result = await api.post<
+        | { ok: true; feedTitle: string; sampleItems: { title: string; link: string | null }[] }
+        | { ok: false; message: string }
+      >('/api/sources/test', { type: 'rss', config: { url: values.url } });
+      if (result.ok) {
+        setTestResult({
+          state: 'ok',
+          feedTitle: result.feedTitle,
+          sampleItems: result.sampleItems,
+        });
+        toast.success(`Connected to "${result.feedTitle}"`);
+        if (mode === 'create' && !values.name) {
+          set('name', result.feedTitle);
+        }
+      } else {
+        setTestResult({ state: 'fail', message: result.message });
+        toast.error(result.message);
+      }
+    } catch (err) {
+      const msg = (err as Error).message;
+      setTestResult({ state: 'fail', message: msg });
+      toast.error(msg);
+    }
+  }
+
+  return (
+    <form
+      className="card space-y-4"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (!values.name) {
+          toast.error('Give the feed a display name');
+          return;
+        }
+        onSubmit(values);
+      }}
+    >
+      <h3 className="font-semibold">
+        {mode === 'create' ? 'Add an RSS or Atom feed' : `Edit "${initial.name}"`}
+      </h3>
+      <p className="text-xs text-ink-500">
+        Feed entries become wiki pages grouped by topic. The LLM derives
+        tags from each item, and matching topics roll up into the same page.
+      </p>
+
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <Field label="Feed URL" hint="The RSS or Atom URL.">
+          <input
+            className="input"
+            value={values.url}
+            onChange={(e) => set('url', e.target.value)}
+            placeholder="https://example.com/feed.xml"
+            required
+          />
+        </Field>
+        <Field label="Display name" hint="Shown in the sources list.">
+          <input
+            className="input"
+            value={values.name}
+            onChange={(e) => set('name', e.target.value)}
+            required
+          />
+        </Field>
+        <Field label="Poll interval (minutes)" hint="Minimum 5. Default 30.">
+          <input
+            className="input"
+            type="number"
+            min={5}
+            max={1440}
+            value={values.pollIntervalMinutes}
+            onChange={(e) => set('pollIntervalMinutes', Number(e.target.value))}
+            required
+          />
+        </Field>
+        <Field
+          label="Backfill days"
+          hint="On first sync, ingest items posted within this many days."
+        >
+          <input
+            className="input"
+            type="number"
+            min={1}
+            max={365}
+            value={values.historicalBackfillDays}
+            onChange={(e) => set('historicalBackfillDays', Number(e.target.value))}
+            required
+          />
+        </Field>
+        <Field label="Max items per sync" hint="Upper bound on a single fetch.">
+          <input
+            className="input"
+            type="number"
+            min={1}
+            max={500}
+            value={values.maxPerSync}
+            onChange={(e) => set('maxPerSync', Number(e.target.value))}
+            required
+          />
+        </Field>
+      </div>
+
+      {testResult.state === 'ok' && (
+        <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-2 text-sm text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-200">
+          <div className="flex items-start gap-2">
+            <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
+            <div>
+              <div className="font-medium">{testResult.feedTitle}</div>
+              <ul className="mt-1 list-disc pl-4 text-xs">
+                {testResult.sampleItems.map((it, i) => (
+                  <li key={i} className="truncate">
+                    {it.title}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        </div>
+      )}
+      {testResult.state === 'fail' && (
+        <div className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 p-2 text-sm text-red-800 dark:border-red-800 dark:bg-red-950/30 dark:text-red-200">
+          <XCircle className="mt-0.5 h-4 w-4 shrink-0" />
+          <div>{testResult.message}</div>
+        </div>
+      )}
+
+      <div className="flex justify-end gap-2">
+        <button type="button" className="btn-ghost" onClick={onCancel}>
+          Cancel
+        </button>
+        <button
+          type="button"
+          className="btn-secondary"
+          onClick={runTest}
+          disabled={testResult.state === 'pending'}
+        >
+          <PlugZap
+            className={`h-4 w-4 ${testResult.state === 'pending' ? 'animate-pulse' : ''}`}
+          />
+          Test feed
+        </button>
+        <button type="submit" className="btn-primary">
+          {mode === 'create' ? 'Add feed' : 'Save changes'}
+        </button>
+      </div>
+    </form>
   );
 }
 

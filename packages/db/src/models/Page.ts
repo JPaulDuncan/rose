@@ -34,9 +34,16 @@ const pageSchema = new Schema(
      */
     groupingMode: {
       type: String,
-      enum: ['thread', 'source-topic', 'manual'],
+      enum: ['thread', 'source-topic', 'topic', 'manual'],
       default: 'thread',
     },
+    /**
+     * For `groupingMode === 'topic'` pages (currently RSS-fed). The
+     * canonical topic/tag this page is anchored on. Lowercased, stable —
+     * the assignment service uses this to find an existing topic page
+     * when a new RSS item arrives.
+     */
+    primaryTopic: { type: String, default: null, index: true },
     /**
      * Average of source-email embeddings — used to decide whether a new
      * email is on-topic enough to merge here. Deselect by default; cosine

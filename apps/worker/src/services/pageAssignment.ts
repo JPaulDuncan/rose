@@ -3,11 +3,17 @@ import { Email, Page, type EmailDoc, type PageDoc } from '@rose/db';
 import { resolveProviderForUser } from '../lib/providers.js';
 import { logger } from '../lib/logger.js';
 
-export type AssignmentMode = 'thread' | 'source-template' | 'source-topic' | 'new';
+export type AssignmentMode =
+  | 'thread'
+  | 'source-template'
+  | 'source-topic'
+  | 'topic'
+  | 'new';
 export type Assignment =
   | { mode: 'thread'; page: PageDoc }
   | { mode: 'source-template'; page: PageDoc }
   | { mode: 'source-topic'; page: PageDoc; similarity: number }
+  | { mode: 'topic'; page: PageDoc }
   | { mode: 'new'; page: null };
 
 /** Default cosine threshold for source+topic clustering. */
@@ -164,6 +170,40 @@ export async function recomputeCentroid(page: PageDoc): Promise<number[] | null>
   }
   for (let i = 0; i < dim; i++) out[i] = (out[i] ?? 0) / vecs.length;
   return out;
+}
+
+/**
+ * Topic-mode assignment for items where sender/thread grouping doesn't
+ * fit (currently RSS feeds — every item is from the "feed" identity, so
+ * grouping by sender would just collapse the whole feed into one page).
+ *
+ * Strategy:
+ *   1. Pick the highest-weighted topic on the email (`topics[0]`) as the
+ *      primary topic.
+ *   2. Look up an existing page with `groupingMode: 'topic'` and that
+ *      `primaryTopic`. Hit → assign there.
+ *   3. Otherwise look for any topic-mode page whose `tags` or `topics`
+ *      already contain the primary topic — handles the case where the
+ *      user (or a previous LLM run) renamed the page.
+ *   4. Otherwise return `new` so the generator creates a fresh topic page.
+ */
+export async function findTopicPageForItem(email: EmailDoc): Promise<Assignment> {
+  const userId = email.userId as Types.ObjectId;
+  const topics = (email.topics as string[] | undefined) ?? [];
+  if (!topics.length) return { mode: 'new', page: null };
+  const primary = topics[0]!.toLowerCase();
+
+  const direct = await Page.findOne({ userId, groupingMode: 'topic', primaryTopic: primary });
+  if (direct) return { mode: 'topic', page: direct };
+
+  const fuzzy = await Page.findOne({
+    userId,
+    groupingMode: 'topic',
+    $or: [{ tags: primary }, { topics: primary }],
+  });
+  if (fuzzy) return { mode: 'topic', page: fuzzy };
+
+  return { mode: 'new', page: null };
 }
 
 export {

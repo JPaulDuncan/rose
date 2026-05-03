@@ -22,6 +22,7 @@ import { resolveProviderForUser } from '../lib/providers.js';
 import {
   ensureEmailEmbedding,
   findPageForEmail,
+  findTopicPageForItem,
   recomputeCentroid,
 } from '../services/pageAssignment.js';
 import {
@@ -217,7 +218,13 @@ export function startGeneratePageWorker() {
 
       // Ensure the trigger email has a cached embedding before assignment.
       await ensureEmailEmbedding(triggerEmail);
-      const assignment = await findPageForEmail(triggerEmail);
+      // RSS items always feed topic-mode pages (one wiki page per topic),
+      // bypassing sender/thread grouping. For email we use the existing
+      // thread → subject-template → sender+centroid path.
+      const assignment =
+        triggerEmail.kind === 'rss'
+          ? await findTopicPageForItem(triggerEmail)
+          : await findPageForEmail(triggerEmail);
       logger.info(
         {
           emailId: String(triggerEmail._id),
@@ -527,9 +534,11 @@ export function startGeneratePageWorker() {
         page.groupingMode =
           assignment.mode === 'thread'
             ? 'thread'
-            : assignment.mode === 'source-template'
-              ? 'source-topic'
-              : 'source-topic';
+            : assignment.mode === 'topic'
+              ? 'topic'
+              : assignment.mode === 'source-template'
+                ? 'source-topic'
+                : 'source-topic';
         page.citations = citations;
         page.markModified('citations');
         page.version = (page.version ?? 1) + 1;
@@ -553,6 +562,15 @@ export function startGeneratePageWorker() {
           n += 1;
           slug = `${baseSlug}-${n}`;
         }
+        const isRss = triggerEmail.kind === 'rss';
+        const newGroupingMode: 'thread' | 'topic' | 'source-topic' = isRss
+          ? 'topic'
+          : triggerEmail.threadKey
+            ? 'thread'
+            : 'source-topic';
+        const primaryTopic = isRss
+          ? ((triggerEmail.topics as string[] | undefined)?.[0] ?? null)?.toLowerCase() ?? null
+          : null;
         const created = await Page.create({
           userId,
           slug,
@@ -573,7 +591,8 @@ export function startGeneratePageWorker() {
           pageAttachments,
           spamScore: topSpamScore,
           flags,
-          groupingMode: triggerEmail.threadKey ? 'thread' : 'source-topic',
+          groupingMode: newGroupingMode,
+          primaryTopic,
           citations,
           version: 1,
         });

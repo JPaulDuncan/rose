@@ -20,6 +20,13 @@ const emailSchema = new Schema(
   {
     userId: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
     sourceId: { type: Schema.Types.ObjectId, ref: 'Source', default: null },
+    /**
+     * Discriminator. `'email'` for traditional inbound mail. `'rss'` for
+     * feed entries normalized into the same shape (subject = entry title,
+     * from = feed identity, text/html = entry content). RSS items always
+     * route to topic-mode pages instead of sender/thread grouping.
+     */
+    kind: { type: String, enum: ['email', 'rss'], default: 'email', index: true },
     messageId: { type: String, default: null },
     threadKey: { type: String, default: null, index: true },
     /** Normalized subject shape for grouping templated notifications. */

@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-export const SourceType = z.enum(['upload', 'imap', 'webhook', 'gmail']);
+export const SourceType = z.enum(['upload', 'imap', 'webhook', 'gmail', 'rss']);
 export type SourceType = z.infer<typeof SourceType>;
 
 export const ImapConfig = z.object({
@@ -32,6 +32,17 @@ export const GmailConfig = z.object({
 });
 export type GmailConfig = z.infer<typeof GmailConfig>;
 
+export const RssConfig = z.object({
+  url: z.string().url(),
+  /** Per-feed override. When omitted the user's global default applies. */
+  pollIntervalMinutes: z.number().int().min(5).max(1440).optional(),
+  /** Skip items older than this many days on first sync. */
+  historicalBackfillDays: z.number().int().min(1).max(365).default(14),
+  /** Hard cap per sync run. */
+  maxPerSync: z.number().int().min(1).max(500).default(100),
+});
+export type RssConfig = z.infer<typeof RssConfig>;
+
 export const Source = z.object({
   id: z.string(),
   userId: z.string(),
@@ -53,6 +64,7 @@ export const SourceCreateRequest = z.discriminatedUnion('type', [
     authCode: z.string(),
     pollIntervalMinutes: z.number().int().min(1).max(1440).default(5),
   }),
+  z.object({ type: z.literal('rss'), name: z.string().min(1), config: RssConfig }),
 ]);
 export type SourceCreateRequest = z.infer<typeof SourceCreateRequest>;
 
@@ -73,11 +85,20 @@ export const ImapUpdateConfig = z.object({
 });
 export type ImapUpdateConfig = z.infer<typeof ImapUpdateConfig>;
 
+export const RssUpdateConfig = z.object({
+  url: z.string().url().optional(),
+  pollIntervalMinutes: z.number().int().min(5).max(1440).optional(),
+  historicalBackfillDays: z.number().int().min(1).max(365).optional(),
+  maxPerSync: z.number().int().min(1).max(500).optional(),
+});
+export type RssUpdateConfig = z.infer<typeof RssUpdateConfig>;
+
 export const SourceUpdateRequest = z.object({
   name: z.string().min(1).optional(),
   config: ImapUpdateConfig.optional(),
+  rssConfig: RssUpdateConfig.optional(),
   status: z.enum(['active', 'paused']).optional(),
-  /** Top-level interval — accepted for any pollable source (IMAP / Gmail). */
+  /** Top-level interval — accepted for any pollable source (IMAP / Gmail / RSS). */
   pollIntervalMinutes: z.number().int().min(1).max(1440).optional(),
 });
 export type SourceUpdateRequest = z.infer<typeof SourceUpdateRequest>;
@@ -85,12 +106,16 @@ export type SourceUpdateRequest = z.infer<typeof SourceUpdateRequest>;
 /** Stateless connection test (does not persist). */
 export const SourceTestRequest = z.discriminatedUnion('type', [
   z.object({ type: z.literal('imap'), config: ImapConfig }),
+  z.object({ type: z.literal('rss'), config: z.object({ url: z.string().url() }) }),
 ]);
 export type SourceTestRequest = z.infer<typeof SourceTestRequest>;
 
 export const SourceTestResponse = z.object({
   ok: z.boolean(),
   mailboxes: z.array(z.string()).optional(),
+  /** Sample of feed entry titles when testing an RSS source. */
+  feedTitle: z.string().optional(),
+  sampleItems: z.array(z.object({ title: z.string(), link: z.string().nullable() })).optional(),
   message: z.string().optional(),
 });
 export type SourceTestResponse = z.infer<typeof SourceTestResponse>;

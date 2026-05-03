@@ -10,6 +10,11 @@ const userSchema = new Schema(
       defaultGenerationModel: { type: String, default: 'llama3.1:8b-instruct' },
       defaultEmbeddingModel: { type: String, default: 'nomic-embed-text' },
       theme: { type: String, enum: ['light', 'dark', 'system'], default: 'system' },
+      /**
+       * Global default polling interval for RSS feeds (minutes). Per-feed
+       * overrides take precedence; this is what new feeds default to.
+       */
+      rssPollIntervalMinutes: { type: Number, default: 30, min: 5, max: 1440 },
     },
     /**
      * Per-user provider configuration. API keys are stored encrypted via
