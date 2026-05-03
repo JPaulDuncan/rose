@@ -73,7 +73,7 @@ export default function EmailView() {
   if (isLoading || !data) {
     if (error) {
       return (
-        <div className="mx-auto max-w-3xl px-6 py-10 text-sm text-red-600">
+        <div className="mx-auto max-w-6xl px-6 py-10 text-sm text-red-600">
           Couldn't load email: {(error as Error).message}
         </div>
       );
@@ -89,7 +89,7 @@ export default function EmailView() {
   const date = data.date ? new Date(data.date) : data.createdAt ? new Date(data.createdAt) : null;
 
   return (
-    <div className="mx-auto w-full max-w-4xl px-6 py-10">
+    <div className="mx-auto w-full max-w-6xl px-6 py-10">
       <Link
         to={pageInfo ? `/p/${pageInfo.slug}` : '/inbox'}
         className="mb-4 inline-flex items-center gap-1 text-xs text-ink-500 hover:text-ink-900 dark:hover:text-ink-100"

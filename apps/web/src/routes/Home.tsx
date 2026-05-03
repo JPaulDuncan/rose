@@ -68,7 +68,7 @@ export default function HomePage() {
   }
   if (!data || data.stats.totalPages === 0) {
     return (
-      <div className="mx-auto w-full max-w-4xl px-6 py-10">
+      <div className="mx-auto w-full max-w-6xl px-6 py-10">
         <div className="card flex flex-col items-center justify-center gap-3 py-16 text-center">
           <Inbox className="h-10 w-10 text-rose-500" />
           <div>

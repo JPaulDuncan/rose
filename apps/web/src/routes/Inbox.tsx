@@ -136,7 +136,7 @@ export default function InboxPage() {
   const stuckCount = data?.emails.filter((e) => e.ingestStatus === 'parsed').length ?? 0;
 
   return (
-    <div className="mx-auto w-full max-w-5xl px-6 py-10">
+    <div className="mx-auto w-full max-w-6xl px-6 py-10">
       <div className="mb-6 flex items-center justify-between">
         <h1 className="text-2xl font-semibold tracking-tight">Inbox</h1>
         <span className="text-sm text-ink-500">{data?.emails.length ?? 0} emails</span>

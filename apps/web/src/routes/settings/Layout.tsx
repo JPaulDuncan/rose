@@ -11,7 +11,7 @@ const TABS = [
 
 export default function SettingsLayout() {
   return (
-    <div className="mx-auto w-full max-w-4xl px-6 py-10">
+    <div className="mx-auto w-full max-w-6xl px-6 py-10">
       <h1 className="mb-2 text-2xl font-semibold tracking-tight">Settings</h1>
       <p className="mb-6 text-sm text-ink-500">Configure how Rose ingests and writes.</p>
       <div className="mb-6 flex gap-1 border-b border-ink-200 dark:border-ink-800">
