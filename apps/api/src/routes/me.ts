@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { Types } from 'mongoose';
 import { userIdOf } from '../middleware/auth.js';
-import { User, Page, PageRevision, Email, Category } from '@rose/db';
+import { User, Page, PageRevision, Email, Category, CalendarEvent } from '@rose/db';
 import { generatePageQueue } from '../lib/queues.js';
 
 export const meRouter: Router = Router();
@@ -60,6 +60,11 @@ meRouter.post('/reset-wiki', async (req, res) => {
   const revisions = await PageRevision.deleteMany({ pageId: { $in: pageIds } });
   const pagesResult = await Page.deleteMany({ userId });
 
+  // Calendar events are derived from email content. They get re-extracted
+  // on the next generation pass, so clear them here and reset the
+  // per-email `eventsExtractedAt` cache so the worker doesn't skip them.
+  const eventsResult = await CalendarEvent.deleteMany({ userId });
+
   let emailsResult: { deleted: number; reset: number };
   if (body.alsoEmails) {
     const r = await Email.deleteMany({ userId });
@@ -67,7 +72,10 @@ meRouter.post('/reset-wiki', async (req, res) => {
   } else {
     const r = await Email.updateMany(
       { userId },
-      { $set: { ingestStatus: 'parsed', pageId: null, error: null } },
+      {
+        $set: { ingestStatus: 'parsed', pageId: null, error: null },
+        $unset: { eventsExtractedAt: '' },
+      },
     );
     emailsResult = { deleted: 0, reset: r.modifiedCount ?? 0 };
   }
@@ -95,6 +103,7 @@ meRouter.post('/reset-wiki', async (req, res) => {
     ok: true,
     pagesDeleted: pagesResult.deletedCount ?? 0,
     revisionsDeleted: revisions.deletedCount ?? 0,
+    eventsDeleted: eventsResult.deletedCount ?? 0,
     emails: emailsResult,
     categoriesDeleted,
     requeued,

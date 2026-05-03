@@ -10,6 +10,7 @@ type ResetResponse = {
   ok: true;
   pagesDeleted: number;
   revisionsDeleted: number;
+  eventsDeleted: number;
   emails: { deleted: number; reset: number };
   categoriesDeleted: number;
   requeued: number;
@@ -75,6 +76,9 @@ function DangerZone() {
     onSuccess: (r) => {
       toast.success(
         `Deleted ${r.pagesDeleted} page${r.pagesDeleted === 1 ? '' : 's'}` +
+          (r.eventsDeleted
+            ? `, ${r.eventsDeleted} calendar event${r.eventsDeleted === 1 ? '' : 's'}`
+            : '') +
           (r.emails.deleted ? `, ${r.emails.deleted} email(s)` : '') +
           (r.emails.reset ? `, reset ${r.emails.reset} email(s)` : '') +
           (r.requeued ? `, requeued ${r.requeued}` : ''),
