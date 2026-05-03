@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -13,6 +13,7 @@ import {
   Tag as TagIcon,
   Calendar,
   ChevronRight,
+  ChevronLeft,
   Star,
   Plus,
   X,
@@ -579,13 +580,7 @@ function FeaturedSections({
                 {rest.length > 0 && (
                   <>
                     <div className="border-t border-ink-200 dark:border-ink-800" />
-                    <div className="gap-4 sm:columns-2 lg:columns-3 [&>*]:mb-4">
-                      {rest.slice(0, 6).map((p) => (
-                        <div key={p._id} className="break-inside-avoid">
-                          <PageCard page={p} />
-                        </div>
-                      ))}
-                    </div>
+                    <SectionCarousel pages={rest.slice(0, 12)} />
                   </>
                 )}
               </>
@@ -593,6 +588,59 @@ function FeaturedSections({
           </section>
         );
       })}
+    </div>
+  );
+}
+
+function SectionCarousel({ pages }: { pages: DigestPage[] }) {
+  const trackRef = useRef<HTMLDivElement>(null);
+
+  function scrollByCard(direction: -1 | 1) {
+    const el = trackRef.current;
+    if (!el) return;
+    // Scroll by ~ one card width so each click advances by one item.
+    const card = el.querySelector<HTMLElement>('[data-carousel-item]');
+    const step = card ? card.offsetWidth + 16 /* gap */ : el.clientWidth * 0.8;
+    el.scrollBy({ left: direction * step, behavior: 'smooth' });
+  }
+
+  return (
+    <div className="relative">
+      <div
+        ref={trackRef}
+        className="flex snap-x snap-mandatory gap-4 overflow-x-auto pb-2 scrollbar-thin"
+        style={{ scrollbarWidth: 'thin' }}
+      >
+        {pages.map((p) => (
+          <div
+            key={p._id}
+            data-carousel-item
+            className="w-[280px] shrink-0 snap-start sm:w-[320px]"
+          >
+            <PageCard page={p} />
+          </div>
+        ))}
+      </div>
+      {pages.length > 1 && (
+        <>
+          <button
+            type="button"
+            onClick={() => scrollByCard(-1)}
+            aria-label="Previous"
+            className="absolute -left-3 top-1/2 hidden -translate-y-1/2 rounded-full border border-ink-200 bg-white p-1.5 text-ink-700 shadow-sm hover:bg-rose-50 hover:text-rose-700 sm:flex dark:border-ink-700 dark:bg-ink-900 dark:text-ink-200 dark:hover:bg-rose-950/30 dark:hover:text-rose-300"
+          >
+            <ChevronLeft className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            onClick={() => scrollByCard(1)}
+            aria-label="Next"
+            className="absolute -right-3 top-1/2 hidden -translate-y-1/2 rounded-full border border-ink-200 bg-white p-1.5 text-ink-700 shadow-sm hover:bg-rose-50 hover:text-rose-700 sm:flex dark:border-ink-700 dark:bg-ink-900 dark:text-ink-200 dark:hover:bg-rose-950/30 dark:hover:text-rose-300"
+          >
+            <ChevronRight className="h-4 w-4" />
+          </button>
+        </>
+      )}
     </div>
   );
 }
@@ -877,6 +925,10 @@ type UpcomingEvent = {
   pageSlug: string | null;
   pageId: string | null;
   sourceEmailId: string;
+  sourceFromName: string | null;
+  sourceFromAddress: string | null;
+  sourceSubject: string | null;
+  sourceKind: 'email' | 'rss' | null;
 };
 
 function UpcomingEvents() {
@@ -884,11 +936,23 @@ function UpcomingEvents() {
   const { data } = useQuery({
     queryKey: ['events-upcoming-newsletter'],
     queryFn: () =>
-      api.get<{ events: UpcomingEvent[] }>('/api/events/upcoming?limit=8'),
+      api.get<{ events: UpcomingEvent[] }>('/api/events/upcoming?limit=20'),
     refetchInterval: 5 * 60_000,
   });
 
   if (!data || data.events.length === 0) return null;
+
+  // Group events by calendar day so a single day with N events renders one
+  // date header + N stacked rows instead of N repeated date columns.
+  const byDay = new Map<string, { date: Date; events: UpcomingEvent[] }>();
+  for (const e of data.events) {
+    const d = new Date(e.start);
+    const key = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+    const bucket = byDay.get(key);
+    if (bucket) bucket.events.push(e);
+    else byDay.set(key, { date: d, events: [e] });
+  }
+  const groups = [...byDay.values()].sort((a, b) => +a.date - +b.date);
 
   return (
     <section className="space-y-4 border-t-4 border-double border-ink-900 pt-8 dark:border-ink-100">
@@ -912,23 +976,22 @@ function UpcomingEvents() {
         </div>
       </div>
 
-      <ul className="divide-y divide-ink-200 dark:divide-ink-800">
-        {data.events.map((e) => (
-          <DatebookRow key={e._id} e={e} />
+      <div className="divide-y divide-ink-200 dark:divide-ink-800">
+        {groups.map((g) => (
+          <DatebookDay key={g.date.toISOString()} date={g.date} events={g.events} />
         ))}
-      </ul>
+      </div>
     </section>
   );
 }
 
-function DatebookRow({ e }: { e: UpcomingEvent }) {
-  const start = new Date(e.start);
-  const dateLabel = start
+function DatebookDay({ date, events }: { date: Date; events: UpcomingEvent[] }) {
+  const dateLabel = date
     .toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
     .toUpperCase();
-  const weekday = start.toLocaleDateString(undefined, { weekday: 'short' });
+  const weekday = date.toLocaleDateString(undefined, { weekday: 'short' });
   return (
-    <li className="grid gap-4 py-4 sm:grid-cols-[120px_1fr]">
+    <div className="grid gap-4 py-4 sm:grid-cols-[120px_1fr]">
       <div className="text-center sm:border-r sm:border-ink-200 sm:pr-4 sm:text-right sm:dark:border-ink-800">
         <div className="font-serif text-2xl font-bold leading-none tracking-tight">
           {dateLabel}
@@ -936,45 +999,72 @@ function DatebookRow({ e }: { e: UpcomingEvent }) {
         <div className="mt-1 text-[10px] uppercase tracking-widest text-ink-500">
           {weekday}
         </div>
-        <div className="mt-1 text-xs font-medium text-ink-700 dark:text-ink-200">
-          {e.allDay
-            ? 'All day'
-            : start.toLocaleTimeString(undefined, {
-                hour: 'numeric',
-                minute: start.getMinutes() === 0 ? undefined : '2-digit',
-              })}
+        <div className="mt-1 text-[10px] uppercase tracking-widest text-ink-400">
+          {events.length} {events.length === 1 ? 'event' : 'events'}
         </div>
       </div>
-      <div className="min-w-0">
-        <h3 className="font-serif text-lg font-semibold leading-snug">
+      <ul className="min-w-0 space-y-3">
+        {events.map((e) => (
+          <DatebookRow key={e._id} e={e} />
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function DatebookRow({ e }: { e: UpcomingEvent }) {
+  const start = new Date(e.start);
+  const time = e.allDay
+    ? 'All day'
+    : start.toLocaleTimeString(undefined, {
+        hour: 'numeric',
+        minute: start.getMinutes() === 0 ? undefined : '2-digit',
+      });
+  const senderLabel =
+    e.sourceFromName || e.sourceFromAddress || e.sourceSubject || null;
+  return (
+    <li className="min-w-0">
+      <div className="flex items-baseline gap-2">
+        <span className="rounded bg-rose-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-rose-800 dark:bg-rose-950/40 dark:text-rose-200">
+          {time}
+        </span>
+        <h3 className="min-w-0 flex-1 truncate font-serif text-lg font-semibold leading-snug">
           {e.title}
         </h3>
-        {e.location && (
-          <div className="mt-1 inline-flex items-center gap-1 text-xs text-ink-500">
-            <MapPin className="h-3 w-3" /> {e.location}
-          </div>
-        )}
-        {e.description && (
-          <p className="mt-1 text-sm text-ink-600 line-clamp-2 dark:text-ink-300">
-            {e.description}
-          </p>
-        )}
-        <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs">
-          {e.pageSlug && (
-            <Link
-              to={`/p/${e.pageSlug}`}
-              className="font-medium text-rose-600 hover:underline dark:text-rose-300"
-            >
-              Open wiki page →
-            </Link>
+      </div>
+      {senderLabel && (
+        <div className="mt-0.5 truncate text-[11px] uppercase tracking-widest text-ink-500">
+          via {senderLabel}
+          {e.sourceKind === 'rss' && (
+            <span className="ml-1 text-ink-400">· RSS</span>
           )}
-          <Link
-            to={`/e/${e.sourceEmailId}`}
-            className="text-ink-500 hover:text-ink-900 dark:hover:text-ink-100"
-          >
-            Source email
-          </Link>
         </div>
+      )}
+      {e.location && (
+        <div className="mt-1 inline-flex items-center gap-1 text-xs text-ink-500">
+          <MapPin className="h-3 w-3" /> {e.location}
+        </div>
+      )}
+      {e.description && (
+        <p className="mt-1 text-sm text-ink-600 line-clamp-2 dark:text-ink-300">
+          {e.description}
+        </p>
+      )}
+      <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1 text-xs">
+        {e.pageSlug && (
+          <Link
+            to={`/p/${e.pageSlug}`}
+            className="font-medium text-rose-600 hover:underline dark:text-rose-300"
+          >
+            Open wiki page →
+          </Link>
+        )}
+        <Link
+          to={`/e/${e.sourceEmailId}`}
+          className="text-ink-500 hover:text-ink-900 dark:hover:text-ink-100"
+        >
+          Source
+        </Link>
       </div>
     </li>
   );

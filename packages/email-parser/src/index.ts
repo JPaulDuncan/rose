@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 export { formatImapError } from './imapErrors.js';
 export {
   extractEmailMetadata,
+  senderDomainTag,
   type EmailMetadata,
   type EmailPriority,
   type EmailLink,

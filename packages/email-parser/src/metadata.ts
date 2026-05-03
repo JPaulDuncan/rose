@@ -220,6 +220,82 @@ function computeSpam(
   return { score: Math.min(1, score), signals, isMassMailing };
 }
 
+/**
+ * Derive a sender-brand tag from the From address. e.g.
+ *   no-reply@medium.com           → "Medium"
+ *   notifications@github.com      → "Github"
+ *   alerts@mail.notion.so         → "Notion"
+ *   foo@subdomain.googlemail.com  → "Googlemail"
+ *
+ * Returns null for personal-email providers + free-mail domains where
+ * the brand is not informative ("gmail" tag would be useless), and for
+ * IPs / localhost / malformed addresses.
+ */
+const PERSONAL_EMAIL_DOMAINS = new Set([
+  'gmail.com',
+  'googlemail.com',
+  'yahoo.com',
+  'ymail.com',
+  'hotmail.com',
+  'outlook.com',
+  'live.com',
+  'msn.com',
+  'icloud.com',
+  'me.com',
+  'mac.com',
+  'aol.com',
+  'protonmail.com',
+  'proton.me',
+  'pm.me',
+  'fastmail.com',
+  'fastmail.fm',
+]);
+
+const COMMON_SENDER_PREFIXES = new Set([
+  'mail',
+  'email',
+  'mailer',
+  'send',
+  'smtp',
+  'notify',
+  'notification',
+  'notifications',
+  'reply',
+  'no-reply',
+  'noreply',
+  'updates',
+  'news',
+  'newsletter',
+  'press',
+  'team',
+  'support',
+  'info',
+  'hello',
+  'contact',
+]);
+
+export function senderDomainTag(addr: string | null | undefined): string | null {
+  if (!addr) return null;
+  const at = addr.lastIndexOf('@');
+  if (at < 0) return null;
+  const host = addr.slice(at + 1).toLowerCase().trim();
+  if (!host || host.includes(' ') || host.startsWith('[')) return null;
+  if (PERSONAL_EMAIL_DOMAINS.has(host)) return null;
+  // Strip common mail-routing subdomain prefixes like "mail.", "email.",
+  // "notifications." so we land on the brand domain.
+  const parts = host.split('.').filter(Boolean);
+  if (parts.length < 2) return null;
+  while (parts.length > 2 && COMMON_SENDER_PREFIXES.has(parts[0]!)) {
+    parts.shift();
+  }
+  // The brand is the second-level label. e.g. medium.com → "medium",
+  // notion.so → "notion", news.ycombinator.com → "ycombinator".
+  const label = parts[parts.length - 2];
+  if (!label || label.length < 2 || label.length > 32) return null;
+  if (PERSONAL_EMAIL_DOMAINS.has(parts.slice(-2).join('.'))) return null;
+  return label.charAt(0).toUpperCase() + label.slice(1);
+}
+
 export function extractEmailMetadata(
   parsed: ParsedMail,
   cleanedText: string,
@@ -230,6 +306,13 @@ export function extractEmailMetadata(
   const links = extractLinks(cleanedText || '', html);
   const images = extractImages(html);
   const topics = extractTopics(subject, cleanedText || '');
+  const brand = senderDomainTag(fromAddr);
+  if (brand) {
+    // Lowercased for consistency with the rest of the topic pipeline,
+    // but de-duped so we don't double-count if the LLM also picked it.
+    const tag = brand.toLowerCase();
+    if (!topics.includes(tag)) topics.unshift(tag);
+  }
   const priority = derivePriority(parsed, subject);
   const { score, signals, isMassMailing } = computeSpam(
     parsed,
