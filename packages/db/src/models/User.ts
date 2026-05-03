@@ -50,6 +50,12 @@ const userSchema = new Schema(
       senders: { type: [String], default: [], index: true },
       tags: { type: [String], default: [], index: true },
     },
+    /**
+     * Tags the user wants foregrounded in the newsletter — each becomes
+     * a named section above the latest-news time buckets. Order matters
+     * (the array order is the section order in the UI).
+     */
+    featuredTags: { type: [String], default: [] },
   },
   { timestamps: true },
 );

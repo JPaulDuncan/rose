@@ -1,5 +1,6 @@
+import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Upload,
   FileText,
@@ -12,7 +13,11 @@ import {
   Tag as TagIcon,
   Calendar,
   ChevronRight,
+  Star,
+  Plus,
+  X,
 } from 'lucide-react';
+import toast from 'react-hot-toast';
 import { useApi } from '../lib/api';
 
 type DigestPage = {
@@ -45,6 +50,8 @@ type Digest = {
   buckets: { label: string; pages: DigestPage[] }[];
   topSenders: { address: string; pageCount: number }[];
   topTopics: { topic: string; count: number }[];
+  featuredTags: string[];
+  featuredSections: { tag: string; pageCount: number; pages: DigestPage[] }[];
 };
 
 export default function HomePage() {
@@ -92,6 +99,9 @@ export default function HomePage() {
       <div className="grid gap-8 lg:grid-cols-[1fr_280px]">
         <div className="min-w-0 space-y-10">
           {data.lead && <LeadStory page={data.lead} />}
+          {data.featuredSections.length > 0 && (
+            <FeaturedSections sections={data.featuredSections} excludeId={data.lead?._id} />
+          )}
           <TableOfContents buckets={populated} />
           {populated.map((b) => (
             <BucketSection key={b.label} bucket={b} excludeId={data.lead?._id} />
@@ -116,6 +126,7 @@ export default function HomePage() {
         </div>
 
         <aside className="space-y-6">
+          <FeaturedTagsWidget featuredTags={data.featuredTags} />
           <Sidebar
             topSenders={data.topSenders}
             topTopics={data.topTopics}
@@ -195,10 +206,20 @@ function LeadStory({ page }: { page: DigestPage }) {
         <Flame className="h-3.5 w-3.5" />
         Top story
       </div>
-      <h2 className="text-2xl font-semibold tracking-tight group-hover:text-rose-700 dark:group-hover:text-rose-300">
+      <h2 className="font-serif text-3xl font-bold leading-tight tracking-tight group-hover:text-rose-700 dark:group-hover:text-rose-300">
         {page.title}
       </h2>
-      <p className="mt-2 text-sm text-ink-600 dark:text-ink-300">{page.summary}</p>
+      {page.senderAddresses[0] && (
+        <div className="mt-1 text-[11px] uppercase tracking-wide text-ink-500">
+          By {page.senderAddresses[0]}
+          {page.senderAddresses.length > 1 && (
+            <span className="text-ink-400"> · +{page.senderAddresses.length - 1} other senders</span>
+          )}
+        </div>
+      )}
+      <p className="mt-3 text-base leading-relaxed text-ink-700 dark:text-ink-200">
+        {page.summary}
+      </p>
       <div className="mt-4 flex flex-wrap items-center gap-2 text-xs">
         <PageBadges page={page} />
         <span className="text-ink-500">
@@ -278,10 +299,28 @@ function PageCard({ page }: { page: DigestPage }) {
       <div className="flex items-start gap-2">
         <FileText className="mt-0.5 h-4 w-4 shrink-0 text-ink-400" />
         <div className="min-w-0 flex-1">
-          <h3 className="font-medium leading-snug group-hover:text-rose-700 dark:group-hover:text-rose-300">
+          <h3 className="font-serif text-base font-semibold leading-snug group-hover:text-rose-700 dark:group-hover:text-rose-300">
             {page.title}
           </h3>
-          <p className="mt-1 line-clamp-2 text-sm text-ink-500">{page.summary}</p>
+          {(page.senderAddresses?.[0] || page.sourceEmailIds.length > 0) && (
+            <div className="mt-0.5 text-[11px] uppercase tracking-wide text-ink-500">
+              {page.senderAddresses?.[0] && (
+                <span>By {page.senderAddresses[0]}</span>
+              )}
+              {page.senderAddresses && page.senderAddresses.length > 1 && (
+                <span className="text-ink-400"> +{page.senderAddresses.length - 1}</span>
+              )}
+              {page.sourceEmailIds.length > 0 && (
+                <span className="text-ink-400">
+                  {' '}· {page.sourceEmailIds.length} msg
+                  {page.sourceEmailIds.length === 1 ? '' : 's'}
+                </span>
+              )}
+            </div>
+          )}
+          <p className="mt-1.5 line-clamp-3 text-sm text-ink-600 dark:text-ink-300">
+            {page.summary}
+          </p>
         </div>
       </div>
       <div className="mt-3 flex flex-wrap items-center gap-1.5 text-xs">
@@ -440,4 +479,184 @@ function timeAgo(iso: string): string {
 
 function slugifyAnchor(label: string): string {
   return label.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+}
+
+function FeaturedSections({
+  sections,
+  excludeId,
+}: {
+  sections: { tag: string; pageCount: number; pages: DigestPage[] }[];
+  excludeId?: string;
+}) {
+  return (
+    <div className="space-y-8">
+      <div className="flex items-center gap-3">
+        <Star className="h-4 w-4 text-rose-500" fill="currentColor" />
+        <h2 className="text-xs font-semibold uppercase tracking-[0.2em] text-rose-600 dark:text-rose-300">
+          Featured topics
+        </h2>
+        <div className="h-px flex-1 bg-rose-200 dark:bg-rose-900/40" />
+      </div>
+      {sections.map((s) => {
+        const pages = s.pages.filter((p) => p._id !== excludeId);
+        return (
+          <section
+            key={s.tag}
+            id={`featured-${slugifyAnchor(s.tag)}`}
+            className="space-y-3"
+          >
+            <div className="flex items-baseline gap-3 border-b-2 border-ink-900 pb-1 dark:border-ink-100">
+              <Link
+                to={`/t/${encodeURIComponent(s.tag)}`}
+                className="font-serif text-2xl font-bold tracking-tight hover:text-rose-700 dark:hover:text-rose-300"
+              >
+                #{s.tag}
+              </Link>
+              <span className="text-xs text-ink-500">
+                {s.pageCount} page{s.pageCount === 1 ? '' : 's'}
+              </span>
+              <Link
+                to={`/t/${encodeURIComponent(s.tag)}`}
+                className="ml-auto text-xs font-medium text-rose-600 hover:underline dark:text-rose-300"
+              >
+                See all →
+              </Link>
+            </div>
+            {pages.length === 0 ? (
+              <div className="text-xs text-ink-500">
+                No recent activity in this section.
+              </div>
+            ) : (
+              <div className="grid gap-3 sm:grid-cols-2">
+                {pages.map((p) => (
+                  <PageCard key={p._id} page={p} />
+                ))}
+              </div>
+            )}
+          </section>
+        );
+      })}
+    </div>
+  );
+}
+
+function FeaturedTagsWidget({ featuredTags }: { featuredTags: string[] }) {
+  const api = useApi();
+  const qc = useQueryClient();
+  const [input, setInput] = useState('');
+
+  const { data: directory } = useQuery({
+    queryKey: ['tag-directory'],
+    queryFn: () => api.get<{ tags: { tag: string; pageCount: number }[] }>('/api/tags'),
+  });
+
+  const add = useMutation({
+    mutationFn: async (tag: string) =>
+      api.post<{ tags: string[] }>('/api/featured-tags', { tag }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['digest'] });
+      setInput('');
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+  const remove = useMutation({
+    mutationFn: async (tag: string) =>
+      api.del<{ tags: string[] }>(`/api/featured-tags/${encodeURIComponent(tag)}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['digest'] }),
+  });
+
+  const suggestions =
+    directory?.tags
+      ?.filter((d) => !featuredTags.includes(d.tag))
+      ?.slice(0, 8) ?? [];
+
+  return (
+    <div className="card">
+      <div className="mb-3 flex items-center gap-2 text-xs uppercase tracking-widest text-ink-500">
+        <Star className="h-3.5 w-3.5" /> Featured topics
+      </div>
+      <p className="mb-2 text-xs text-ink-500">
+        Pin the tags you care about. Each becomes a section in your edition.
+      </p>
+
+      {featuredTags.length > 0 && (
+        <div className="mb-3 flex flex-wrap gap-1.5">
+          {featuredTags.map((t) => (
+            <span
+              key={t}
+              className="inline-flex items-center gap-1 rounded-full bg-rose-100 px-2 py-0.5 text-xs font-medium text-rose-800 dark:bg-rose-950/40 dark:text-rose-200"
+            >
+              #{t}
+              <button
+                type="button"
+                onClick={() => remove.mutate(t)}
+                aria-label={`Unpin ${t}`}
+                className="-mr-1 ml-0.5 rounded-full p-0.5 hover:bg-rose-200 dark:hover:bg-rose-900/60"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          const v = input.trim().toLowerCase();
+          if (!v) return;
+          if (featuredTags.includes(v)) {
+            toast.error('Already featured');
+            return;
+          }
+          add.mutate(v);
+        }}
+        className="flex gap-1"
+      >
+        <input
+          className="input text-xs"
+          list="featured-tag-suggestions"
+          placeholder="add a tag…"
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+        />
+        <datalist id="featured-tag-suggestions">
+          {suggestions.map((s) => (
+            <option key={s.tag} value={s.tag}>
+              {s.pageCount} page{s.pageCount === 1 ? '' : 's'}
+            </option>
+          ))}
+        </datalist>
+        <button
+          className="btn-primary text-xs"
+          type="submit"
+          disabled={add.isPending || !input.trim()}
+          aria-label="Pin tag"
+        >
+          <Plus className="h-3.5 w-3.5" />
+        </button>
+      </form>
+
+      {suggestions.length > 0 && featuredTags.length < 3 && (
+        <div className="mt-3">
+          <div className="mb-1 text-[10px] uppercase tracking-widest text-ink-400">
+            Suggestions
+          </div>
+          <div className="flex flex-wrap gap-1">
+            {suggestions.slice(0, 6).map((s) => (
+              <button
+                key={s.tag}
+                type="button"
+                onClick={() => add.mutate(s.tag)}
+                className="pill text-[10px] hover:bg-rose-100 hover:text-rose-800 dark:hover:bg-rose-950/40 dark:hover:text-rose-300"
+                title={`${s.pageCount} pages`}
+              >
+                #{s.tag}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }

@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { Types } from 'mongoose';
-import { Page, Email } from '@rose/db';
+import { Page, Email, User } from '@rose/db';
 import { userIdOf } from '../middleware/auth.js';
 
 export const digestRouter: Router = Router();
@@ -115,7 +115,36 @@ digestRouter.get('/', async (req, res) => {
     .slice(0, 12)
     .map(([topic, count]) => ({ topic, count }));
 
+  // ── Featured sections ────────────────────────────────────────────────
+  // Each featured tag becomes a named section in the newsletter, populated
+  // with that tag's most-recently-updated pages (across either `tags` or
+  // `topics`, capped at 8 per section). Spam still excluded.
+  const userPrefs = (await User.findById(userId).select('featuredTags').lean()) as
+    | { featuredTags?: string[] }
+    | null;
+  const featuredTags = (userPrefs?.featuredTags ?? []).map((t) => t.toLowerCase());
+  const featuredSections: { tag: string; pageCount: number; pages: DigestPage[] }[] = [];
+  for (const tag of featuredTags) {
+    const tagFilter = {
+      ...filter,
+      $or: [{ tags: tag }, { topics: tag }],
+    };
+    const matching = (await Page.find(tagFilter)
+      .sort({ updatedAt: -1 })
+      .limit(8)
+      .select('-contentMd -embedding -topicCentroid')
+      .lean()) as unknown as DigestPage[];
+    const total = await Page.countDocuments(tagFilter);
+    if (matching.length > 0) {
+      featuredSections.push({ tag, pageCount: total, pages: matching });
+    } else {
+      featuredSections.push({ tag, pageCount: 0, pages: [] });
+    }
+  }
+
   res.json({
+    featuredTags,
+    featuredSections,
     edition: {
       date: now.toISOString(),
       label: now.toLocaleDateString(undefined, {
