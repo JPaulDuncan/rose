@@ -112,6 +112,8 @@ const pageSchema = new Schema(
       isSparse: { type: Boolean, default: false },
       /** Set when the user (not the heuristic) flags a page as spam. */
       userMarkedSpam: { type: Boolean, default: false },
+      /** Set when ≥70% of contributing emails share one subject template. */
+      isNotificationStream: { type: Boolean, default: false, index: true },
     },
     /** Legacy single-thread field — kept for migration. New code uses threadKeys. */
     threadKey: { type: String, default: null },

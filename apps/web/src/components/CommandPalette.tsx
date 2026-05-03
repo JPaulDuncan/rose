@@ -6,6 +6,7 @@ import {
   Inbox,
   Home,
   Calendar as CalendarIcon,
+  Activity,
   Settings,
   FileText,
   Upload,
@@ -64,6 +65,9 @@ export function CommandPalette({
               </Command.Item>
               <Command.Item onSelect={() => go('/calendar')}>
                 <CalendarIcon className="h-4 w-4" /> Calendar
+              </Command.Item>
+              <Command.Item onSelect={() => go('/streams')}>
+                <Activity className="h-4 w-4" /> Streams
               </Command.Item>
               <Command.Item onSelect={() => go('/settings')}>
                 <Settings className="h-4 w-4" /> Settings

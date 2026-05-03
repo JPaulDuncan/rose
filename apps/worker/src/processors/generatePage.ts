@@ -494,6 +494,7 @@ export function startGeneratePageWorker() {
         hasMassMailing,
         isSparse: isThin,
         userMarkedSpam: previousUserMarked || senderHit || tagHit,
+        isNotificationStream: stream.yes,
       };
       // -------------------------------------------------------------------------
 

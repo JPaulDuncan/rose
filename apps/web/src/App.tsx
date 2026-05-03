@@ -9,6 +9,7 @@ import InboxPage from './routes/Inbox';
 import PageView from './routes/Page';
 import SearchPage from './routes/Search';
 import CalendarPage from './routes/Calendar';
+import StreamsPage from './routes/Streams';
 import TagPage from './routes/Tag';
 import EmailView from './routes/Email';
 import SettingsLayout from './routes/settings/Layout';
@@ -54,6 +55,7 @@ export default function App() {
         <Route path="/t/:tag" element={<TagPage />} />
         <Route path="/search" element={<SearchPage />} />
         <Route path="/calendar" element={<CalendarPage />} />
+        <Route path="/streams" element={<StreamsPage />} />
         <Route path="/settings" element={<SettingsLayout />}>
           <Route index element={<Navigate to="account" replace />} />
           <Route path="account" element={<AccountSettings />} />

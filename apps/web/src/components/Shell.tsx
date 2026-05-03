@@ -5,6 +5,7 @@ import {
   Inbox as InboxIcon,
   Home as HomeIcon,
   Calendar as CalendarIcon,
+  Activity,
   Settings,
   Sun,
   Moon,
@@ -22,6 +23,7 @@ const NAV = [
   { to: '/inbox', label: 'Inbox', icon: InboxIcon, key: 'g i' },
   { to: '/search', label: 'Search', icon: Search, key: '/' },
   { to: '/calendar', label: 'Calendar', icon: CalendarIcon, key: 'g c' },
+  { to: '/streams', label: 'Streams', icon: Activity, key: 'g t' },
   { to: '/settings', label: 'Settings', icon: Settings, key: 'g s' },
 ];
 
@@ -42,6 +44,7 @@ export function Shell({ children }: { children: ReactNode }) {
     'g h': () => navigate('/'),
     'g i': () => navigate('/inbox'),
     'g c': () => navigate('/calendar'),
+    'g t': () => navigate('/streams'),
     'g s': () => navigate('/settings'),
     n: (e) => {
       const tag = (e.target as HTMLElement)?.tagName;

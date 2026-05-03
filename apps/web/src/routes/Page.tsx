@@ -66,6 +66,7 @@ type PageDoc = {
     hasMassMailing?: boolean;
     isSparse?: boolean;
     userMarkedSpam?: boolean;
+    isNotificationStream?: boolean;
   };
 };
 
@@ -574,7 +575,11 @@ function Attribution({ page }: { page: PageDoc }) {
   const threadCount = page.threadKeys?.length ?? 0;
   const emailCount = page.sourceEmailIds?.length ?? 0;
   const templateCount = page.subjectTemplates?.length ?? 0;
-  const isStream = templateCount > 0 && emailCount >= 3 && templateCount <= 2;
+  // Prefer the persisted flag from the worker; fall back to the heuristic
+  // for pages that pre-date the flag.
+  const isStream =
+    page.flags?.isNotificationStream === true ||
+    (templateCount > 0 && emailCount >= 3 && templateCount <= 2);
   const mode = page.groupingMode ?? 'thread';
   const modeLabel = isStream
     ? 'Notification stream'
