@@ -1,5 +1,5 @@
 import { Link, useParams } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Hash,
   FileText,
@@ -9,7 +9,9 @@ import {
   Flame,
   Megaphone,
   ChevronLeft,
+  Star,
 } from 'lucide-react';
+import toast from 'react-hot-toast';
 import { useApi } from '../lib/api';
 
 type TagPage = {
@@ -40,10 +42,37 @@ export default function TagPage() {
   const { tag: rawTag } = useParams<{ tag: string }>();
   const tag = (rawTag ?? '').toLowerCase();
   const api = useApi();
+  const qc = useQueryClient();
   const { data, isLoading } = useQuery({
     queryKey: ['tag', tag],
     queryFn: () => api.get<TagDigest>(`/api/tags/${encodeURIComponent(tag)}`),
     enabled: !!tag,
+  });
+  const { data: featured } = useQuery({
+    queryKey: ['featured-tags'],
+    queryFn: () => api.get<{ tags: string[] }>('/api/featured-tags'),
+  });
+  const isFeatured = !!featured?.tags?.includes(tag);
+
+  const pin = useMutation({
+    mutationFn: async () =>
+      api.post<{ tags: string[] }>('/api/featured-tags', { tag }),
+    onSuccess: () => {
+      toast.success(`Pinned #${tag} to your newsletter.`);
+      qc.invalidateQueries({ queryKey: ['featured-tags'] });
+      qc.invalidateQueries({ queryKey: ['digest'] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+  const unpin = useMutation({
+    mutationFn: async () =>
+      api.del<{ tags: string[] }>(`/api/featured-tags/${encodeURIComponent(tag)}`),
+    onSuccess: () => {
+      toast.success(`Unpinned #${tag}.`);
+      qc.invalidateQueries({ queryKey: ['featured-tags'] });
+      qc.invalidateQueries({ queryKey: ['digest'] });
+    },
+    onError: (e: Error) => toast.error(e.message),
   });
 
   if (isLoading || !data) {
@@ -71,7 +100,32 @@ export default function TagPage() {
           <Hash className="h-3.5 w-3.5" />
           Tag
         </div>
-        <h1 className="mt-1 text-3xl font-bold tracking-tight">#{data.tag}</h1>
+        <div className="mt-1 flex flex-wrap items-center gap-3">
+          <h1 className="text-3xl font-bold tracking-tight">#{data.tag}</h1>
+          {isFeatured ? (
+            <button
+              type="button"
+              onClick={() => unpin.mutate()}
+              disabled={unpin.isPending}
+              className="inline-flex items-center gap-1.5 rounded-full border border-rose-300 bg-rose-50 px-3 py-1 text-xs font-medium text-rose-800 transition-colors hover:bg-rose-100 disabled:opacity-50 dark:border-rose-800 dark:bg-rose-950/30 dark:text-rose-200 dark:hover:bg-rose-950/50"
+              title="Click to unpin from your newsletter"
+            >
+              <Star className="h-3.5 w-3.5" fill="currentColor" />
+              Featured · click to unpin
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => pin.mutate()}
+              disabled={pin.isPending}
+              className="inline-flex items-center gap-1.5 rounded-full border border-ink-300 px-3 py-1 text-xs font-medium text-ink-700 transition-colors hover:border-rose-400 hover:bg-rose-50 hover:text-rose-700 disabled:opacity-50 dark:border-ink-700 dark:text-ink-200 dark:hover:border-rose-700 dark:hover:bg-rose-950/30 dark:hover:text-rose-200"
+              title="Pin this tag as a section in your newsletter"
+            >
+              <Star className="h-3.5 w-3.5" />
+              Feature in newsletter
+            </button>
+          )}
+        </div>
         <p className="mt-1 text-sm text-ink-500">
           {data.pageCount === 0
             ? 'No pages yet. As emails matching this tag arrive, they will land here.'
