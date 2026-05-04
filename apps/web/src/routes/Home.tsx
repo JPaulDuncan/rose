@@ -30,14 +30,23 @@ type DigestPage = {
   tags: string[];
   priority: 'high' | 'normal' | 'low';
   spamScore: number;
-  flags: { hasLikelySpam?: boolean; hasMassMailing?: boolean; isSparse?: boolean };
+  flags: {
+    hasLikelySpam?: boolean;
+    hasMassMailing?: boolean;
+    isSparse?: boolean;
+    isNotificationStream?: boolean;
+  };
   sourceEmailIds: string[];
   senderAddresses: string[];
   topics: string[];
   heroImageUrl?: string | null;
+  groupingMode?: string;
+  primaryTopic?: string | null;
   updatedAt: string;
   createdAt: string;
   version: number;
+  wordCount?: number;
+  pullQuote?: string | null;
 };
 
 type SenderBrand = {
@@ -70,6 +79,8 @@ type Digest = {
     highPriority: number;
   };
   lead: DigestPage | null;
+  topStories: { lead: DigestPage | null; secondaries: DigestPage[] };
+  mostRead: DigestPage[];
   buckets: { label: string; pages: DigestPage[] }[];
   topSenders: { address: string; pageCount: number }[];
   topTopics: { topic: string; count: number }[];
@@ -116,6 +127,15 @@ export default function HomePage() {
 
   const populated = data.buckets.filter((b) => b.pages.length > 0);
   const brandIndex = data.senderBrands ?? {};
+  // Pages already shown in the hero or "Most Read" rail get suppressed
+  // from downstream sections so we don't repeat the same headline.
+  const suppressIds = new Set<string>(
+    [
+      data.topStories?.lead?._id,
+      ...(data.topStories?.secondaries ?? []).map((s) => s._id),
+      ...(data.mostRead ?? []).map((p) => p._id),
+    ].filter(Boolean) as string[],
+  );
 
   return (
     <BrandIndexContext.Provider value={brandIndex}>
@@ -123,17 +143,20 @@ export default function HomePage() {
       <Masthead edition={data.edition} stats={data.stats} />
       <WeatherCard />
 
-      <div className="grid gap-8 lg:grid-cols-[1fr_280px]">
+      {data.topStories && data.topStories.lead && (
+        <TopStories topStories={data.topStories} mostRead={data.mostRead ?? []} />
+      )}
+
+      <div className="mt-10 grid gap-8 lg:grid-cols-[1fr_280px]">
         <div className="min-w-0 space-y-10">
-          {data.lead && <LeadStory page={data.lead} />}
           <UpcomingEvents />
           {data.featuredSections.length > 0 && (
-            <FeaturedSections sections={data.featuredSections} excludeId={data.lead?._id} />
+            <FeaturedSections
+              sections={data.featuredSections}
+              suppressIds={suppressIds}
+            />
           )}
-          <TableOfContents buckets={populated} />
-          {populated.map((b) => (
-            <BucketSection key={b.label} bucket={b} excludeId={data.lead?._id} />
-          ))}
+          <MoreNews buckets={populated} suppressIds={suppressIds} />
           {data.stats.spam > 0 && (
             <div className="card flex items-center gap-3 text-sm">
               <ShieldAlert className="h-5 w-5 shrink-0 text-red-500" />
@@ -225,51 +248,228 @@ function Stat({
   );
 }
 
-function LeadStory({ page }: { page: DigestPage }) {
+// ── Newsroom building blocks ────────────────────────────────────────
+
+/**
+ * The label that sits above a headline in real online newsrooms — small
+ * caps, letter-spaced, sometimes coloured (red for breaking, neutral for
+ * analysis). Driven by the page's flags + priority + primary tag, with
+ * a stable precedence so the same page always gets the same eyebrow.
+ */
+function eyebrowFor(page: DigestPage): { label: string; tone: 'breaking' | 'feature' | 'analysis' | 'opinion' | 'brief' | 'topic' } {
+  if (page.flags?.isNotificationStream) return { label: 'Live · Stream', tone: 'breaking' };
+  if (page.priority === 'high') return { label: 'Breaking', tone: 'breaking' };
+  if (page.flags?.hasMassMailing) return { label: 'Newsletter', tone: 'brief' };
+  if (page.groupingMode === 'topic' && page.primaryTopic) {
+    return { label: page.primaryTopic, tone: 'topic' };
+  }
+  if ((page.wordCount ?? 0) > 600) return { label: 'Feature', tone: 'feature' };
+  if ((page.sourceEmailIds?.length ?? 0) > 5) return { label: 'Analysis', tone: 'analysis' };
+  return { label: 'Brief', tone: 'brief' };
+}
+
+function Eyebrow({ page, size = 'sm' }: { page: DigestPage; size?: 'sm' | 'md' }) {
+  const { label, tone } = eyebrowFor(page);
+  const toneCls =
+    tone === 'breaking'
+      ? 'text-red-600 dark:text-red-400'
+      : tone === 'feature'
+        ? 'text-rose-600 dark:text-rose-300'
+        : tone === 'opinion'
+          ? 'text-amber-700 dark:text-amber-300'
+          : tone === 'topic'
+            ? 'text-rose-700 dark:text-rose-200'
+            : 'text-ink-500';
+  const sizeCls = size === 'md' ? 'text-[11px]' : 'text-[10px]';
   return (
-    <Link
-      to={`/p/${page.slug}`}
-      className="group block overflow-hidden rounded-2xl border border-rose-200 bg-gradient-to-br from-rose-50 to-white shadow-soft transition-all hover:border-rose-400 hover:shadow-lg dark:border-rose-900/50 dark:from-rose-950/20 dark:to-ink-900"
+    <div
+      className={`flex items-center gap-2 font-semibold uppercase tracking-[0.25em] ${sizeCls} ${toneCls}`}
     >
-      {page.heroImageUrl && (
-        <SafeImage
-          src={page.heroImageUrl}
-          alt={page.title}
-          className="block max-h-72 w-full object-cover"
-        />
+      {tone === 'breaking' && (
+        <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-red-500" />
       )}
-      <div className={page.heroImageUrl ? 'p-6' : 'p-6'}>
-      <div className="mb-2 flex items-center gap-2 text-xs uppercase tracking-widest text-rose-600 dark:text-rose-300">
-        <Flame className="h-3.5 w-3.5" />
-        Top story
+      <span>{label}</span>
+    </div>
+  );
+}
+
+/**
+ * Approximate read time using ~220 wpm. Skipped when wordCount is
+ * missing (e.g. older payloads without the new field). For very short
+ * pages we say "~1 min" rather than "0 min".
+ */
+function readTime(wordCount: number | undefined): string | null {
+  if (!wordCount || wordCount < 30) return null;
+  const minutes = Math.max(1, Math.round(wordCount / 220));
+  return `${minutes} min read`;
+}
+
+function Byline({
+  page,
+  size = 'sm',
+}: {
+  page: DigestPage;
+  size?: 'sm' | 'md';
+}) {
+  const navigate = useNavigate();
+  const primary = page.senderAddresses?.[0];
+  const brand = useBrandFor(primary);
+  const senderLabel = brand?.name ?? primary;
+  const senderHref = brand ? `/s/${encodeURIComponent(brand.brandKey)}` : null;
+  const rt = readTime(page.wordCount);
+  const sizeCls = size === 'md' ? 'text-xs' : 'text-[11px]';
+  if (!senderLabel && !rt) return null;
+  return (
+    <div
+      className={`flex flex-wrap items-center gap-2 uppercase tracking-widest text-ink-500 ${sizeCls}`}
+    >
+      {senderHref && senderLabel ? (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            navigate(senderHref);
+          }}
+          className="inline-flex items-center gap-1.5 rounded hover:text-rose-700 dark:hover:text-rose-300"
+          title={`Open ${senderLabel}'s page`}
+        >
+          {primary && <BrandChip address={primary} size={size === 'md' ? 'lg' : 'sm'} />}
+          <span className="truncate">By {senderLabel}</span>
+        </button>
+      ) : senderLabel ? (
+        <span className="inline-flex items-center gap-1.5">
+          {primary && <BrandChip address={primary} size={size === 'md' ? 'lg' : 'sm'} />}
+          <span className="truncate">By {senderLabel}</span>
+        </span>
+      ) : null}
+      {rt && <span className="text-ink-400">· {rt}</span>}
+    </div>
+  );
+}
+
+/**
+ * The "Top Stories" hero block — lead headline (left, ~60%) plus a
+ * stacked column of ranked secondary stories (right, ~40%) and a small
+ * "Most Read" rail beneath. Mirrors NYT/WaPo/Atlantic above-the-fold.
+ */
+function TopStories({
+  topStories,
+  mostRead,
+}: {
+  topStories: { lead: DigestPage | null; secondaries: DigestPage[] };
+  mostRead: DigestPage[];
+}) {
+  const { lead, secondaries } = topStories;
+  if (!lead) return null;
+  return (
+    <section className="mt-6 border-t-4 border-double border-ink-900 pt-6 dark:border-ink-100">
+      <div className="mb-4 flex items-baseline justify-between gap-4 border-b border-ink-300 pb-2 dark:border-ink-700">
+        <h2 className="font-serif text-xl font-black uppercase tracking-[0.2em]">
+          Top Stories
+        </h2>
+        <span className="text-[10px] uppercase tracking-widest text-ink-500">
+          The Edition
+        </span>
       </div>
-      <h2 className="font-serif text-3xl font-bold leading-tight tracking-tight group-hover:text-rose-700 dark:group-hover:text-rose-300">
-        {page.title}
-      </h2>
-      {page.senderAddresses[0] && (
-        <div className="mt-1 text-[11px] uppercase tracking-wide text-ink-500">
-          By {page.senderAddresses[0]}
-          {page.senderAddresses.length > 1 && (
-            <span className="text-ink-400"> · +{page.senderAddresses.length - 1} other senders</span>
+      <div className="grid gap-8 lg:grid-cols-12">
+        <div className="lg:col-span-7">
+          <HeroLead page={lead} />
+        </div>
+        <div className="lg:col-span-5">
+          <ul className="divide-y divide-ink-200 dark:divide-ink-800">
+            {secondaries.map((p) => (
+              <li key={p._id} className="py-4 first:pt-0 last:pb-0">
+                <SecondaryStory page={p} />
+              </li>
+            ))}
+          </ul>
+          {mostRead.length > 0 && (
+            <div className="mt-6 border-t-2 border-ink-900 pt-4 dark:border-ink-100">
+              <div className="mb-3 text-[10px] uppercase tracking-[0.25em] text-ink-500">
+                Most Read
+              </div>
+              <ol className="space-y-3">
+                {mostRead.map((p, i) => (
+                  <li key={p._id}>
+                    <MostReadItem page={p} rank={i + 1} />
+                  </li>
+                ))}
+              </ol>
+            </div>
           )}
         </div>
-      )}
-      <p className="mt-3 text-base leading-relaxed text-ink-700 dark:text-ink-200">
-        {page.summary}
-      </p>
-      <div className="mt-4 flex flex-wrap items-center gap-2 text-xs">
-        <PageBadges page={page} />
-        <span className="text-ink-500">
-          {page.sourceEmailIds.length} source email
-          {page.sourceEmailIds.length === 1 ? '' : 's'}
-        </span>
-        {page.senderAddresses[0] && (
-          <span className="text-ink-500">· from {page.senderAddresses[0]}</span>
-        )}
-        <span className="ml-auto inline-flex items-center gap-1 font-medium text-rose-600 group-hover:gap-2 dark:text-rose-300">
-          Read <ChevronRight className="h-3 w-3 transition-transform group-hover:translate-x-0.5" />
-        </span>
       </div>
+    </section>
+  );
+}
+
+function HeroLead({ page }: { page: DigestPage }) {
+  return (
+    <Link to={`/p/${page.slug}`} className="group block">
+      {page.heroImageUrl ? (
+        <div className="overflow-hidden rounded-md border border-ink-200 bg-ink-50 dark:border-ink-800 dark:bg-ink-900">
+          <SafeImage
+            src={page.heroImageUrl}
+            alt={page.title}
+            className="aspect-[16/9] w-full object-cover transition-transform duration-300 group-hover:scale-[1.02]"
+          />
+        </div>
+      ) : null}
+      <div className={page.heroImageUrl ? 'mt-4' : ''}>
+        <Eyebrow page={page} size="md" />
+        <h1 className="mt-2 font-serif text-5xl font-black leading-[1.05] tracking-tight text-ink-900 group-hover:text-rose-700 dark:text-ink-50 dark:group-hover:text-rose-300">
+          {page.title}
+        </h1>
+        <p className="mt-3 text-lg leading-relaxed text-ink-700 first-letter:font-serif first-letter:text-4xl first-letter:font-bold first-letter:leading-none first-letter:mr-1.5 first-letter:float-left first-letter:mt-1 dark:text-ink-200">
+          {page.summary}
+        </p>
+        <div className="mt-3">
+          <Byline page={page} size="md" />
+        </div>
+        {page.pullQuote && (
+          <blockquote className="mt-5 border-l-4 border-rose-500 pl-4 font-serif text-xl italic leading-snug text-ink-800 dark:border-rose-400 dark:text-ink-100">
+            “{page.pullQuote}”
+          </blockquote>
+        )}
+      </div>
+    </Link>
+  );
+}
+
+function SecondaryStory({ page }: { page: DigestPage }) {
+  return (
+    <Link to={`/p/${page.slug}`} className="group block">
+      <Eyebrow page={page} />
+      <h3 className="mt-1.5 font-serif text-xl font-bold leading-tight tracking-tight group-hover:text-rose-700 dark:group-hover:text-rose-300">
+        {page.title}
+      </h3>
+      {page.summary && (
+        <p className="mt-1.5 line-clamp-2 text-sm leading-relaxed text-ink-600 dark:text-ink-300">
+          {page.summary}
+        </p>
+      )}
+      <div className="mt-1.5">
+        <Byline page={page} />
+      </div>
+    </Link>
+  );
+}
+
+function MostReadItem({ page, rank }: { page: DigestPage; rank: number }) {
+  return (
+    <Link to={`/p/${page.slug}`} className="group flex gap-3">
+      <span className="font-serif text-2xl font-black leading-none text-ink-300 dark:text-ink-700">
+        {String(rank).padStart(2, '0')}
+      </span>
+      <div className="min-w-0 flex-1 pt-0.5">
+        <h4 className="font-serif text-sm font-semibold leading-snug group-hover:text-rose-700 dark:group-hover:text-rose-300">
+          {page.title}
+        </h4>
+        <div className="mt-0.5 truncate text-[10px] uppercase tracking-widest text-ink-500">
+          {eyebrowFor(page).label}
+          {readTime(page.wordCount) && <> · {readTime(page.wordCount)}</>}
+        </div>
       </div>
     </Link>
   );
@@ -298,57 +498,87 @@ function SafeImage({
   );
 }
 
-function TableOfContents({ buckets }: { buckets: Digest['buckets'] }) {
-  if (!buckets.length) return null;
-  return (
-    <nav className="rounded-xl border border-ink-200 bg-white p-4 text-sm dark:border-ink-800 dark:bg-ink-900">
-      <div className="mb-2 flex items-center gap-2 text-xs uppercase tracking-widest text-ink-500">
-        <FileText className="h-3.5 w-3.5" />
-        In this edition
-      </div>
-      <ul className="grid gap-1 sm:grid-cols-2">
-        {buckets.map((b) => (
-          <li key={b.label}>
-            <a
-              href={`#bucket-${slugifyAnchor(b.label)}`}
-              className="flex items-center justify-between rounded-md px-2 py-1 hover:bg-ink-100 dark:hover:bg-ink-800"
-            >
-              <span>{b.label}</span>
-              <span className="text-xs text-ink-500">{b.pages.length}</span>
-            </a>
-          </li>
-        ))}
-      </ul>
-    </nav>
-  );
-}
-
-function BucketSection({
-  bucket,
-  excludeId,
+/**
+ * The dense 3-column "More News" grid that lives below the fold. Each
+ * date-bucket becomes a section ribbon (TODAY / YESTERDAY / EARLIER /
+ * OLDER) with a thin rule across the page; entries below render as
+ * compact MiniHeadlines stacked into 3 columns the way newspaper
+ * homepages handle their long tail.
+ */
+function MoreNews({
+  buckets,
+  suppressIds,
 }: {
-  bucket: { label: string; pages: DigestPage[] };
-  excludeId?: string;
+  buckets: { label: string; pages: DigestPage[] }[];
+  suppressIds: Set<string>;
 }) {
-  const pages = bucket.pages.filter((p) => p._id !== excludeId);
-  if (pages.length === 0) return null;
+  const sections = buckets
+    .map((b) => ({ label: b.label, pages: b.pages.filter((p) => !suppressIds.has(p._id)) }))
+    .filter((b) => b.pages.length > 0);
+  if (sections.length === 0) return null;
   return (
-    <section id={`bucket-${slugifyAnchor(bucket.label)}`}>
-      <div className="mb-3 flex items-center gap-2">
-        <h2 className="text-sm font-semibold uppercase tracking-widest text-ink-500">
-          {bucket.label}
+    <section className="border-t-4 border-double border-ink-900 pt-8 dark:border-ink-100">
+      <div className="mb-6 flex items-baseline justify-between gap-4 border-b border-ink-300 pb-2 dark:border-ink-700">
+        <h2 className="font-serif text-xl font-black uppercase tracking-[0.2em]">
+          More News
         </h2>
-        <div className="h-px flex-1 bg-ink-200 dark:bg-ink-800" />
-        <span className="text-xs text-ink-400">{pages.length}</span>
+        <span className="text-[10px] uppercase tracking-widest text-ink-500">
+          The long tail
+        </span>
       </div>
-      <div className="gap-3 sm:columns-2 xl:columns-3 [&>*]:mb-3">
-        {pages.map((p) => (
-          <div key={p._id} className="break-inside-avoid">
-            <PageCard page={p} />
-          </div>
+      <div className="space-y-8">
+        {sections.map((b) => (
+          <BucketRibbon key={b.label} bucket={b} />
         ))}
       </div>
     </section>
+  );
+}
+
+function BucketRibbon({
+  bucket,
+}: {
+  bucket: { label: string; pages: DigestPage[] };
+}) {
+  const pages = bucket.pages;
+  return (
+    <div id={`bucket-${slugifyAnchor(bucket.label)}`}>
+      <div className="mb-3 flex items-center gap-3">
+        <span className="text-[10px] font-semibold uppercase tracking-[0.3em] text-ink-500">
+          {bucket.label}
+        </span>
+        <div className="h-px flex-1 bg-ink-300 dark:bg-ink-700" />
+        <span className="text-[10px] uppercase tracking-widest text-ink-400">
+          {pages.length}
+        </span>
+      </div>
+      <ul className="grid gap-x-6 gap-y-4 sm:grid-cols-2 lg:grid-cols-3">
+        {pages.map((p) => (
+          <li key={p._id} className="break-inside-avoid border-l border-ink-200 pl-3 dark:border-ink-800">
+            <MiniHeadline page={p} />
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function MiniHeadline({ page }: { page: DigestPage }) {
+  return (
+    <Link to={`/p/${page.slug}`} className="group block">
+      <Eyebrow page={page} />
+      <h3 className="mt-1 font-serif text-base font-semibold leading-snug group-hover:text-rose-700 dark:group-hover:text-rose-300">
+        {page.title}
+      </h3>
+      {page.summary && (
+        <p className="mt-1 line-clamp-2 text-xs leading-relaxed text-ink-600 dark:text-ink-300">
+          {page.summary}
+        </p>
+      )}
+      <div className="mt-1">
+        <Byline page={page} />
+      </div>
+    </Link>
   );
 }
 
@@ -601,15 +831,15 @@ function slugifyAnchor(label: string): string {
 
 function FeaturedSections({
   sections,
-  excludeId,
+  suppressIds,
 }: {
   sections: { tag: string; pageCount: number; pages: DigestPage[] }[];
-  excludeId?: string;
+  suppressIds: Set<string>;
 }) {
   return (
     <div className="space-y-12 border-t-4 border-double border-ink-900 pt-8 dark:border-ink-100">
       {sections.map((s) => {
-        const pages = s.pages.filter((p) => p._id !== excludeId);
+        const pages = s.pages.filter((p) => !suppressIds.has(p._id));
         const lead = pages[0];
         const rest = pages.slice(1);
         return (

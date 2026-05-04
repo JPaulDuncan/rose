@@ -13,16 +13,53 @@ type DigestPage = {
   tags: string[];
   priority: 'high' | 'normal' | 'low';
   spamScore: number;
-  flags: { hasLikelySpam?: boolean; hasMassMailing?: boolean; isSparse?: boolean };
+  flags: {
+    hasLikelySpam?: boolean;
+    hasMassMailing?: boolean;
+    isSparse?: boolean;
+    isNotificationStream?: boolean;
+  };
   sourceEmailIds: string[];
   senderAddresses: string[];
   topics: string[];
+  heroImageUrl?: string | null;
+  groupingMode?: string;
+  primaryTopic?: string | null;
   updatedAt: string;
   createdAt: string;
   version: number;
+  /** Word count for read-time computation, derived from contentMd. */
+  wordCount: number;
+  /** Optional pull-quote candidate extracted from the page body. */
+  pullQuote: string | null;
 };
 
 type Bucket = { label: string; pages: DigestPage[] };
+
+/**
+ * Pull a single sentence from the page body that's quotable enough to
+ * sit as a typographic break. Cheap heuristic: pick the first sentence
+ * outside any markdown header/list/code block that's between 60 and 220
+ * characters and contains no markdown citation tokens like `[e1]`.
+ */
+function pullQuoteFrom(contentMd: string | null | undefined): string | null {
+  if (!contentMd) return null;
+  // Strip code fences, lists, and headings before splitting.
+  const stripped = contentMd
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/`[^`]+`/g, ' ')
+    .replace(/^#{1,6}.*$/gm, ' ')
+    .replace(/^[\s]*[-*+]\s+/gm, ' ')
+    .replace(/\[e\d+(?:\s*,\s*e\d+)*\]/g, '');
+  const sentences = stripped.match(/[^.!?\n]+[.!?]/g) ?? [];
+  for (const raw of sentences) {
+    const s = raw.trim().replace(/\s+/g, ' ');
+    if (s.length < 60 || s.length > 220) continue;
+    if (/^[\W_]+$/.test(s)) continue;
+    return s;
+  }
+  return null;
+}
 
 function startOfDay(d: Date): Date {
   const x = new Date(d);
@@ -45,10 +82,19 @@ digestRouter.get('/', async (req, res) => {
     filter['flags.userMarkedSpam'] = { $ne: true };
   }
 
-  const allPages = (await Page.find(filter)
+  // Pull contentMd just long enough to compute word count + pull quote,
+  // then drop it before responding so the wire payload stays small.
+  const rawPages = await Page.find(filter)
     .sort({ updatedAt: -1 })
-    .select('-contentMd -embedding -topicCentroid')
-    .lean()) as unknown as DigestPage[];
+    .select('-embedding -topicCentroid')
+    .lean();
+  const allPages: DigestPage[] = rawPages.map((p) => {
+    const md = (p.contentMd as string | undefined) ?? '';
+    const wordCount = md.trim() ? md.trim().split(/\s+/).length : 0;
+    const pullQuote = pullQuoteFrom(md);
+    const { contentMd: _drop, ...rest } = p as { contentMd?: string } & Record<string, unknown>;
+    return { ...(rest as unknown as DigestPage), wordCount, pullQuote };
+  });
 
   const [totalPages, totalEmails, spamPages, highPriPages] = await Promise.all([
     Page.countDocuments({ userId }),
@@ -94,6 +140,45 @@ digestRouter.get('/', async (req, res) => {
           new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
       )[0] ??
     null;
+
+  // ── Top stories (above-the-fold "Top Stories" hero block) ─────────
+  // Lead + 3 ranked secondaries. Ranking favours high priority, then
+  // notification streams (which often surface real incidents), then
+  // pages with the richest content (most contributing emails / words).
+  // We exclude the lead from the secondaries list and pull from the
+  // pool of recently-updated pages so the block always feels fresh.
+  function rankScore(p: DigestPage): number {
+    let s = 0;
+    if (p.priority === 'high') s += 100;
+    if (p.flags?.isNotificationStream) s += 30;
+    s += Math.min((p.sourceEmailIds?.length ?? 0) * 4, 60);
+    s += Math.min(Math.floor((p.wordCount ?? 0) / 100) * 2, 30);
+    if (p.heroImageUrl) s += 20;
+    // Recency tail — newest gets +20, fades over 7 days.
+    const age = Math.max(
+      0,
+      Math.min(7, (Date.now() - new Date(p.updatedAt).getTime()) / (24 * 3600 * 1000)),
+    );
+    s += Math.round(20 * (1 - age / 7));
+    return s;
+  }
+  const ranked = [...allPages].sort((a, b) => rankScore(b) - rankScore(a));
+  const secondaries = ranked
+    .filter((p) => p._id !== (lead?._id ?? ''))
+    .slice(0, 3);
+  const topStories = { lead, secondaries };
+
+  // ── Most Read rail (right rail) ───────────────────────────────────
+  // Distinct from "topStories": this is a numbered list of the pages a
+  // newspaper would call its high-traffic stories. We don't have real
+  // engagement data, so we approximate with rank score, excluding the
+  // top-stories block to avoid duplication.
+  const topStoryIds = new Set(
+    [topStories.lead?._id, ...secondaries.map((s) => s._id)].filter(Boolean) as string[],
+  );
+  const mostRead = ranked
+    .filter((p) => !topStoryIds.has(p._id))
+    .slice(0, 6);
 
   // Aggregate sender counts and topic frequencies across all pages.
   const senderCounts = new Map<string, number>();
@@ -187,6 +272,8 @@ digestRouter.get('/', async (req, res) => {
       highPriority: highPriPages,
     },
     lead,
+    topStories,
+    mostRead,
     buckets,
     topSenders,
     topTopics,
