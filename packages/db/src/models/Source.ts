@@ -5,7 +5,7 @@ const sourceSchema = new Schema(
     userId: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
     type: {
       type: String,
-      enum: ['upload', 'imap', 'webhook', 'gmail', 'rss', 'slack', 'discord', 'gcal'],
+      enum: ['imap', 'webhook', 'gmail', 'rss', 'slack', 'discord', 'gcal'],
       required: true,
     },
     name: { type: String, required: true },

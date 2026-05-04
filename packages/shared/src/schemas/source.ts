@@ -1,7 +1,6 @@
 import { z } from 'zod';
 
 export const SourceType = z.enum([
-  'upload',
   'imap',
   'webhook',
   'gmail',

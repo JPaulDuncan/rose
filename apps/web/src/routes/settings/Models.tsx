@@ -479,7 +479,29 @@ function OllamaCard({
       <div className="flex items-center gap-2">
         <Cpu className="h-5 w-5 text-rose-500" />
         <h2 className="font-semibold">Ollama</h2>
+        <a
+          href="https://canirun.ai"
+          target="_blank"
+          rel="noreferrer"
+          className="ml-auto text-xs text-rose-600 hover:underline dark:text-rose-300"
+          title="Check whether your hardware can run a given local model"
+        >
+          Hardware check ↗
+        </a>
       </div>
+      <p className="text-xs text-ink-500">
+        Not sure which models your hardware can run? Try{' '}
+        <a
+          href="https://canirun.ai"
+          target="_blank"
+          rel="noreferrer"
+          className="text-rose-600 hover:underline dark:text-rose-300"
+        >
+          canirun.ai
+        </a>{' '}
+        — paste in your CPU/GPU/RAM and it tells you which Ollama
+        models will fit and how fast they'll go.
+      </p>
 
       <div>
         <label className="block text-sm">

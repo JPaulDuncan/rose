@@ -9,7 +9,6 @@ import {
   Activity,
   Settings,
   FileText,
-  Upload,
   BookOpen,
   ShieldAlert,
   Megaphone,
@@ -98,8 +97,8 @@ export function CommandPalette({
               <Command.Item onSelect={() => go('/save')}>
                 <Link2 className="h-4 w-4" /> Save URL or document
               </Command.Item>
-              <Command.Item onSelect={() => go('/inbox?upload=1')}>
-                <Upload className="h-4 w-4" /> Upload an email
+              <Command.Item onSelect={() => go('/settings/sources')}>
+                <Settings className="h-4 w-4" /> Connect a source
               </Command.Item>
             </Command.Group>
             {pages.length > 0 && (

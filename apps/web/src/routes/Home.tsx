@@ -2,7 +2,6 @@ import { createContext, useContext, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  Upload,
   FileText,
   Inbox,
   Flame,
@@ -108,18 +107,14 @@ export default function HomePage() {
           <div>
             <h3 className="font-semibold">No edition yet</h3>
             <p className="text-sm text-ink-500">
-              Upload an email or connect a source. Each pass through the worker
-              produces a wiki entry, and Today's Edition assembles them here.
+              Connect a mail source to get started. Each email flows
+              through the worker into a wiki entry, and Today's Edition
+              assembles them here.
             </p>
           </div>
-          <div className="flex gap-2">
-            <Link to="/inbox?upload=1" className="btn-primary">
-              <Upload className="h-4 w-4" /> Upload email
-            </Link>
-            <Link to="/settings/sources" className="btn-secondary">
-              Connect a source
-            </Link>
-          </div>
+          <Link to="/settings/sources" className="btn-primary">
+            Connect a source
+          </Link>
         </div>
       </div>
     );
@@ -804,8 +799,8 @@ function Sidebar({
       )}
 
       <div className="card">
-        <Link to="/inbox?upload=1" className="btn-primary w-full justify-center">
-          <Upload className="h-4 w-4" /> Upload email
+        <Link to="/settings/sources" className="btn-primary w-full justify-center">
+          <Plus className="h-4 w-4" /> Connect a source
         </Link>
       </div>
     </>

@@ -1,9 +1,7 @@
-import { useEffect, useState } from 'react';
-import { useDropzone } from 'react-dropzone';
+import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import {
-  Upload,
   FileText,
   RefreshCw,
   AlertTriangle,
@@ -33,11 +31,6 @@ type EmailRow = {
   createdAt: string;
 };
 
-type UploadResult =
-  | { kind: 'created'; emailId: string; jobId: string; filename: string }
-  | { kind: 'duplicate'; emailId: string; filename: string }
-  | { kind: 'failed'; filename: string; error: string };
-
 type QueueCounts = {
   waiting?: number;
   active?: number;
@@ -64,14 +57,7 @@ export default function InboxPage() {
   const api = useApi();
   const { token } = useAuth();
   const qc = useQueryClient();
-  const [params, setParams] = useSearchParams();
   const [activeJob, setActiveJob] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (params.get('upload') === '1') {
-      setParams({}, { replace: true });
-    }
-  }, [params, setParams]);
 
   const { data, isLoading } = useQuery({
     queryKey: ['emails'],
@@ -83,27 +69,6 @@ export default function InboxPage() {
     queryKey: ['jobs-health'],
     queryFn: () => api.get<Health>('/api/jobs/health/summary'),
     refetchInterval: 5000,
-  });
-
-  const upload = useMutation({
-    mutationFn: async (files: File[]) => {
-      const fd = new FormData();
-      for (const f of files) fd.append('files', f);
-      return api.post<{ results: UploadResult[] }>('/api/emails/upload', fd);
-    },
-    onSuccess: (r) => {
-      qc.invalidateQueries({ queryKey: ['emails'] });
-      const created = r.results.find((x) => x.kind === 'created') as
-        | { kind: 'created'; jobId: string }
-        | undefined;
-      if (created?.jobId) setActiveJob(created.jobId);
-      const dup = r.results.filter((x) => x.kind === 'duplicate').length;
-      const fail = r.results.filter((x) => x.kind === 'failed').length;
-      toast.success(
-        `${r.results.length} processed${dup ? `, ${dup} duplicate${dup > 1 ? 's' : ''}` : ''}${fail ? `, ${fail} failed` : ''}`,
-      );
-    },
-    onError: (err: Error) => toast.error(err.message),
   });
 
   const regenerate = useMutation({
@@ -128,11 +93,6 @@ export default function InboxPage() {
     onError: (err: Error) => toast.error(err.message),
   });
 
-  const { getRootProps, getInputProps, isDragActive } = useDropzone({
-    accept: { 'message/rfc822': ['.eml'], 'application/mbox': ['.mbox'] },
-    onDrop: (files) => upload.mutate(files),
-  });
-
   const stuckCount = data?.emails.filter((e) => e.ingestStatus === 'parsed').length ?? 0;
 
   return (
@@ -144,26 +104,10 @@ export default function InboxPage() {
 
       {health && <HealthBanner health={health} stuckCount={stuckCount} onRetryAll={() => regenerateAll.mutate()} retryPending={regenerateAll.isPending} />}
 
-      <div
-        {...getRootProps()}
-        className={`mb-6 cursor-pointer rounded-xl border-2 border-dashed p-8 text-center transition-colors ${
-          isDragActive
-            ? 'border-rose-500 bg-rose-50 dark:bg-rose-950/20'
-            : 'border-ink-300 dark:border-ink-700'
-        }`}
-      >
-        <input {...getInputProps()} />
-        <Upload className="mx-auto mb-2 h-8 w-8 text-ink-400" />
-        <p className="text-sm font-medium">
-          {isDragActive ? 'Drop to ingest' : 'Drop .eml files or click to upload'}
-        </p>
-        <p className="text-xs text-ink-500">Each email becomes a wiki draft via Ollama.</p>
-      </div>
-
       {isLoading ? (
         <div className="text-ink-500">Loading…</div>
       ) : (data?.emails.length ?? 0) === 0 ? (
-        <div className="card text-center text-ink-500">No emails yet. Upload one above.</div>
+        <EmptyInbox />
       ) : (
         <ul className="space-y-2">
           {data!.emails.map((e) => (
@@ -379,4 +323,22 @@ function statusClass(s: string): string {
   if (s === 'parsed') return base + ' !bg-amber-100 !text-amber-800 dark:!bg-amber-900/30 dark:!text-amber-300';
   if (s === 'skipped') return base + ' !bg-ink-200 !text-ink-700 dark:!bg-ink-800 dark:!text-ink-300';
   return base;
+}
+
+function EmptyInbox() {
+  return (
+    <div className="card flex flex-col items-center gap-3 py-16 text-center">
+      <FileText className="h-10 w-10 text-rose-500" />
+      <div>
+        <h3 className="font-semibold">No emails yet</h3>
+        <p className="mt-1 text-sm text-ink-500">
+          Connect a mail source to start ingesting. Each email flows
+          through the worker into a wiki page.
+        </p>
+      </div>
+      <Link to="/settings/sources" className="btn-primary">
+        Connect a source
+      </Link>
+    </div>
+  );
 }

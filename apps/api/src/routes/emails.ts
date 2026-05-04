@@ -1,37 +1,10 @@
 import { Router } from 'express';
-import multer from 'multer';
 import { Types } from 'mongoose';
 import { userIdOf } from '../middleware/auth.js';
 import { Email, Page } from '@rose/db';
-import { ingestRawEmail } from '../services/ingest.js';
 import { generatePageQueue } from '../lib/queues.js';
 
 export const emailsRouter: Router = Router();
-
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
-
-emailsRouter.post('/upload', upload.array('files', 50), async (req, res) => {
-  const userId = new Types.ObjectId(userIdOf(req));
-  const files = (req.files ?? []) as Express.Multer.File[];
-  if (!files.length) {
-    res.status(400).json({ error: 'invalid_request', message: 'No files uploaded' });
-    return;
-  }
-  const results = [];
-  for (const f of files) {
-    try {
-      const r = await ingestRawEmail({ userId, raw: f.buffer });
-      results.push({ filename: f.originalname, ...r });
-    } catch (err) {
-      results.push({
-        filename: f.originalname,
-        kind: 'failed',
-        error: (err as Error).message,
-      });
-    }
-  }
-  res.status(201).json({ results });
-});
 
 emailsRouter.get('/', async (req, res) => {
   const userId = new Types.ObjectId(userIdOf(req));
