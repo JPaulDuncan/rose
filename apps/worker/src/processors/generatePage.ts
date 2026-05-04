@@ -32,6 +32,7 @@ import { bayesScoreFor } from '../lib/bayesScore.js';
 import { evaluateRules, type RuleVerdict, emptyVerdict } from '../services/rules.js';
 import { dispatchWebhookEvent } from './webhookDeliver.js';
 import { evaluatePageNotifications } from './pushNotify.js';
+import { describePageImages } from '../services/describeImages.js';
 import {
   extractEventsForPage,
   syncEventsToPage,
@@ -791,6 +792,16 @@ export function startGeneratePageWorker() {
             await evaluatePageNotifications(userId, pageObj);
           } catch (err) {
             logger.warn({ err, pageId: String(pageId) }, 'push dispatch failed');
+          }
+          // Vision — describe inline images when the user has opted in.
+          // Respects per-user daily cap; never throws upward.
+          try {
+            await describePageImages(userId, pageObj);
+          } catch (err) {
+            logger.warn(
+              { err: (err as Error).message, pageId: String(pageId) },
+              'vision describe step failed',
+            );
           }
         }
       } catch (err) {

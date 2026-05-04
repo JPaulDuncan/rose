@@ -95,7 +95,14 @@ const emailSchema = new Schema(
     images: {
       type: [
         new Schema(
-          { url: { type: String, required: true }, alt: { type: String, default: null } },
+          {
+            url: { type: String, required: true },
+            alt: { type: String, default: null },
+            /** Vision-model description, populated lazily by the
+             *  describe-images worker step. Surfaced as an
+             *  enhanced alt-text on the page view. */
+            description: { type: String, default: null },
+          },
           { _id: false },
         ),
       ],

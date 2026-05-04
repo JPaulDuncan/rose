@@ -1,6 +1,8 @@
 import type {
+  DescribeImageOptions,
   GenerateChunk,
   GenerateOptions,
+  ImageInput,
   LlmProvider,
   PingResult,
 } from './types.js';
@@ -20,6 +22,7 @@ type ChatChunk = {
 export class OpenAIProvider implements LlmProvider {
   readonly id = 'openai' as const;
   readonly supportsEmbeddings = true;
+  readonly supportsVision = true;
 
   constructor(private readonly cfg: OpenAIProviderConfig) {}
 
@@ -104,6 +107,46 @@ export class OpenAIProvider implements LlmProvider {
     const vec = json.data?.[0]?.embedding;
     if (!vec) throw new Error('OpenAI embeddings response missing data[0].embedding');
     return vec;
+  }
+
+  async describeImage(image: ImageInput, opts: DescribeImageOptions = {}): Promise<string> {
+    const baseUrl = this.cfg.baseUrl ?? DEFAULT_BASE;
+    const model = opts.model ?? 'gpt-4o-mini';
+    const promptText =
+      opts.prompt ?? 'Describe this image in one short paragraph.';
+    const imageUrl =
+      'url' in image
+        ? image.url
+        : `data:${image.mimeType};base64,${image.bytes}`;
+    const res = await fetch(`${baseUrl}/v1/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${this.cfg.apiKey}`,
+      },
+      body: JSON.stringify({
+        model,
+        max_tokens: 400,
+        messages: [
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: promptText },
+              { type: 'image_url', image_url: { url: imageUrl } },
+            ],
+          },
+        ],
+      }),
+      signal: opts.signal,
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error(`OpenAI vision failed (${res.status}): ${body.slice(0, 500)}`);
+    }
+    const json = (await res.json()) as {
+      choices?: { message?: { content?: string } }[];
+    };
+    return (json.choices?.[0]?.message?.content ?? '').trim();
   }
 
   async ping(signal?: AbortSignal): Promise<PingResult> {

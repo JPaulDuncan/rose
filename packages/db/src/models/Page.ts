@@ -92,6 +92,7 @@ const pageSchema = new Schema(
           {
             url: { type: String, required: true },
             alt: { type: String, default: null },
+            description: { type: String, default: null },
             count: { type: Number, default: 1 },
             fromEmailId: { type: Schema.Types.ObjectId, ref: 'Email' },
           },

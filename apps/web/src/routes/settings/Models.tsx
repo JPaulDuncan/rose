@@ -5,6 +5,7 @@ import {
   CheckCircle2,
   Cpu,
   Download,
+  Eye,
   KeyRound,
   PlugZap,
   Trash2,
@@ -40,9 +41,112 @@ export default function ModelsSettings() {
     <div className="space-y-6">
       <RoleCard role="generation" settings={settings} qc={qc} />
       <RoleCard role="embedding" settings={settings} qc={qc} />
+      <VisionCard />
       <ProviderCredsCard provider="anthropic" settings={settings} qc={qc} />
       <ProviderCredsCard provider="openai" settings={settings} qc={qc} />
       <OllamaCard settings={settings} qc={qc} />
+    </div>
+  );
+}
+
+type VisionCfg = {
+  enabled?: boolean;
+  model?: string;
+  dailyCap?: number;
+};
+
+function VisionCard() {
+  const api = useApi();
+  const qc = useQueryClient();
+  const { data } = useQuery({
+    queryKey: ['me'],
+    queryFn: () =>
+      api.get<{ settings?: { vision?: VisionCfg } }>('/api/me'),
+  });
+  const cfg: VisionCfg = data?.settings?.vision ?? {};
+  const [enabled, setEnabled] = useState(!!cfg.enabled);
+  const [model, setModel] = useState(cfg.model ?? '');
+  const [dailyCap, setDailyCap] = useState<number>(cfg.dailyCap ?? 30);
+
+  useEffect(() => {
+    if (!data) return;
+    setEnabled(!!cfg.enabled);
+    setModel(cfg.model ?? '');
+    setDailyCap(cfg.dailyCap ?? 30);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data]);
+
+  const save = useMutation({
+    mutationFn: async () =>
+      api.patch<unknown>('/api/me', {
+        settings: {
+          ...(data?.settings ?? {}),
+          vision: { ...cfg, enabled, model: model.trim() || undefined, dailyCap },
+        },
+      }),
+    onSuccess: () => {
+      toast.success('Vision settings saved');
+      qc.invalidateQueries({ queryKey: ['me'] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  return (
+    <div className="card">
+      <div className="mb-2 flex items-center gap-2">
+        <Eye className="h-5 w-5 text-rose-500" />
+        <h2 className="font-semibold">Vision (inline images)</h2>
+      </div>
+      <p className="text-sm text-ink-500">
+        When enabled, the worker asks your generation provider's vision
+        model to describe images embedded in emails — those descriptions
+        flow through to the wiki page as enhanced alt text. Off by
+        default because the cost profile differs from text generation.
+        Defaults: Ollama <code>llava</code>, Anthropic Claude Haiku 4.5,
+        OpenAI <code>gpt-4o-mini</code>.
+      </p>
+      <label className="mt-4 flex items-center gap-2 text-sm">
+        <input
+          type="checkbox"
+          checked={enabled}
+          onChange={(e) => setEnabled(e.target.checked)}
+        />
+        <span>Describe inline images</span>
+      </label>
+      <div className="mt-3 grid gap-3 sm:grid-cols-2">
+        <label className="block text-xs">
+          <span className="mb-1 block font-medium">
+            Vision model <span className="text-ink-400">(optional override)</span>
+          </span>
+          <input
+            className="input"
+            value={model}
+            onChange={(e) => setModel(e.target.value)}
+            placeholder="llava | claude-haiku-4-5-20251001 | gpt-4o-mini"
+          />
+        </label>
+        <label className="block text-xs">
+          <span className="mb-1 block font-medium">Daily cap</span>
+          <input
+            className="input"
+            type="number"
+            min={1}
+            max={1000}
+            value={dailyCap}
+            onChange={(e) => setDailyCap(Number(e.target.value))}
+          />
+        </label>
+      </div>
+      <div className="mt-4 flex justify-end">
+        <button
+          type="button"
+          className="btn-primary"
+          onClick={() => save.mutate()}
+          disabled={save.isPending}
+        >
+          Save
+        </button>
+      </div>
     </div>
   );
 }

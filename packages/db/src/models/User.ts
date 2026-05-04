@@ -86,6 +86,19 @@ const userSchema = new Schema(
         encryptedApiKey: { type: String, default: null, select: false },
         baseUrl: { type: String, default: '' },
       },
+      /**
+       * Vision is opt-in per user — different cost profile from text
+       * generation. When enabled, the inline-image describer uses the
+       * generation provider with the configured `vision.model`
+       * (defaults to a cheap mini model on each provider).
+       */
+      vision: {
+        enabled: { type: Boolean, default: false },
+        model: { type: String, default: '' },
+        /** Daily cap on describe-image calls per user. Hard ceiling
+         *  to keep metered providers from running up bills. */
+        dailyCap: { type: Number, default: 30, min: 1, max: 1000 },
+      },
     },
     /**
      * User-curated spam policy. Membership in any of these lists is enough

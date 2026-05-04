@@ -58,7 +58,13 @@ type PageDoc = {
   priority?: 'high' | 'normal' | 'low';
   topics?: string[];
   pageLinks?: { url: string; text?: string | null; count: number }[];
-  pageImages?: { url: string; alt?: string | null; count: number; fromEmailId?: string }[];
+  pageImages?: {
+    url: string;
+    alt?: string | null;
+    description?: string | null;
+    count: number;
+    fromEmailId?: string;
+  }[];
   heroImageUrl?: string | null;
   pageAttachments?: { filename: string; contentType: string; size: number; fromEmailId: string }[];
   spamScore?: number;
@@ -1004,7 +1010,13 @@ function ImagesBlock({
   images,
   heroUrl,
 }: {
-  images: { url: string; alt?: string | null; count: number; fromEmailId?: string }[];
+  images: {
+    url: string;
+    alt?: string | null;
+    description?: string | null;
+    count: number;
+    fromEmailId?: string;
+  }[];
   heroUrl: string | null;
 }) {
   const rest = images.filter((i) => i.url !== heroUrl);
@@ -1027,20 +1039,26 @@ function ImagesBlock({
 function Thumb({
   url,
   alt,
+  description,
   fromEmailId,
 }: {
   url: string;
   alt?: string | null;
+  description?: string | null;
   count?: number;
   fromEmailId?: string;
 }) {
   const [failed, setFailed] = useState(false);
   if (failed) return null;
+  // Vision-derived description wins as the title (most useful hover);
+  // alt falls back to it for accessibility.
+  const tooltip = description || alt || url;
   const inner = (
     <div className="aspect-video overflow-hidden rounded-lg border border-ink-200 bg-ink-50 dark:border-ink-800 dark:bg-ink-900">
       <img
         src={url}
-        alt={alt ?? ''}
+        alt={alt || description || ''}
+        title={tooltip}
         className="block h-full w-full object-cover transition-transform group-hover:scale-105"
         loading="lazy"
         referrerPolicy="no-referrer"
@@ -1049,7 +1067,7 @@ function Thumb({
     </div>
   );
   return fromEmailId ? (
-    <Link to={`/e/${fromEmailId}`} className="group block" title={alt ?? url}>
+    <Link to={`/e/${fromEmailId}`} className="group block" title={tooltip}>
       {inner}
     </Link>
   ) : (

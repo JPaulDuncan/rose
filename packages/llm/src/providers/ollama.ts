@@ -1,6 +1,8 @@
 import type {
+  DescribeImageOptions,
   GenerateChunk,
   GenerateOptions,
+  ImageInput,
   LlmProvider,
   ModelDescriptor,
   PingResult,
@@ -37,6 +39,12 @@ async function* ndjson<T>(body: ReadableStream<Uint8Array>): AsyncGenerator<T> {
 export class OllamaProvider implements LlmProvider {
   readonly id = 'ollama' as const;
   readonly supportsEmbeddings = true;
+  /** Ollama supports vision via models like `llava`, `bakllava`,
+   *  `llama3.2-vision`. Capability is per-model on Ollama, but the
+   *  API accepts the `images` field on `/api/generate` regardless;
+   *  the model errors out if it can't handle them. We report true
+   *  here and let the caller pin a vision-capable model. */
+  readonly supportsVision = true;
 
   constructor(private readonly cfg: OllamaProviderConfig) {}
 
@@ -86,6 +94,34 @@ export class OllamaProvider implements LlmProvider {
     const json = (await res.json()) as { embedding?: number[] };
     if (!json.embedding) throw new Error('Ollama embeddings missing `embedding` field');
     return json.embedding;
+  }
+
+  async describeImage(image: ImageInput, opts: DescribeImageOptions = {}): Promise<string> {
+    // Ollama wants base64 (no data: prefix). When a URL was supplied,
+    // the caller is responsible for fetching + base64-encoding.
+    if ('url' in image) {
+      throw new Error('Ollama vision requires base64 bytes, not a URL');
+    }
+    const model = opts.model ?? 'llava';
+    const prompt = opts.prompt ?? 'Describe this image in one short paragraph.';
+    const res = await fetch(`${this.cfg.baseUrl}/api/generate`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        model,
+        prompt,
+        images: [image.bytes],
+        stream: false,
+        options: { temperature: 0.2 },
+      }),
+      signal: opts.signal,
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error(`Ollama vision failed (${res.status}): ${body.slice(0, 500)}`);
+    }
+    const json = (await res.json()) as { response?: string };
+    return (json.response ?? '').trim();
   }
 
   async ping(signal?: AbortSignal): Promise<PingResult> {

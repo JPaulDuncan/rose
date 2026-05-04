@@ -1,6 +1,8 @@
 import type {
+  DescribeImageOptions,
   GenerateChunk,
   GenerateOptions,
+  ImageInput,
   LlmProvider,
   PingResult,
 } from './types.js';
@@ -25,6 +27,7 @@ type StreamLine =
 export class AnthropicProvider implements LlmProvider {
   readonly id = 'anthropic' as const;
   readonly supportsEmbeddings = false;
+  readonly supportsVision = true;
 
   constructor(private readonly cfg: AnthropicProviderConfig) {}
 
@@ -105,6 +108,51 @@ export class AnthropicProvider implements LlmProvider {
     throw new Error(
       'Anthropic does not provide embeddings. Configure a separate embedding provider (Ollama or OpenAI).',
     );
+  }
+
+  async describeImage(image: ImageInput, opts: DescribeImageOptions = {}): Promise<string> {
+    const baseUrl = this.cfg.baseUrl ?? DEFAULT_BASE;
+    const model = opts.model ?? 'claude-haiku-4-5-20251001';
+    const promptText =
+      opts.prompt ?? 'Describe this image in one short paragraph.';
+    const imageBlock =
+      'url' in image
+        ? { type: 'image', source: { type: 'url', url: image.url } }
+        : {
+            type: 'image',
+            source: { type: 'base64', media_type: image.mimeType, data: image.bytes },
+          };
+    const res = await fetch(`${baseUrl}/v1/messages`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-api-key': this.cfg.apiKey,
+        'anthropic-version': this.cfg.apiVersion ?? DEFAULT_VERSION,
+      },
+      body: JSON.stringify({
+        model,
+        max_tokens: 400,
+        messages: [
+          {
+            role: 'user',
+            content: [imageBlock, { type: 'text', text: promptText }],
+          },
+        ],
+      }),
+      signal: opts.signal,
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error(`Anthropic vision failed (${res.status}): ${body.slice(0, 500)}`);
+    }
+    const json = (await res.json()) as {
+      content?: { type: string; text?: string }[];
+    };
+    return (json.content ?? [])
+      .filter((c) => c.type === 'text')
+      .map((c) => c.text ?? '')
+      .join('')
+      .trim();
   }
 
   async ping(signal?: AbortSignal): Promise<PingResult> {
