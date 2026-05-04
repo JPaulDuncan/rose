@@ -47,14 +47,17 @@ services:
       OLLAMA_NUM_PARALLEL: "2"
       # Hold a model in memory for 30 minutes of idle before unloading.
       OLLAMA_KEEP_ALIVE: "30m"
-    # Uncomment to enable GPU on a CUDA host:
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - driver: nvidia
-    #           count: all
-    #           capabilities: [gpu]
+    # GPU passthrough. Requires `nvidia-container-toolkit` on the host
+    # (https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html)
+    # and the Docker daemon configured to use the nvidia runtime.
+    # Comment this block out on hosts without an NVIDIA GPU.
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
 
   api:
     build:
@@ -76,6 +79,20 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    # Same GPU passthrough as Ollama — nvidia-container-toolkit injects
+    # `nvidia-smi` into the container so /api/system/stats can report
+    # GPU utilisation, VRAM, and temperature. Without this block the
+    # System card falls back to "no GPUs detected".
+    environment:
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: utility
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [utility]
 
   worker:
     build:

@@ -24,6 +24,12 @@ RUN pnpm --filter @rose/shared build \
 
 FROM node:${NODE_VERSION} AS runner
 RUN corepack enable
+# `nvidia-container-toolkit` injects glibc-linked binaries (notably
+# /usr/bin/nvidia-smi) into the container at runtime when the host is
+# configured for GPU passthrough. Alpine's musl can't run them as-is —
+# `gcompat` provides the glibc shim so /api/system/stats can shell
+# out to nvidia-smi for GPU telemetry. No-op on hosts without a GPU.
+RUN apk add --no-cache gcompat
 WORKDIR /repo
 ENV NODE_ENV=production
 COPY --from=build /repo /repo
