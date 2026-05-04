@@ -29,6 +29,42 @@ jobsRouter.get('/:id', async (req, res) => {
 });
 
 /**
+ * Recent generate-page failures for the *current user*, including the
+ * full failure reason + stack trace so a developer can see exactly
+ * why a wiki page silently failed to materialise. Useful when running
+ * `docker compose logs worker` is inconvenient.
+ *
+ * Query: `?status=failed|completed|active|waiting` (default failed),
+ *        `?limit=N` (max 100).
+ */
+jobsRouter.get('/list/recent', async (req, res) => {
+  const userId = String(userIdOf(req));
+  const status =
+    (req.query.status as 'failed' | 'completed' | 'active' | 'waiting' | undefined) ??
+    'failed';
+  const limit = Math.min(Number(req.query.limit ?? 25), 100);
+  const jobs = await generatePageQueue.getJobs([status], 0, limit * 4);
+  const mine = jobs.filter((j) => (j.data as { userId?: string })?.userId === userId);
+  res.json({
+    jobs: mine.slice(0, limit).map((j) => ({
+      id: j.id,
+      name: j.name,
+      status,
+      attemptsMade: j.attemptsMade,
+      timestamp: j.timestamp,
+      processedOn: j.processedOn ?? null,
+      finishedOn: j.finishedOn ?? null,
+      data: { emailId: (j.data as { emailId?: string })?.emailId ?? null },
+      // BullMQ stores the failure as `failedReason` (string) and
+      // `stacktrace` (string[]). Surface both verbatim.
+      failedReason: j.failedReason ?? null,
+      stacktrace: j.stacktrace ?? [],
+      returnvalue: j.returnvalue ?? null,
+    })),
+  });
+});
+
+/**
  * Aggregate queue health and per-user provider readiness for the diagnostic
  * banner. Reports model availability against the user's *configured*
  * generation/embedding providers — only fetches Ollama tags when at least

@@ -227,11 +227,32 @@ export function startGeneratePageWorker() {
       // subject/from/date/text and produced "(no subject) — unknown sender"
       // pages for every email. Using a single `+`-prefixed field correctly
       // augments the default selection.
+      logger.info(
+        { jobId: String(job.id), emailId: job.data.emailId, userId: job.data.userId },
+        'generate-page: start',
+      );
       const triggerEmail = await Email.findOne({
         _id: job.data.emailId,
         userId,
       }).select('+embedding');
-      if (!triggerEmail) throw new Error('Email not found');
+      if (!triggerEmail) {
+        logger.warn(
+          { jobId: String(job.id), emailId: job.data.emailId },
+          'generate-page: trigger email not found — skipping (probably deleted before job ran)',
+        );
+        throw new Error('Email not found');
+      }
+      logger.debug(
+        {
+          emailId: String(triggerEmail._id),
+          subject: triggerEmail.subject,
+          from: triggerEmail.from?.address,
+          kind: triggerEmail.kind,
+          status: triggerEmail.ingestStatus,
+          textLen: (triggerEmail.text ?? '').length,
+        },
+        'generate-page: loaded trigger email',
+      );
 
       await job.updateProgress({ type: 'started', jobId: String(job.id) });
 
@@ -419,29 +440,60 @@ export function startGeneratePageWorker() {
           suggestedCategory: null,
         };
       } else {
+        const llmStartedAt = Date.now();
         let buffered = '';
-        for await (const chunk of provider.generateStream({
-          model: genModel,
-          prompt,
-          system: SYSTEM_PROMPT_BASE,
-          format: 'json',
-          temperature: 0.2,
-        })) {
-          buffered += chunk.response;
-          if (chunk.response) {
-            await job.updateProgress({
-              type: 'token',
-              jobId: String(job.id),
-              token: chunk.response,
-            });
+        try {
+          for await (const chunk of provider.generateStream({
+            model: genModel,
+            prompt,
+            system: SYSTEM_PROMPT_BASE,
+            format: 'json',
+            temperature: 0.2,
+          })) {
+            buffered += chunk.response;
+            if (chunk.response) {
+              await job.updateProgress({
+                type: 'token',
+                jobId: String(job.id),
+                token: chunk.response,
+              });
+            }
           }
+        } catch (err) {
+          // Provider errors are the most common silent failure mode
+          // (Ollama not running, missing model, expired API key).
+          // Surface the full message + stack so the operator can fix.
+          logger.error(
+            {
+              err,
+              providerId,
+              model: genModel,
+              promptChars: prompt.length,
+              bufferedChars: buffered.length,
+              elapsedMs: Date.now() - llmStartedAt,
+            },
+            'generate-page: provider call failed',
+          );
+          throw err;
         }
+        logger.debug(
+          {
+            providerId,
+            model: genModel,
+            elapsedMs: Date.now() - llmStartedAt,
+            outputChars: buffered.length,
+          },
+          'generate-page: provider call complete',
+        );
         try {
           draft = PageGenerationDraft.parse(extractJson(buffered));
         } catch (err) {
-          logger.warn(
-            { err, raw: buffered.slice(0, 400) },
-            'failed to parse generation draft',
+          // Log the FULL raw output, not a truncated slice — when a
+          // wiki page silently fails to materialise this is almost
+          // always why.
+          logger.error(
+            { err, providerId, model: genModel, raw: buffered },
+            'generate-page: invalid JSON from LLM',
           );
           throw new Error('LLM returned invalid JSON for page generation');
         }
@@ -838,13 +890,34 @@ export function startGeneratePageWorker() {
         pageId: pageId.toString(),
       });
 
+      logger.info(
+        {
+          jobId: String(job.id),
+          pageId: String(pageId),
+          slug,
+          mode: assignment.mode,
+          wasNew: !assignment.page,
+          emailCount: pageEmails.length,
+        },
+        'generate-page: persisted',
+      );
       return { pageId: pageId.toString(), slug };
     },
     { connection: redis, concurrency: 2 },
   );
 
   worker.on('failed', (job, err) =>
-    logger.error({ jobId: job?.id, err }, 'generate-page failed'),
+    logger.error(
+      {
+        jobId: job?.id,
+        emailId: job?.data?.emailId,
+        userId: job?.data?.userId,
+        attemptsMade: job?.attemptsMade,
+        err,
+      },
+      'generate-page failed',
+    ),
   );
+  worker.on('error', (err) => logger.error({ err }, 'generate-page worker error'));
   return worker;
 }
