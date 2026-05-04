@@ -40,6 +40,7 @@ import { pushRouter } from './routes/push.js';
 import { synthesisRouter } from './routes/synthesis.js';
 import { pageStateRouter, pageStateLookupRouter } from './routes/pageState.js';
 import { dataIoRouter } from './routes/dataIo.js';
+import { systemRouter } from './routes/system.js';
 import { errorHandler } from './middleware/error.js';
 import { requireAuth } from './middleware/auth.js';
 import { apiLimiter } from './middleware/rateLimit.js';
@@ -97,6 +98,7 @@ export async function createServer(): Promise<Express> {
   app.use('/api/featured-tags', requireAuth, featuredTagsRouter);
   app.use('/api/weather', requireAuth, weatherRouter);
   app.use('/api/providers', requireAuth, providersRouter);
+  app.use('/api/system', requireAuth, systemRouter);
   // Streaming pull auth via query param; mount before the protected models router.
   app.use('/api/models', modelsStreamRouter);
   app.use('/api/models', requireAuth, modelsRouter);

@@ -147,6 +147,43 @@ export class OllamaProvider implements LlmProvider {
     }));
   }
 
+  /**
+   * `/api/ps` — currently-loaded models with their RAM/VRAM footprint and
+   * processor placement. Surfaced in the Models settings tab so the user
+   * can see what's pinned in memory at any moment.
+   */
+  async psModels(signal?: AbortSignal): Promise<
+    {
+      name: string;
+      model?: string;
+      size?: number;
+      sizeVram?: number;
+      digest?: string;
+      expiresAt?: string;
+    }[]
+  > {
+    const res = await fetch(`${this.cfg.baseUrl}/api/ps`, { signal });
+    if (!res.ok) throw new Error(`Ollama ps failed (${res.status})`);
+    const json = (await res.json()) as {
+      models?: {
+        name: string;
+        model?: string;
+        size?: number;
+        size_vram?: number;
+        digest?: string;
+        expires_at?: string;
+      }[];
+    };
+    return (json.models ?? []).map((m) => ({
+      name: m.name,
+      model: m.model,
+      size: m.size,
+      sizeVram: m.size_vram,
+      digest: m.digest,
+      expiresAt: m.expires_at,
+    }));
+  }
+
   async *pullModel(model: string, signal?: AbortSignal): AsyncGenerator<PullEvent> {
     const res = await fetch(`${this.cfg.baseUrl}/api/pull`, {
       method: 'POST',

@@ -1,15 +1,18 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
+  Activity,
   Bot,
   CheckCircle2,
   Cpu,
   Download,
   Eye,
+  HardDrive,
   KeyRound,
   PlugZap,
   Trash2,
   XCircle,
+  Zap,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import {
@@ -48,6 +51,7 @@ export default function ModelsSettings() {
 
   return (
     <div className="space-y-6">
+      <SystemStatsCard />
       <RoleCard role="generation" settings={settings} qc={qc} installedOllama={installedOllama} />
       <RoleCard role="embedding" settings={settings} qc={qc} installedOllama={installedOllama} />
       <VisionCard installedOllama={installedOllama} />
@@ -56,6 +60,277 @@ export default function ModelsSettings() {
       <OllamaCard settings={settings} qc={qc} />
     </div>
   );
+}
+
+type SystemStats = {
+  host: {
+    platform: string;
+    arch: string;
+    uptimeSec: number;
+    cpu: { model: string; cores: number; loadAvg: number[] };
+    memory: {
+      totalBytes: number;
+      freeBytes: number;
+      usedBytes: number;
+      processRssBytes: number;
+      cgroupLimitBytes: number | null;
+      cgroupCurrentBytes: number | null;
+    };
+  };
+  gpus: {
+    index: number;
+    name: string;
+    utilizationPct: number | null;
+    memoryUsedMb: number | null;
+    memoryTotalMb: number | null;
+    temperatureC: number | null;
+  }[];
+  ollama: {
+    role: string;
+    baseUrl: string;
+    ok: boolean;
+    message?: string;
+    loaded: {
+      name: string;
+      sizeBytes: number | null;
+      vramBytes: number | null;
+      processor: 'gpu' | 'cpu' | 'mixed';
+      expiresAt: string | null;
+    }[];
+  }[];
+};
+
+function SystemStatsCard() {
+  const api = useApi();
+  const { data, isLoading, isError } = useQuery({
+    queryKey: ['system-stats'],
+    queryFn: () => api.get<SystemStats>('/api/system/stats'),
+    refetchInterval: 3000,
+  });
+
+  if (isLoading) {
+    return (
+      <div className="card text-sm text-ink-500">Loading system stats…</div>
+    );
+  }
+  if (isError || !data) {
+    return (
+      <div className="card text-sm text-red-600">
+        Couldn't read system stats.
+      </div>
+    );
+  }
+
+  // Show the cgroup memory if present (we're in a container with a
+  // memory limit), otherwise the host RAM. Surfacing both would confuse
+  // most users.
+  const memTotal =
+    data.host.memory.cgroupLimitBytes ?? data.host.memory.totalBytes;
+  const memUsed =
+    data.host.memory.cgroupCurrentBytes ?? data.host.memory.usedBytes;
+  const memPct = memTotal > 0 ? Math.round((memUsed / memTotal) * 100) : 0;
+  const isContainerLimited = data.host.memory.cgroupLimitBytes != null;
+
+  // 1m load average normalised to per-core so 100% means "fully loaded".
+  const load1m = data.host.cpu.loadAvg[0] ?? 0;
+  const cpuPct = Math.min(
+    999,
+    Math.round((load1m / Math.max(1, data.host.cpu.cores)) * 100),
+  );
+
+  return (
+    <div className="card space-y-4">
+      <div className="flex items-center gap-2">
+        <Activity className="h-5 w-5 text-rose-500" />
+        <h2 className="font-semibold">System</h2>
+        <span className="ml-auto text-xs text-ink-500">
+          {data.host.platform}/{data.host.arch} · up {formatUptime(data.host.uptimeSec)}
+        </span>
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-2">
+        <StatBlock
+          icon={<Cpu className="h-4 w-4" />}
+          label="CPU"
+          headline={`${data.host.cpu.cores} core${data.host.cpu.cores === 1 ? '' : 's'}`}
+          sub={data.host.cpu.model}
+          fillPct={cpuPct}
+          fillLabel={`load ${load1m.toFixed(2)} (${cpuPct}% per core)`}
+        />
+        <StatBlock
+          icon={<HardDrive className="h-4 w-4" />}
+          label={isContainerLimited ? 'RAM (container)' : 'RAM (host)'}
+          headline={`${formatBytes(memUsed)} / ${formatBytes(memTotal)}`}
+          sub={`API process: ${formatBytes(data.host.memory.processRssBytes)}`}
+          fillPct={memPct}
+          fillLabel={`${memPct}% used`}
+        />
+      </div>
+
+      <div>
+        <div className="mb-2 flex items-center gap-2">
+          <Zap className="h-4 w-4 text-rose-500" />
+          <h3 className="text-sm font-medium">GPUs</h3>
+          <span className="text-xs text-ink-500">
+            {data.gpus.length === 0
+              ? 'none detected (nvidia-smi not available)'
+              : `${data.gpus.length} found`}
+          </span>
+        </div>
+        {data.gpus.length > 0 && (
+          <ul className="space-y-2">
+            {data.gpus.map((g) => {
+              const memPct =
+                g.memoryUsedMb != null && g.memoryTotalMb && g.memoryTotalMb > 0
+                  ? Math.round((g.memoryUsedMb / g.memoryTotalMb) * 100)
+                  : null;
+              return (
+                <li
+                  key={g.index}
+                  className="rounded-lg border border-ink-200 bg-ink-50 p-3 text-xs dark:border-ink-800 dark:bg-ink-900"
+                >
+                  <div className="flex items-center justify-between font-medium">
+                    <span>
+                      GPU {g.index} · {g.name}
+                    </span>
+                    {g.temperatureC != null && (
+                      <span className="text-ink-500">{g.temperatureC}°C</span>
+                    )}
+                  </div>
+                  <div className="mt-1 grid gap-2 sm:grid-cols-2">
+                    <Bar
+                      label={`Compute ${g.utilizationPct ?? 0}%`}
+                      pct={g.utilizationPct ?? 0}
+                    />
+                    {memPct != null && (
+                      <Bar
+                        label={`VRAM ${g.memoryUsedMb}/${g.memoryTotalMb} MB`}
+                        pct={memPct}
+                      />
+                    )}
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
+
+      <div>
+        <h3 className="mb-2 text-sm font-medium">Loaded Ollama models</h3>
+        {data.ollama.length === 0 ? (
+          <div className="text-xs text-ink-500">No Ollama instances configured.</div>
+        ) : (
+          <ul className="space-y-2">
+            {data.ollama.map((inst) => (
+              <li
+                key={inst.baseUrl}
+                className="rounded-lg border border-ink-200 bg-ink-50 p-3 text-xs dark:border-ink-800 dark:bg-ink-900"
+              >
+                <div className="mb-1 flex items-center justify-between">
+                  <span className="font-mono text-[11px]">{inst.baseUrl}</span>
+                  <span className="text-ink-500">{inst.role}</span>
+                </div>
+                {!inst.ok ? (
+                  <div className="text-red-600">
+                    unreachable{inst.message ? ` — ${inst.message}` : ''}
+                  </div>
+                ) : inst.loaded.length === 0 ? (
+                  <div className="text-ink-500">No models currently loaded.</div>
+                ) : (
+                  <ul className="space-y-1">
+                    {inst.loaded.map((m) => (
+                      <li key={m.name} className="flex items-center justify-between">
+                        <span>
+                          <code>{m.name}</code>
+                          <span
+                            className={`ml-2 rounded px-1.5 py-0.5 text-[10px] ${
+                              m.processor === 'gpu'
+                                ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'
+                                : m.processor === 'mixed'
+                                  ? 'bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300'
+                                  : 'bg-ink-100 text-ink-600 dark:bg-ink-800 dark:text-ink-300'
+                            }`}
+                          >
+                            {m.processor.toUpperCase()}
+                          </span>
+                        </span>
+                        <span className="text-ink-500">
+                          {m.sizeBytes ? formatBytes(m.sizeBytes) : '—'}
+                          {m.vramBytes && m.sizeBytes && m.vramBytes < m.sizeBytes && (
+                            <> ({formatBytes(m.vramBytes)} VRAM)</>
+                          )}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function StatBlock({
+  icon,
+  label,
+  headline,
+  sub,
+  fillPct,
+  fillLabel,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  headline: string;
+  sub: string;
+  fillPct: number;
+  fillLabel: string;
+}) {
+  return (
+    <div className="rounded-lg border border-ink-200 bg-ink-50 p-3 text-xs dark:border-ink-800 dark:bg-ink-900">
+      <div className="mb-1 flex items-center gap-1 font-medium">
+        {icon}
+        <span>{label}</span>
+      </div>
+      <div className="text-sm font-semibold">{headline}</div>
+      <div className="mt-0.5 truncate text-ink-500" title={sub}>
+        {sub}
+      </div>
+      <Bar pct={Math.min(100, fillPct)} label={fillLabel} />
+    </div>
+  );
+}
+
+function Bar({ pct, label }: { pct: number; label: string }) {
+  // Clamp to 0–100 for the visual; the textual label can show >100% load.
+  const clamped = Math.max(0, Math.min(100, pct));
+  return (
+    <div className="mt-1">
+      <div className="h-1.5 w-full overflow-hidden rounded-full bg-ink-200 dark:bg-ink-800">
+        <div
+          className={`h-full transition-all ${
+            clamped > 90
+              ? 'bg-red-500'
+              : clamped > 70
+                ? 'bg-amber-500'
+                : 'bg-rose-500'
+          }`}
+          style={{ width: `${clamped}%` }}
+        />
+      </div>
+      <div className="mt-0.5 text-[10px] text-ink-500">{label}</div>
+    </div>
+  );
+}
+
+function formatUptime(sec: number): string {
+  if (sec < 60) return `${sec}s`;
+  if (sec < 3600) return `${Math.floor(sec / 60)}m`;
+  if (sec < 86400) return `${Math.floor(sec / 3600)}h ${Math.floor((sec % 3600) / 60)}m`;
+  return `${Math.floor(sec / 86400)}d ${Math.floor((sec % 86400) / 3600)}h`;
 }
 
 type VisionCfg = {
