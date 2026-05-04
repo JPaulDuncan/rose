@@ -17,6 +17,8 @@ const instructionSchema = new Schema(
         'sender',
         'chat',
         'reply',
+        'briefing',
+        'synthesis',
       ],
       required: true,
     },

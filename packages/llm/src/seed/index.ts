@@ -247,4 +247,40 @@ REQUIREMENTS
 - Reply in plain markdown; no preamble, no headings, no "Sure! Here is…" filler.
 - Keep it tight — say only what the question requires.`,
   },
+  {
+    name: 'briefing.weekly',
+    scope: 'briefing',
+    description:
+      "Narrative editor's note for a weekly (or monthly) briefing of the user's wiki — written from clusters of recent pages.",
+    variables: ['period_label', 'clusters'],
+    isDefault: true,
+    template: `You are writing the editor's note for a {{period_label}} briefing of the user's wiki. Be specific, concrete, and confident — name the actual things that happened. Cite source page titles inline as [[page-slug]] (the SPA linkifies them).
+
+CLUSTERS (each cluster has a theme + the pages in it):
+{{clusters}}
+
+OUTPUT
+- One opening paragraph (3 sentences) — the period's through-line.
+- One short paragraph per theme.
+- A closing 1-sentence pointer to the most important single thing to read first.
+
+No bullet lists. No headings. No fluff phrases like "in summary". Plain markdown body only.`,
+  },
+  {
+    name: 'synthesis.meta',
+    scope: 'synthesis',
+    description:
+      'Combines a user-selected set of pages into a single meta-entry that cites each contributing page.',
+    variables: ['entries', 'focus'],
+    isDefault: true,
+    template: `Combine the wiki entries below into one coherent meta-entry. Cite each as [pN] inline using the labels above. Don't drop anything important; do drop redundant phrasing across the source pages. Plain markdown only — no preamble, no top-level heading.
+
+ENTRIES
+{{entries}}
+
+OPTIONAL FOCUS
+{{focus}}
+
+Output the meta-entry only.`,
+  },
 ];

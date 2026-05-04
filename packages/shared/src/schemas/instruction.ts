@@ -11,6 +11,8 @@ export const InstructionScope = z.enum([
   'sender',
   'chat',
   'reply',
+  'briefing',
+  'synthesis',
 ]);
 export type InstructionScope = z.infer<typeof InstructionScope>;
 

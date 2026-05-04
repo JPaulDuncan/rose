@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { Types } from 'mongoose';
 import { userIdOf } from '../middleware/auth.js';
 import { User, Page, PageRevision, Email, Category, CalendarEvent } from '@rose/db';
-import { generatePageQueue, digestEmailQueue } from '../lib/queues.js';
+import { generatePageQueue, digestEmailQueue, briefingQueue } from '../lib/queues.js';
 
 export const meRouter: Router = Router();
 
@@ -116,6 +116,17 @@ meRouter.post('/digest-email/send-now', async (req, res) => {
   const userId = userIdOf(req);
   const job = await digestEmailQueue.add(
     'send-now',
+    { userId, force: true },
+    { attempts: 1, removeOnComplete: 50, removeOnFail: 50 },
+  );
+  res.status(202).json({ jobId: job.id });
+});
+
+/** Force a briefing generation, ignoring cadence. */
+meRouter.post('/briefing/generate-now', async (req, res) => {
+  const userId = userIdOf(req);
+  const job = await briefingQueue.add(
+    'generate-now',
     { userId, force: true },
     { attempts: 1, removeOnComplete: 50, removeOnFail: 50 },
   );

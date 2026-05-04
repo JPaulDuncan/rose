@@ -7,8 +7,10 @@ import {
   Users,
   ChevronRight,
   ScrollText,
+  Sparkles,
 } from 'lucide-react';
 import { useApi } from '../lib/api';
+import { SynthesiseDrawer } from '../components/SynthesiseDrawer';
 
 type Entry = {
   _id: string;
@@ -254,19 +256,35 @@ function ChapterView({
 }: {
   chapter: Chapter | { _id: '__orphans'; name: string; entries: Entry[] };
 }) {
+  const [synthesising, setSynthesising] = useState(false);
+  // Cap synthesis to a sensible window — passing all 50 entries to the
+  // LLM blows the prompt budget and rarely produces a useful meta.
+  const ids = chapter.entries.slice(0, 8).map((e) => e._id);
   return (
     <section className="space-y-6">
-      <div className="border-b-2 border-ink-900 pb-3 dark:border-ink-100">
-        <div className="text-[10px] uppercase tracking-[0.25em] text-ink-500">
-          Chapter
+      <div className="flex items-end justify-between gap-3 border-b-2 border-ink-900 pb-3 dark:border-ink-100">
+        <div>
+          <div className="text-[10px] uppercase tracking-[0.25em] text-ink-500">
+            Chapter
+          </div>
+          <h2 className="mt-0.5 font-serif text-4xl font-black leading-none tracking-tight">
+            {chapter.name}
+          </h2>
+          <p className="mt-1 text-xs uppercase tracking-widest text-ink-500">
+            {chapter.entries.length}{' '}
+            {chapter.entries.length === 1 ? 'entry' : 'entries'}
+          </p>
         </div>
-        <h2 className="mt-0.5 font-serif text-4xl font-black leading-none tracking-tight">
-          {chapter.name}
-        </h2>
-        <p className="mt-1 text-xs uppercase tracking-widest text-ink-500">
-          {chapter.entries.length}{' '}
-          {chapter.entries.length === 1 ? 'entry' : 'entries'}
-        </p>
+        {chapter.entries.length >= 2 && (
+          <button
+            type="button"
+            className="btn-secondary text-xs"
+            onClick={() => setSynthesising(true)}
+            title={`Combine the top ${Math.min(8, chapter.entries.length)} entries into a meta-page`}
+          >
+            <Sparkles className="h-3.5 w-3.5" /> Synthesise chapter
+          </button>
+        )}
       </div>
       <ul className="divide-y divide-ink-200 dark:divide-ink-800">
         {chapter.entries.map((e, i) => (
@@ -275,6 +293,13 @@ function ChapterView({
           </li>
         ))}
       </ul>
+      {synthesising && (
+        <SynthesiseDrawer
+          pageIds={ids}
+          defaultTitle={`${chapter.name} — synthesis`}
+          onClose={() => setSynthesising(false)}
+        />
+      )}
     </section>
   );
 }

@@ -34,9 +34,16 @@ const pageSchema = new Schema(
      */
     groupingMode: {
       type: String,
-      enum: ['thread', 'source-topic', 'topic', 'manual'],
+      enum: ['thread', 'source-topic', 'topic', 'manual', 'briefing', 'synthesis'],
       default: 'thread',
     },
+    /**
+     * For pages produced by synthesis or briefings — tracks the source
+     * pages that fed into them. Surfaced in the UI as "drew from" and
+     * lets us offer a "re-synthesise" action when the underlying pages
+     * change.
+     */
+    synthesisOf: { type: [Schema.Types.ObjectId], default: [] },
     /**
      * For `groupingMode === 'topic'` pages (currently RSS-fed). The
      * canonical topic/tag this page is anchored on. Lowercased, stable —

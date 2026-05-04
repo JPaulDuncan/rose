@@ -41,6 +41,21 @@ const userSchema = new Schema(
         lastSentAt: { type: Date, default: null },
         lastError: { type: String, default: null },
       },
+      /**
+       * Cadence + scheduling for the LLM-written narrative briefing.
+       * Lives as a Page (groupingMode='briefing') in the wiki — the
+       * worker handles both writing it and scheduling it.
+       */
+      briefing: {
+        enabled: { type: Boolean, default: false },
+        cadence: { type: String, enum: ['weekly', 'monthly'], default: 'weekly' },
+        timeOfDayLocal: { type: String, default: '08:00' },
+        /** 0–6 (Sunday=0). */
+        dayOfWeek: { type: Number, default: 1, min: 0, max: 6 },
+        timezone: { type: String, default: 'UTC' },
+        lastGeneratedAt: { type: Date, default: null },
+        lastError: { type: String, default: null },
+      },
     },
     /**
      * Per-user provider configuration. API keys are stored encrypted via
