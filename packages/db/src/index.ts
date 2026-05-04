@@ -38,3 +38,5 @@ export { PushSubscription } from './models/PushSubscription.js';
 export type { PushSubscriptionDoc } from './models/PushSubscription.js';
 export { NotificationRule } from './models/NotificationRule.js';
 export type { NotificationRuleDoc } from './models/NotificationRule.js';
+export { UserPageState } from './models/UserPageState.js';
+export type { UserPageStateDoc } from './models/UserPageState.js';

@@ -15,6 +15,7 @@ import {
   Megaphone,
   Sparkles,
   Link2,
+  Star,
 } from 'lucide-react';
 import { useApi } from '../lib/api';
 
@@ -79,6 +80,9 @@ export function CommandPalette({
               </Command.Item>
               <Command.Item onSelect={() => go('/codex')}>
                 <BookOpen className="h-4 w-4" /> Codex
+              </Command.Item>
+              <Command.Item onSelect={() => go('/favorites')}>
+                <Star className="h-4 w-4" /> Favorites
               </Command.Item>
               <Command.Item onSelect={() => go('/quarantine')}>
                 <ShieldAlert className="h-4 w-4" /> Quarantine

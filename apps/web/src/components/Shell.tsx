@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Search,
   Inbox as InboxIcon,
@@ -15,8 +16,11 @@ import {
   ShieldAlert,
   Megaphone,
   Sparkles,
+  Bookmark,
+  X,
 } from 'lucide-react';
 import clsx from 'clsx';
+import { useApi } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { useTheme } from '../lib/theme';
 import { CommandPalette } from './CommandPalette';
@@ -94,6 +98,7 @@ export function Shell({ children }: { children: ReactNode }) {
               <span className="text-xs text-ink-400">{n.key}</span>
             </NavLink>
           ))}
+          <SavedSearchRail />
         </nav>
         <button
           className="btn-ghost justify-start"
@@ -127,6 +132,67 @@ export function Shell({ children }: { children: ReactNode }) {
       </main>
 
       <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
+    </div>
+  );
+}
+
+type SavedSearch = {
+  id: string;
+  name: string;
+  query: string;
+  pinned: boolean;
+};
+
+function SavedSearchRail() {
+  const api = useApi();
+  const qc = useQueryClient();
+  const navigate = useNavigate();
+  const { data } = useQuery({
+    queryKey: ['saved-searches'],
+    queryFn: () =>
+      api.get<{ savedSearches: SavedSearch[] }>('/api/me/saved-searches'),
+  });
+  const remove = useMutation({
+    mutationFn: async (id: string) =>
+      api.del<{ ok: true }>(`/api/me/saved-searches/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['saved-searches'] }),
+  });
+  const pinned = (data?.savedSearches ?? []).filter((s) => s.pinned);
+  if (pinned.length === 0) return null;
+  return (
+    <div className="mt-4 border-t border-ink-200 pt-3 dark:border-ink-800">
+      <div className="mb-1 flex items-center gap-1 px-3 text-[10px] uppercase tracking-widest text-ink-500">
+        <Bookmark className="h-3 w-3" />
+        Smart folders
+      </div>
+      {pinned.map((s) => (
+        <div
+          key={s.id}
+          className="group flex items-center gap-1 rounded-lg px-3 py-1.5 text-sm text-ink-700 hover:bg-ink-100 dark:text-ink-200 dark:hover:bg-ink-800"
+        >
+          <button
+            type="button"
+            onClick={() =>
+              navigate(`/search?q=${encodeURIComponent(s.query ?? '')}`)
+            }
+            className="min-w-0 flex-1 truncate text-left"
+            title={s.query}
+          >
+            {s.name}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              if (confirm(`Remove "${s.name}" from saved searches?`))
+                remove.mutate(s.id);
+            }}
+            className="opacity-0 transition-opacity group-hover:opacity-100"
+            aria-label="Remove"
+          >
+            <X className="h-3 w-3 text-ink-400 hover:text-red-600" />
+          </button>
+        </div>
+      ))}
     </div>
   );
 }

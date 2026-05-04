@@ -38,6 +38,7 @@ import { shareRouter, sharePublicRouter } from './routes/share.js';
 import { webhooksRouter } from './routes/webhooks.js';
 import { pushRouter } from './routes/push.js';
 import { synthesisRouter } from './routes/synthesis.js';
+import { pageStateRouter, pageStateLookupRouter } from './routes/pageState.js';
 import { errorHandler } from './middleware/error.js';
 import { requireAuth } from './middleware/auth.js';
 import { apiLimiter } from './middleware/rateLimit.js';
@@ -114,6 +115,8 @@ export async function createServer(): Promise<Express> {
   // /api/pages/synthesise per the plan, alongside the existing pages
   // CRUD.
   app.use('/api/pages', requireAuth, synthesisRouter);
+  app.use('/api/pages', requireAuth, pageStateRouter);
+  app.use('/api/page-state', requireAuth, pageStateLookupRouter);
   // Public read-only render — NO auth, mounted outside /api so
   // anonymous viewers can hit it without a Bearer token.
   app.use('/share', sharePublicRouter);

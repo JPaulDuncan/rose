@@ -1,16 +1,37 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
-import { Search as SearchIcon } from 'lucide-react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Bookmark, Search as SearchIcon } from 'lucide-react';
+import toast from 'react-hot-toast';
 import type { SearchResponse } from '@rose/shared';
 import { useApi } from '../lib/api';
 
 export default function SearchPage() {
   const api = useApi();
+  const qc = useQueryClient();
   const [q, setQ] = useState('');
   const [debounced, setDebounced] = useState('');
   const [mode, setMode] = useState<'hybrid' | 'text' | 'semantic'>('hybrid');
   const inputRef = useRef<HTMLInputElement>(null);
+
+  const saveSearch = useMutation({
+    mutationFn: async () => {
+      const name = window.prompt('Save this search as:', debounced.slice(0, 40)) ?? '';
+      if (!name.trim()) throw new Error('cancelled');
+      return api.post<{ id: string; name: string }>('/api/me/saved-searches', {
+        name: name.trim(),
+        query: debounced,
+        pinned: true,
+      });
+    },
+    onSuccess: (r) => {
+      toast.success(`Saved "${r.name}" to your sidebar`);
+      qc.invalidateQueries({ queryKey: ['saved-searches'] });
+    },
+    onError: (e: Error) => {
+      if (e.message !== 'cancelled') toast.error(e.message);
+    },
+  });
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -50,9 +71,22 @@ export default function SearchPage() {
         </select>
       </div>
       {data && (
-        <div className="mb-6 text-xs text-ink-500">
-          {data.hits.length} hits · {data.totalText} text · {data.totalSemantic} semantic ·{' '}
-          {data.tookMs}ms
+        <div className="mb-6 flex items-center justify-between text-xs text-ink-500">
+          <span>
+            {data.hits.length} hits · {data.totalText} text · {data.totalSemantic} semantic
+            · {data.tookMs}ms
+          </span>
+          {debounced.length >= 2 && (
+            <button
+              type="button"
+              className="btn-ghost text-xs"
+              onClick={() => saveSearch.mutate()}
+              disabled={saveSearch.isPending}
+              title="Pin this search to the sidebar"
+            >
+              <Bookmark className="h-3.5 w-3.5" /> Save search
+            </button>
+          )}
         </div>
       )}
 

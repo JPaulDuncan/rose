@@ -56,6 +56,7 @@ export default function AccountSettings() {
       </div>
 
       <PushCard />
+      <ReadTrackingCard />
 
       <DangerZone />
 
@@ -315,6 +316,43 @@ function NotificationRulesList({
             ))}
         </ul>
       )}
+    </div>
+  );
+}
+
+function ReadTrackingCard() {
+  const api = useApi();
+  const qc = useQueryClient();
+  const { data } = useQuery({
+    queryKey: ['me'],
+    queryFn: () =>
+      api.get<{ settings?: { trackReads?: boolean } }>('/api/me'),
+  });
+  const enabled = !!data?.settings?.trackReads;
+  const save = useMutation({
+    mutationFn: async (next: boolean) =>
+      api.patch<unknown>('/api/me', {
+        settings: { ...(data?.settings ?? {}), trackReads: next },
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['me'] }),
+    onError: (e: Error) => toast.error(e.message),
+  });
+  return (
+    <div className="card">
+      <h2 className="mb-2 font-semibold">Track which pages I've read</h2>
+      <p className="text-sm text-ink-500">
+        Off by default. When on, Rose remembers which wiki pages you've
+        opened so unread items can be highlighted in lists. Doesn't
+        affect anything else; favorites work either way.
+      </p>
+      <label className="mt-3 flex items-center gap-2 text-sm">
+        <input
+          type="checkbox"
+          checked={enabled}
+          onChange={(e) => save.mutate(e.target.checked)}
+        />
+        <span>Enable read tracking</span>
+      </label>
     </div>
   );
 }

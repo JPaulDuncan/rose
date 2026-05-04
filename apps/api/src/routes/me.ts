@@ -1,7 +1,15 @@
 import { Router } from 'express';
 import { Types } from 'mongoose';
 import { userIdOf } from '../middleware/auth.js';
-import { User, Page, PageRevision, Email, Category, CalendarEvent } from '@rose/db';
+import {
+  User,
+  Page,
+  PageRevision,
+  Email,
+  Category,
+  CalendarEvent,
+  UserPageState,
+} from '@rose/db';
 import { generatePageQueue, digestEmailQueue, briefingQueue } from '../lib/queues.js';
 
 export const meRouter: Router = Router();
@@ -131,4 +139,106 @@ meRouter.post('/briefing/generate-now', async (req, res) => {
     { attempts: 1, removeOnComplete: 50, removeOnFail: 50 },
   );
   res.status(202).json({ jobId: job.id });
+});
+
+/** Pages the user has favorited, newest-favorite first. Returns the
+ *  same lightweight shape the digest uses so list components can
+ *  render without further calls. */
+meRouter.get('/favorites', async (req, res) => {
+  const userId = new Types.ObjectId(userIdOf(req));
+  const rows = await UserPageState.find({ userId, favorited: true })
+    .sort({ favoritedAt: -1 })
+    .limit(200)
+    .select('pageId favoritedAt')
+    .lean();
+  if (rows.length === 0) {
+    res.json({ pages: [] });
+    return;
+  }
+  const ids = rows.map((r) => r.pageId);
+  const pages = await Page.find({ userId, _id: { $in: ids } })
+    .select(
+      'slug title summary heroImageUrl tags topics priority sourceEmailIds senderAddresses updatedAt',
+    )
+    .lean();
+  // Preserve favorite order.
+  const byId = new Map(pages.map((p) => [String(p._id), p]));
+  const ordered = rows
+    .map((r) => byId.get(String(r.pageId)))
+    .filter((p): p is (typeof pages)[number] => !!p)
+    .map((p) => ({
+      _id: String(p._id),
+      slug: p.slug,
+      title: p.title,
+      summary: p.summary,
+      heroImageUrl: p.heroImageUrl ?? null,
+      tags: p.tags ?? [],
+      topics: p.topics ?? [],
+      priority: p.priority,
+      senderAddresses: p.senderAddresses ?? [],
+      sourceEmailIds: (p.sourceEmailIds ?? []).map(String),
+      updatedAt: p.updatedAt,
+    }));
+  res.json({ pages: ordered });
+});
+
+// ── Saved searches CRUD ────────────────────────────────────────────────
+
+meRouter.get('/saved-searches', async (req, res) => {
+  const userId = userIdOf(req);
+  const u = await User.findById(userId).select('savedSearches').lean();
+  res.json({ savedSearches: u?.savedSearches ?? [] });
+});
+
+meRouter.post('/saved-searches', async (req, res) => {
+  const userId = userIdOf(req);
+  const body = (req.body ?? {}) as {
+    name?: string;
+    query?: string;
+    filters?: Record<string, unknown>;
+    pinned?: boolean;
+    notify?: 'never' | 'on-new-match';
+  };
+  if (!body.name?.trim()) {
+    res.status(400).json({ error: 'invalid_request', message: 'name required' });
+    return;
+  }
+  const id = `s_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+  const entry = {
+    id,
+    name: body.name.trim().slice(0, 80),
+    query: (body.query ?? '').slice(0, 200),
+    filters: body.filters ?? {},
+    pinned: !!body.pinned,
+    notify: body.notify ?? 'never',
+  };
+  await User.updateOne({ _id: userId }, { $push: { savedSearches: entry } });
+  res.status(201).json(entry);
+});
+
+meRouter.patch('/saved-searches/:id', async (req, res) => {
+  const userId = userIdOf(req);
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const fields: Record<string, unknown> = {};
+  for (const key of ['name', 'query', 'filters', 'pinned', 'notify']) {
+    if (key in body) fields[`savedSearches.$.${key}`] = body[key];
+  }
+  if (Object.keys(fields).length === 0) {
+    res.json({ ok: true });
+    return;
+  }
+  await User.updateOne(
+    { _id: userId, 'savedSearches.id': req.params.id },
+    { $set: fields },
+  );
+  res.json({ ok: true });
+});
+
+meRouter.delete('/saved-searches/:id', async (req, res) => {
+  const userId = userIdOf(req);
+  await User.updateOne(
+    { _id: userId },
+    { $pull: { savedSearches: { id: req.params.id } } },
+  );
+  res.json({ ok: true });
 });

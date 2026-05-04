@@ -31,6 +31,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useApi } from '../lib/api';
 import { ShareButton } from '../components/ShareButton';
+import { FavoriteButton } from '../components/FavoriteButton';
 
 type Citation = {
   emailId: string;
@@ -103,6 +104,14 @@ export default function PageView() {
     queryFn: () => api.get<PageDoc>(`/api/pages/by-slug/${slug}`),
     enabled: !!slug,
   });
+
+  // Mark this page read on view. The endpoint silently no-ops when
+  // the user hasn't enabled read tracking, so we don't gate here.
+  useEffect(() => {
+    if (!page?._id) return;
+    void api.post(`/api/pages/${page._id}/read`, { read: true }).catch(() => null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page?._id]);
 
   const [title, setTitle] = useState('');
   const [summary, setSummary] = useState('');
@@ -240,6 +249,7 @@ export default function PageView() {
           >
             <History className="h-4 w-4" />
           </button>
+          {mode === 'view' && page && <FavoriteButton pageId={page._id} />}
           {mode === 'view' && page && <ShareButton pageId={page._id} pageTitle={page.title} />}
           {mode === 'view' ? (
             <button className="btn-secondary" onClick={() => setMode('edit')}>

@@ -56,6 +56,13 @@ const userSchema = new Schema(
         lastGeneratedAt: { type: Date, default: null },
         lastError: { type: String, default: null },
       },
+      /**
+       * Opt-in read tracking. When off, /api/pages never writes
+       * UserPageState rows on view, the unread-dot UI stays hidden,
+       * and the home digest doesn't surface a "new since you last
+       * visited" ribbon.
+       */
+      trackReads: { type: Boolean, default: false },
     },
     /**
      * Per-user provider configuration. API keys are stored encrypted via
@@ -99,6 +106,42 @@ const userSchema = new Schema(
          *  to keep metered providers from running up bills. */
         dailyCap: { type: Number, default: 30, min: 1, max: 1000 },
       },
+    },
+    /**
+     * Pinned saved searches. Each entry is a named query the user
+     * has stashed for quick recall — surfaced in the sidebar as a
+     * smart folder when `pinned` is true. Notify hooks into the
+     * push-notification rules pipeline.
+     */
+    savedSearches: {
+      type: [
+        new Schema(
+          {
+            id: { type: String, required: true },
+            name: { type: String, required: true },
+            query: { type: String, default: '' },
+            filters: {
+              tags: { type: [String], default: [] },
+              senders: { type: [String], default: [] },
+              priority: { type: [String], default: [] },
+              flag: {
+                isPromotional: { type: Boolean, default: undefined },
+                isNotificationStream: { type: Boolean, default: undefined },
+                userMarkedSpam: { type: Boolean, default: undefined },
+              },
+              dateRange: {
+                since: { type: Date, default: null },
+                until: { type: Date, default: null },
+              },
+            },
+            pinned: { type: Boolean, default: false },
+            notify: { type: String, enum: ['never', 'on-new-match'], default: 'never' },
+            createdAt: { type: Date, default: () => new Date() },
+          },
+          { _id: false },
+        ),
+      ],
+      default: [],
     },
     /**
      * User-curated spam policy. Membership in any of these lists is enough
