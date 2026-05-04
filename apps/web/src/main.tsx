@@ -13,6 +13,19 @@ const queryClient = new QueryClient({
   },
 });
 
+// Register the offline service worker after first paint so it doesn't
+// race the initial bundle. Push notifications use a separate worker
+// (/push-sw.js); both are scoped to '/'.
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker
+      .register('/app-sw.js', { scope: '/' })
+      .catch(() => {
+        // SW registration is best-effort — failures don't break the app.
+      });
+  });
+}
+
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <QueryClientProvider client={queryClient}>

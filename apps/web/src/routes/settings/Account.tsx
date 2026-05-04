@@ -1,6 +1,14 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, Bell, BellOff, RefreshCw, Trash2 } from 'lucide-react';
+import {
+  AlertTriangle,
+  Bell,
+  BellOff,
+  Download,
+  RefreshCw,
+  Trash2,
+  Upload,
+} from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useAuth } from '../../lib/auth';
 import { useTheme } from '../../lib/theme';
@@ -57,6 +65,7 @@ export default function AccountSettings() {
 
       <PushCard />
       <ReadTrackingCard />
+      <PortabilityCard />
 
       <DangerZone />
 
@@ -353,6 +362,121 @@ function ReadTrackingCard() {
         />
         <span>Enable read tracking</span>
       </label>
+    </div>
+  );
+}
+
+function PortabilityCard() {
+  const { token } = useAuth();
+  const qc = useQueryClient();
+  const [confirmText, setConfirmText] = useState('');
+  const [importing, setImporting] = useState(false);
+
+  async function downloadExport() {
+    try {
+      const res = await fetch('/api/me/export', {
+        method: 'GET',
+        credentials: 'include',
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      });
+      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `rose-export-${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      toast.success('Export downloaded');
+    } catch (err) {
+      toast.error((err as Error).message);
+    }
+  }
+
+  async function uploadImport(file: File) {
+    if (confirmText.trim().toUpperCase() !== 'REPLACE') {
+      toast.error('Type REPLACE in the confirmation box first.');
+      return;
+    }
+    if (
+      !window.confirm(
+        'This DELETES every page, conversation, event, sender, rule, and saved search on this account, then restores from the file. Continue?',
+      )
+    )
+      return;
+    setImporting(true);
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      fd.append('confirm', 'REPLACE');
+      const res = await fetch('/api/me/import', {
+        method: 'POST',
+        credentials: 'include',
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        body: fd,
+      });
+      const json = (await res.json()) as { ok?: boolean; counts?: Record<string, number>; message?: string };
+      if (!res.ok || !json.ok) throw new Error(json.message ?? `${res.status} ${res.statusText}`);
+      toast.success(
+        `Imported ${json.counts?.pages ?? 0} pages, ${json.counts?.events ?? 0} events, ${json.counts?.senders ?? 0} senders.`,
+      );
+      qc.invalidateQueries();
+      setConfirmText('');
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setImporting(false);
+    }
+  }
+
+  return (
+    <div className="card">
+      <h2 className="mb-2 font-semibold">Export &amp; import</h2>
+      <p className="text-sm text-ink-500">
+        Take your wiki with you. Export downloads everything portable
+        (pages, revisions, conversations, events, senders, rules,
+        saved searches, preferences) as a single JSON file. Source
+        credentials and push subscriptions are excluded — they're
+        install-specific.
+      </p>
+      <div className="mt-4 flex flex-wrap gap-2">
+        <button type="button" className="btn-secondary" onClick={downloadExport}>
+          <Download className="h-4 w-4" /> Export everything
+        </button>
+      </div>
+      <div className="mt-6 rounded-lg border border-amber-200 bg-amber-50 p-3 dark:border-amber-800 dark:bg-amber-950/30">
+        <div className="text-xs font-semibold uppercase tracking-widest text-amber-700 dark:text-amber-200">
+          Import (destructive)
+        </div>
+        <p className="mt-1 text-xs text-ink-600 dark:text-ink-300">
+          Type <code>REPLACE</code> below, then upload a file to wipe and
+          restore. Existing pages, conversations, events, etc. are
+          deleted first.
+        </p>
+        <input
+          className="input mt-2"
+          value={confirmText}
+          onChange={(e) => setConfirmText(e.target.value)}
+          placeholder="REPLACE"
+        />
+        <label className="mt-2 inline-flex cursor-pointer items-center gap-2 rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs font-medium text-amber-800 hover:bg-amber-100 dark:border-amber-700 dark:bg-ink-900 dark:text-amber-200 dark:hover:bg-ink-800">
+          <Upload className="h-3.5 w-3.5" />
+          {importing ? 'Importing…' : 'Choose JSON file…'}
+          <input
+            type="file"
+            accept="application/json,.json"
+            className="hidden"
+            disabled={importing || confirmText.trim().toUpperCase() !== 'REPLACE'}
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) void uploadImport(f);
+              e.target.value = '';
+            }}
+          />
+        </label>
+      </div>
     </div>
   );
 }

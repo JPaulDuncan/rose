@@ -1,0 +1,17 @@
+{
+  "name": "Rose",
+  "short_name": "Rose",
+  "description": "Personal email-to-wiki AI",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#fafafa",
+  "theme_color": "#c1272d",
+  "icons": [
+    {
+      "src": "/rose.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
