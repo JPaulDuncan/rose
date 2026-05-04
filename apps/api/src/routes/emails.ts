@@ -120,3 +120,57 @@ emailsRouter.post('/regenerate-stuck', async (req, res) => {
   }
   res.status(202).json({ enqueued: stuck.length });
 });
+
+/**
+ * History of generate-page jobs targeted at this email — across all
+ * BullMQ states (failed/completed/active/waiting/delayed). Returns
+ * each job's failedReason + full stacktrace so the user can see
+ * exactly why generation didn't produce a page. Powers the "Why
+ * didn't this generate?" panel on the inbox row.
+ *
+ * Bounded scan: BullMQ doesn't index by job-data, so we pull the most
+ * recent N jobs per state and filter by emailId in-process. Practical
+ * since pages-per-email is small.
+ */
+emailsRouter.get('/:id/jobs', async (req, res) => {
+  const userId = String(userIdOf(req));
+  const emailId = req.params.id ?? '';
+  if (!emailId) {
+    res.status(400).json({ error: 'invalid_request', message: 'Missing email id' });
+    return;
+  }
+  // Confirm the email belongs to this user before scanning the queue —
+  // otherwise we'd leak job metadata across accounts.
+  const owns = await Email.exists({
+    _id: new Types.ObjectId(emailId),
+    userId: new Types.ObjectId(userId),
+  });
+  if (!owns) {
+    res.status(404).json({ error: 'not_found', message: 'Email not found' });
+    return;
+  }
+  const states = ['failed', 'completed', 'active', 'waiting', 'delayed'] as const;
+  const buckets = await Promise.all(
+    states.map(async (s) => {
+      const jobs = await generatePageQueue.getJobs([s], 0, 200);
+      return jobs
+        .filter((j) => {
+          const d = j.data as { emailId?: string; userId?: string };
+          return d?.emailId === emailId && d?.userId === userId;
+        })
+        .map((j) => ({
+          id: j.id,
+          state: s as string,
+          attemptsMade: j.attemptsMade,
+          timestamp: j.timestamp,
+          processedOn: j.processedOn ?? null,
+          finishedOn: j.finishedOn ?? null,
+          failedReason: j.failedReason ?? null,
+          stacktrace: j.stacktrace ?? [],
+          returnvalue: j.returnvalue ?? null,
+        }));
+    }),
+  );
+  const jobs = buckets.flat().sort((a, b) => (b.timestamp ?? 0) - (a.timestamp ?? 0));
+  res.json({ jobs });
+});

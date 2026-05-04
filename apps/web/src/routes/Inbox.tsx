@@ -9,6 +9,8 @@ import {
   Flame,
   ShieldAlert,
   Megaphone,
+  Bug,
+  X,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useApi } from '../lib/api';
@@ -58,6 +60,7 @@ export default function InboxPage() {
   const { token } = useAuth();
   const qc = useQueryClient();
   const [activeJob, setActiveJob] = useState<string | null>(null);
+  const [diagEmailId, setDiagEmailId] = useState<string | null>(null);
 
   const { data, isLoading } = useQuery({
     queryKey: ['emails'],
@@ -176,6 +179,16 @@ export default function InboxPage() {
                   />
                 </button>
               )}
+              <button
+                className={`btn-ghost ${
+                  e.ingestStatus === 'failed' || e.error ? 'text-red-600' : ''
+                }`}
+                onClick={() => setDiagEmailId(e._id)}
+                aria-label="Show generation history"
+                title="Show generation history (success + failure details)"
+              >
+                <Bug className="h-4 w-4" />
+              </button>
             </li>
           ))}
         </ul>
@@ -188,7 +201,169 @@ export default function InboxPage() {
           onClose={() => setActiveJob(null)}
         />
       )}
+
+      {diagEmailId && (
+        <GenerationHistoryModal
+          emailId={diagEmailId}
+          onClose={() => setDiagEmailId(null)}
+          onRegenerate={() => {
+            regenerate.mutate(diagEmailId);
+            setDiagEmailId(null);
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+type JobHistoryEntry = {
+  id: string;
+  state: 'failed' | 'completed' | 'active' | 'waiting' | 'delayed';
+  attemptsMade: number;
+  timestamp: number;
+  processedOn: number | null;
+  finishedOn: number | null;
+  failedReason: string | null;
+  stacktrace: string[];
+  returnvalue: unknown;
+};
+
+/**
+ * Modal that lists every generate-page job ever queued for an email,
+ * newest first. For failed jobs it shows the verbatim failedReason and
+ * full stacktrace from BullMQ — the same data the worker logs but
+ * surfaced inline so you don't have to `docker logs worker`. Useful
+ * for debugging when an email parses but never produces a page.
+ */
+function GenerationHistoryModal({
+  emailId,
+  onClose,
+  onRegenerate,
+}: {
+  emailId: string;
+  onClose: () => void;
+  onRegenerate: () => void;
+}) {
+  const api = useApi();
+  const { data, isLoading, isError, error } = useQuery({
+    queryKey: ['email-jobs', emailId],
+    queryFn: () => api.get<{ jobs: JobHistoryEntry[] }>(`/api/emails/${emailId}/jobs`),
+    refetchInterval: 5000,
+  });
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 p-4 sm:p-10"
+      onClick={onClose}
+    >
+      <div
+        className="relative max-h-[85vh] w-full max-w-3xl overflow-hidden rounded-2xl bg-white shadow-2xl dark:bg-ink-950"
+        onClick={(ev) => ev.stopPropagation()}
+      >
+        <div className="flex items-center justify-between border-b border-ink-200 px-5 py-3 dark:border-ink-800">
+          <h2 className="font-semibold">Generation history</h2>
+          <div className="flex items-center gap-2">
+            <button
+              className="btn-secondary text-xs"
+              onClick={onRegenerate}
+            >
+              <RefreshCw className="h-3 w-3" />
+              Regenerate now
+            </button>
+            <button
+              className="btn-ghost"
+              onClick={onClose}
+              aria-label="Close"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+        <div className="max-h-[75vh] overflow-y-auto px-5 py-4">
+          {isLoading ? (
+            <div className="text-sm text-ink-500">Loading…</div>
+          ) : isError ? (
+            <div className="text-sm text-red-600">
+              {(error as Error)?.message ?? 'Failed to load jobs.'}
+            </div>
+          ) : (data?.jobs.length ?? 0) === 0 ? (
+            <div className="text-sm text-ink-500">
+              No generate-page jobs found for this email. Either it was
+              never enqueued, or BullMQ has rotated old job records out
+              (we keep the most recent ~500 per state). Try the
+              Regenerate button above to enqueue a fresh attempt and
+              come back here once it runs.
+            </div>
+          ) : (
+            <ul className="space-y-3">
+              {data!.jobs.map((j) => (
+                <JobRow key={j.id + j.state} job={j} />
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function JobRow({ job }: { job: JobHistoryEntry }) {
+  const stateClass =
+    job.state === 'failed'
+      ? 'bg-red-100 text-red-800 dark:bg-red-950/40 dark:text-red-300'
+      : job.state === 'completed'
+        ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300'
+        : job.state === 'active'
+          ? 'bg-sky-100 text-sky-800 dark:bg-sky-950/40 dark:text-sky-300'
+          : 'bg-ink-100 text-ink-700 dark:bg-ink-800 dark:text-ink-300';
+  const queuedAt = job.timestamp ? new Date(job.timestamp).toLocaleString() : '—';
+  const finishedAt = job.finishedOn ? new Date(job.finishedOn).toLocaleString() : null;
+  const elapsedMs =
+    job.processedOn && job.finishedOn ? job.finishedOn - job.processedOn : null;
+
+  return (
+    <li className="rounded-lg border border-ink-200 bg-ink-50 p-3 text-xs dark:border-ink-800 dark:bg-ink-900">
+      <div className="mb-1 flex flex-wrap items-center gap-2">
+        <span className={`rounded px-1.5 py-0.5 font-medium ${stateClass}`}>
+          {job.state}
+        </span>
+        <code className="text-[11px] text-ink-500">{job.id}</code>
+        <span className="text-ink-500">queued {queuedAt}</span>
+        {finishedAt && <span className="text-ink-500">· finished {finishedAt}</span>}
+        {elapsedMs != null && (
+          <span className="text-ink-500">· took {(elapsedMs / 1000).toFixed(1)}s</span>
+        )}
+        <span className="ml-auto text-ink-500">
+          attempt {job.attemptsMade}
+        </span>
+      </div>
+      {job.failedReason && (
+        <div className="mt-2 rounded bg-red-50 p-2 text-red-900 dark:bg-red-950/40 dark:text-red-200">
+          <div className="font-medium">failedReason</div>
+          <div className="mt-0.5 break-words">{job.failedReason}</div>
+        </div>
+      )}
+      {job.stacktrace.length > 0 && (
+        <details className="mt-2">
+          <summary className="cursor-pointer text-ink-600 hover:text-rose-600 dark:text-ink-300">
+            Stack trace ({job.stacktrace.length} frame{job.stacktrace.length === 1 ? '' : 's'})
+          </summary>
+          <pre className="mt-1 max-h-64 overflow-auto whitespace-pre-wrap rounded bg-black/80 p-2 text-[11px] text-emerald-200">
+            {job.stacktrace.join('\n\n')}
+          </pre>
+        </details>
+      )}
+      {job.state === 'completed' && Boolean(job.returnvalue) && (
+        <details className="mt-2">
+          <summary className="cursor-pointer text-ink-600 hover:text-rose-600 dark:text-ink-300">
+            Return value
+          </summary>
+          <pre className="mt-1 overflow-auto rounded bg-ink-100 p-2 text-[11px] dark:bg-ink-800">
+            {JSON.stringify(job.returnvalue, null, 2)}
+          </pre>
+        </details>
+      )}
+    </li>
   );
 }
 
