@@ -187,7 +187,9 @@ synthesisRouter.post('/synthesise', async (req, res) => {
       threadKeys: [],
       citations,
       version: 1,
-      embeddingModel: `${providerId}:${genModel}`,
+      generationModel: `${providerId}:${genModel}`,
+      generatedAt: new Date(),
+      generatedBy: 'synth',
     });
     await PageRevision.create({
       pageId: created._id,
@@ -195,7 +197,8 @@ synthesisRouter.post('/synthesise', async (req, res) => {
       title: created.title,
       summary: created.summary,
       contentMd: created.contentMd,
-      editor: 'llm',
+      editor: 'synth',
+      model: `${providerId}:${genModel}`,
     });
     send({
       type: 'completed',

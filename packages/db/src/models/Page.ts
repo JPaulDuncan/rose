@@ -142,6 +142,26 @@ const pageSchema = new Schema(
     version: { type: Number, default: 1 },
     embedding: { type: [Number], default: null, select: false },
     embeddingModel: { type: String, default: null },
+    /** Provider:model that authored the current contentMd
+     *  (e.g. "ollama:llama3.1:8b-instruct" or
+     *  "anthropic:claude-haiku-4-5-20251001"). Surfaced on the page
+     *  view as a provenance footer. Null for hand-edited pages. */
+    generationModel: { type: String, default: null },
+    /** When the current contentMd was last (re)written by the LLM. */
+    generatedAt: { type: Date, default: null },
+    /**
+     * Discriminator for who wrote the current revision:
+     *   'llm'   — produced by generatePage from contributing emails
+     *   'synth' — produced by /api/pages/synthesise from other pages
+     *   'briefing' — produced by the weekly briefing worker
+     *   'human' — saved manually via the editor (PATCH /api/pages)
+     * Null = legacy rows from before this field was added.
+     */
+    generatedBy: {
+      type: String,
+      enum: ['llm', 'synth', 'briefing', 'human', null],
+      default: null,
+    },
   },
   { timestamps: true },
 );

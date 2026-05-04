@@ -7,7 +7,13 @@ const revSchema = new Schema(
     title: String,
     summary: String,
     contentMd: String,
-    editor: { type: String, enum: ['user', 'llm'], required: true },
+    editor: {
+      type: String,
+      enum: ['user', 'llm', 'synth', 'briefing'],
+      required: true,
+    },
+    /** Provider:model that authored this revision (null for human edits). */
+    model: { type: String, default: null },
   },
   { timestamps: { createdAt: true, updatedAt: false } },
 );

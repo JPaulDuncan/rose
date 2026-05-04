@@ -246,7 +246,9 @@ async function generateBriefingForUser(
     threadKeys: [],
     citations: {},
     version: 1,
-    embeddingModel: `${providerId}:${genModel}`,
+    generationModel: `${providerId}:${genModel}`,
+    generatedAt: new Date(),
+    generatedBy: 'briefing',
   });
   await PageRevision.create({
     pageId: created._id,
@@ -254,7 +256,8 @@ async function generateBriefingForUser(
     title: created.title,
     summary: created.summary,
     contentMd: created.contentMd,
-    editor: 'llm',
+    editor: 'briefing',
+    model: `${providerId}:${genModel}`,
   });
   return { generated: true, pageId: String(created._id), slug };
 }

@@ -731,6 +731,9 @@ export function startGeneratePageWorker() {
         page.citations = citations;
         page.markModified('citations');
         page.version = (page.version ?? 1) + 1;
+        page.generationModel = `${providerId}:${genModel}`;
+        page.generatedAt = new Date();
+        page.generatedBy = 'llm';
         page.topicCentroid = await recomputeCentroid(page);
         await page.save();
         pageId = page._id;
@@ -742,6 +745,7 @@ export function startGeneratePageWorker() {
           summary: page.summary,
           contentMd: page.contentMd,
           editor: 'llm',
+          model: `${providerId}:${genModel}`,
         });
       } else {
         const baseSlug = slugify(draft.title);
@@ -790,6 +794,9 @@ export function startGeneratePageWorker() {
           primaryTopic,
           citations,
           version: 1,
+          generationModel: `${providerId}:${genModel}`,
+          generatedAt: new Date(),
+          generatedBy: 'llm',
         });
         pageId = created._id;
         created.topicCentroid = await recomputeCentroid(created);
@@ -801,6 +808,7 @@ export function startGeneratePageWorker() {
           summary: created.summary,
           contentMd: created.contentMd,
           editor: 'llm',
+          model: `${providerId}:${genModel}`,
         });
       }
 

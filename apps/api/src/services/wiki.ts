@@ -20,7 +20,8 @@ export async function uniqueSlug(
 
 export async function recordRevision(
   page: { _id: Types.ObjectId; version: number; title: string; summary: string; contentMd: string },
-  editor: 'user' | 'llm',
+  editor: 'user' | 'llm' | 'synth' | 'briefing',
+  model: string | null = null,
 ): Promise<void> {
   await PageRevision.create({
     pageId: page._id,
@@ -29,5 +30,6 @@ export async function recordRevision(
     summary: page.summary,
     contentMd: page.contentMd,
     editor,
+    model,
   });
 }

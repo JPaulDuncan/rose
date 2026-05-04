@@ -91,6 +91,8 @@ pagesRouter.patch('/:id', validateBody(PageUpdateRequest), async (req, res) => {
   if (update.categoryId !== undefined)
     page.categoryId = update.categoryId ? new Types.ObjectId(update.categoryId) : null;
   page.version += 1;
+  page.generatedBy = 'human';
+  page.generatedAt = new Date();
   await page.save();
   await recordRevision(
     {
@@ -147,6 +149,8 @@ pagesRouter.post('/:id/revisions/:version/restore', async (req, res) => {
   page.summary = rev.summary ?? page.summary;
   page.contentMd = rev.contentMd ?? page.contentMd;
   page.version += 1;
+  page.generatedBy = 'human';
+  page.generatedAt = new Date();
   await page.save();
   await recordRevision(
     {
