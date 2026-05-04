@@ -259,6 +259,9 @@ importers:
       mongoose:
         specifier: ^8.8.0
         version: 8.23.1(socks@2.8.8)
+      nodemailer:
+        specifier: ^8.0.7
+        version: 8.0.7
       pdf-parse:
         specifier: ^2.4.5
         version: 2.4.5
@@ -281,6 +284,9 @@ importers:
       '@types/node':
         specifier: ^22.7.5
         version: 22.19.17
+      '@types/nodemailer':
+        specifier: ^8.0.0
+        version: 8.0.0
       '@types/pdf-parse':
         specifier: ^1.1.5
         version: 1.1.5
@@ -1494,6 +1500,9 @@ packages:
 
   '@types/node@22.19.17':
     resolution: {integrity: sha512-wGdMcf+vPYM6jikpS/qhg6WiqSV/OhG+jeeHT/KlVqxYfD40iYJf9/AE1uQxVWFvU7MipKRkRv8NSHiCGgPr8Q==}
+
+  '@types/nodemailer@8.0.0':
+    resolution: {integrity: sha512-fyf8jWULsCo0d0BuoQ75i6IeoHs47qcqxWc7yUdUcV0pOZGjUTTOvwdG1PRXUDqN/8A64yQdQdnA2pZgcdi+cA==}
 
   '@types/pdf-parse@1.1.5':
     resolution: {integrity: sha512-kBfrSXsloMnUJOKi25s3+hRmkycHfLK6A09eRGqF/N8BkQoPUmaCr+q8Cli5FnfohEz/rsv82zAiPz/LXtOGhA==}
@@ -4598,6 +4607,10 @@ snapshots:
   '@types/node@22.19.17':
     dependencies:
       undici-types: 6.21.0
+
+  '@types/nodemailer@8.0.0':
+    dependencies:
+      '@types/node': 22.19.17
 
   '@types/pdf-parse@1.1.5':
     dependencies:

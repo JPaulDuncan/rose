@@ -7,6 +7,7 @@ import { startGmailSyncWorker } from './processors/gmailSync.js';
 import { startRssSyncWorker } from './processors/rssSync.js';
 import { startSummarizeSenderWorker } from './processors/summarizeSender.js';
 import { startFetchAndParseWorker } from './processors/fetchAndParse.js';
+import { startSendOutboundWorker } from './processors/sendOutbound.js';
 import { startReputationDecaySweep } from './services/reputationSweep.js';
 
 async function bootstrap() {
@@ -18,6 +19,7 @@ async function bootstrap() {
   startRssSyncWorker();
   startSummarizeSenderWorker();
   startFetchAndParseWorker();
+  startSendOutboundWorker();
   startReputationDecaySweep();
   logger.info('rose worker started');
 }

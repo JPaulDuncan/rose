@@ -143,6 +143,16 @@ const emailSchema = new Schema(
      *  uses presence of this field to skip already-extracted emails on
      *  re-generation; clear it to force re-extraction. */
     eventsExtractedAt: { type: Date, default: null },
+    /** Last LLM-drafted reply for this email (markdown). Persisted so a
+     *  reload doesn't lose work; cleared explicitly. */
+    draftReply: { type: String, default: null },
+    /** Metadata about the most recent draft: provider:model, generation
+     *  timestamp, edit counter for "regenerate" UX. */
+    draftReplyMeta: {
+      model: { type: String, default: null },
+      generatedAt: { type: Date, default: null },
+      edits: { type: Number, default: 0 },
+    },
     error: { type: String, default: null },
   },
   { timestamps: true },

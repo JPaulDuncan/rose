@@ -22,6 +22,18 @@ const sourceSchema = new Schema(
     /** RSS feed metadata captured on first successful fetch (display only). */
     rssFeedTitle: { type: String, default: null },
     rssFeedUrl: { type: String, default: null },
+    /** Outbound SMTP overrides for IMAP sources — derived host
+     *  defaults work for most providers (smtp.<domain>:465 secure)
+     *  but the user can override per-source. */
+    smtpHost: { type: String, default: null },
+    smtpPort: { type: Number, default: null, min: 1, max: 65535 },
+    smtpSecure: { type: Boolean, default: true },
+    /** Default From: name on outbound mail from this source. Falls
+     *  back to the user's display name when null. */
+    fromName: { type: String, default: null },
+    /** Optional signature (markdown) appended to drafted replies
+     *  before sending. */
+    signature: { type: String, default: '' },
   },
   { timestamps: true },
 );

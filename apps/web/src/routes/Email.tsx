@@ -17,6 +17,7 @@ import {
   Code2,
 } from 'lucide-react';
 import { useApi } from '../lib/api';
+import { DraftReply } from '../components/DraftReply';
 
 type EmailDetail = {
   _id: string;
@@ -40,6 +41,12 @@ type EmailDetail = {
   threadKey?: string | null;
   subjectTemplate?: string | null;
   createdAt?: string;
+  draftReply?: string | null;
+  draftReplyMeta?: {
+    model?: string | null;
+    generatedAt?: string | null;
+    edits?: number;
+  } | null;
 };
 
 export default function EmailView() {
@@ -178,6 +185,8 @@ export default function EmailView() {
         {view === 'html' && data.html && <HtmlBody html={data.html} />}
         {view === 'raw' && <TextBody text={data.rawText || data.text || ''} mono />}
       </div>
+
+      <DraftReply email={data} />
 
       {data.topics && data.topics.length > 0 && (
         <Section title="Topics" icon={<TagIcon className="h-4 w-4 text-rose-500" />}>

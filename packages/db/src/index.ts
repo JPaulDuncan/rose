@@ -24,3 +24,5 @@ export { Conversation } from './models/Conversation.js';
 export type { ConversationDoc } from './models/Conversation.js';
 export { Message } from './models/Message.js';
 export type { MessageDoc } from './models/Message.js';
+export { OutboundMessage } from './models/OutboundMessage.js';
+export type { OutboundMessageDoc } from './models/OutboundMessage.js';

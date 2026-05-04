@@ -182,6 +182,48 @@ NOAA periods:
 Output the brief only.`,
   },
   {
+    name: 'reply.draft',
+    scope: 'reply',
+    description:
+      "Drafts an email reply on the user's behalf, using both the original message and any wiki context that's relevant to it.",
+    variables: [
+      'user_display_name',
+      'from',
+      'subject',
+      'date',
+      'body',
+      'context',
+      'sender_brief',
+    ],
+    isDefault: true,
+    template: `You are drafting an email reply on behalf of {{user_display_name}}.
+
+ORIGINAL EMAIL
+- From: {{from}}
+- Subject: {{subject}}
+- Sent: {{date}}
+- Body:
+"""
+{{body}}
+"""
+
+RELEVANT WIKI CONTEXT (cite as [pN] only if you actually use it)
+{{context}}
+
+WHAT THE USER KNOWS ABOUT THE SENDER
+{{sender_brief}}
+
+REQUIREMENTS
+- Match the register of the original. Casual stays casual.
+- Be concise. No filler ("Thanks for reaching out!" type lines).
+- Open with the answer; supporting detail after. Sign off naturally.
+- Markdown only; no markdown headings.
+- If the original asks something that requires information you don't
+  have, leave a \`[TODO: ...]\` placeholder rather than inventing.
+
+Output the reply body only — no preamble, no quoted original.`,
+  },
+  {
     name: 'chat.answer',
     scope: 'chat',
     description:
