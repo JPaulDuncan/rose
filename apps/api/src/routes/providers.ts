@@ -32,7 +32,12 @@ providersRouter.get('/', async (req, res) => {
       provider: cfg.embedding?.provider ?? 'ollama',
       model: cfg.embedding?.model ?? 'nomic-embed-text',
     },
-    ollama: { baseUrl: cfg.ollama?.baseUrl ?? '' },
+    ollama: {
+      baseUrl: cfg.ollama?.baseUrl ?? '',
+      generationBaseUrl: cfg.ollama?.generationBaseUrl ?? '',
+      embeddingBaseUrl: cfg.ollama?.embeddingBaseUrl ?? '',
+      visionBaseUrl: cfg.ollama?.visionBaseUrl ?? '',
+    },
     anthropic: {
       hasApiKey: !!cfg.anthropic?.encryptedApiKey,
       baseUrl: cfg.anthropic?.baseUrl ?? '',

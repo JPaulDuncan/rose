@@ -36,10 +36,22 @@ meRouter.patch('/', async (req, res) => {
     displayName?: string;
     settings?: Record<string, unknown>;
   };
+  // Build a $set update keyed by `settings.<field>` so the patch merges
+  // into the existing settings doc instead of replacing the whole subtree.
+  // The previous version (`update.settings = { ...settings }`) wiped any
+  // sibling keys (e.g. saving `vision` cleared `digestEmail`/`briefing`).
   const update: Record<string, unknown> = {};
   if (displayName) update.displayName = displayName;
-  if (settings) update.settings = { ...settings };
-  const user = await User.findByIdAndUpdate(userId, update, { new: true });
+  if (settings && typeof settings === 'object') {
+    for (const [key, value] of Object.entries(settings)) {
+      update[`settings.${key}`] = value;
+    }
+  }
+  const user = await User.findByIdAndUpdate(
+    userId,
+    { $set: update },
+    { new: true },
+  );
   res.json({ ok: true, user });
 });
 

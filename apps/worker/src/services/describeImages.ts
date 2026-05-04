@@ -91,7 +91,9 @@ export async function describePageImages(
   let provider;
   let visionModel: string;
   try {
-    const r = await resolveProviderForUser(userId, 'generation');
+    // Routes through the user's vision-specific Ollama URL when set,
+    // falling back to the generation provider's URL otherwise.
+    const r = await resolveProviderForUser(userId, 'vision');
     provider = r.provider;
     if (!provider.supportsVision) return { described: 0, skipped: targets.length };
     visionModel = cfg.model || r.model;

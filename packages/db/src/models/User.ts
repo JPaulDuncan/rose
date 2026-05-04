@@ -63,6 +63,18 @@ const userSchema = new Schema(
        * visited" ribbon.
        */
       trackReads: { type: Boolean, default: false },
+      /**
+       * Vision describe-image config. Off by default — different
+       * cost profile from text generation. When enabled the worker
+       * runs the user's generation provider with `vision.model` (or
+       * the role default) over images embedded in emails. `dailyCap`
+       * is a hard ceiling on describe calls per UTC day.
+       */
+      vision: {
+        enabled: { type: Boolean, default: false },
+        model: { type: String, default: '' },
+        dailyCap: { type: Number, default: 30, min: 1, max: 1000 },
+      },
     },
     /**
      * Per-user provider configuration. API keys are stored encrypted via
@@ -83,7 +95,14 @@ const userSchema = new Schema(
         model: { type: String, default: 'nomic-embed-text' },
       },
       ollama: {
+        /** Default Ollama endpoint when no role-specific override is set. */
         baseUrl: { type: String, default: '' },
+        /** Per-role overrides — let users dedicate one Ollama instance to
+         *  generation, another to embeddings, another to vision (e.g.
+         *  pinned to different GPUs). Falls back to `baseUrl`, then env. */
+        generationBaseUrl: { type: String, default: '' },
+        embeddingBaseUrl: { type: String, default: '' },
+        visionBaseUrl: { type: String, default: '' },
       },
       anthropic: {
         encryptedApiKey: { type: String, default: null, select: false },
@@ -92,19 +111,6 @@ const userSchema = new Schema(
       openai: {
         encryptedApiKey: { type: String, default: null, select: false },
         baseUrl: { type: String, default: '' },
-      },
-      /**
-       * Vision is opt-in per user — different cost profile from text
-       * generation. When enabled, the inline-image describer uses the
-       * generation provider with the configured `vision.model`
-       * (defaults to a cheap mini model on each provider).
-       */
-      vision: {
-        enabled: { type: Boolean, default: false },
-        model: { type: String, default: '' },
-        /** Daily cap on describe-image calls per user. Hard ceiling
-         *  to keep metered providers from running up bills. */
-        dailyCap: { type: Number, default: 30, min: 1, max: 1000 },
       },
     },
     /**

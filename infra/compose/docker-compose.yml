@@ -37,6 +37,16 @@ services:
       # Host 11444 → container 11434, to avoid colliding with other local
       # Ollama instances. In-network calls still use http://ollama:11434.
       - "11444:11434"
+    environment:
+      # Keep up to 3 models warm at once so generation + embedding (and
+      # an optional vision model) don't have to evict each other on every
+      # request. Tune down if VRAM is tight.
+      OLLAMA_MAX_LOADED_MODELS: "3"
+      # Allow concurrent requests to the same model so embedding bursts
+      # don't serialise behind one another.
+      OLLAMA_NUM_PARALLEL: "2"
+      # Hold a model in memory for 30 minutes of idle before unloading.
+      OLLAMA_KEEP_ALIVE: "30m"
     # Uncomment to enable GPU on a CUDA host:
     # deploy:
     #   resources:

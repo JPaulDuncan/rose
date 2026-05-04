@@ -14,9 +14,22 @@ export type ResolvedProvider = {
   model: string;
 };
 
-type Role = 'generation' | 'embedding';
+type Role = 'generation' | 'embedding' | 'vision';
 
 type DecryptedKey = { v: string };
+
+function ollamaUrlForRole(
+  cfg: { baseUrl?: string; generationBaseUrl?: string; embeddingBaseUrl?: string; visionBaseUrl?: string } | undefined,
+  role: Role,
+): string {
+  const roleSpecific =
+    role === 'generation'
+      ? cfg?.generationBaseUrl
+      : role === 'embedding'
+        ? cfg?.embeddingBaseUrl
+        : cfg?.visionBaseUrl;
+  return (roleSpecific?.trim() || cfg?.baseUrl?.trim() || env.OLLAMA_URL) as string;
+}
 
 /** Mirror of the API's resolver. The worker also needs per-user provider routing. */
 export async function resolveProviderForUser(
@@ -28,22 +41,23 @@ export async function resolveProviderForUser(
   if (!user) throw new Error('User not found');
 
   const cfg = user.providers ?? {};
-  const roleCfg = cfg[role] ?? {
+  const cfgRole: 'generation' | 'embedding' = role === 'vision' ? 'generation' : role;
+  const roleCfg = cfg[cfgRole] ?? {
     provider: 'ollama' as ProviderId,
-    model: role === 'generation' ? env.DEFAULT_GENERATION_MODEL : env.DEFAULT_EMBEDDING_MODEL,
+    model: cfgRole === 'generation' ? env.DEFAULT_GENERATION_MODEL : env.DEFAULT_EMBEDDING_MODEL,
   };
   const providerId = (roleCfg.provider as ProviderId) ?? 'ollama';
   const model =
     roleCfg.model ||
-    (role === 'generation' ? env.DEFAULT_GENERATION_MODEL : env.DEFAULT_EMBEDDING_MODEL);
+    (cfgRole === 'generation' ? env.DEFAULT_GENERATION_MODEL : env.DEFAULT_EMBEDDING_MODEL);
 
   if (providerId === 'ollama') {
-    const baseUrl = cfg.ollama?.baseUrl?.trim() || env.OLLAMA_URL;
+    const baseUrl = ollamaUrlForRole(cfg.ollama ?? undefined, role);
     return { provider: buildProvider({ id: 'ollama', baseUrl }), providerId, model };
   }
 
   if (providerId === 'anthropic') {
-    if (role === 'embedding') {
+    if (cfgRole === 'embedding') {
       throw new Error('Anthropic does not support embeddings — choose Ollama or OpenAI.');
     }
     const enc = cfg.anthropic?.encryptedApiKey;

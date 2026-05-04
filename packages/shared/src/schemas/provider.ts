@@ -21,6 +21,10 @@ export const ProviderSettings = z.object({
   ollama: z.object({
     /** Empty/undefined = use the docker-compose default (`http://ollama:11434`). */
     baseUrl: z.string().url().or(z.literal('')).default(''),
+    /** Per-role overrides; empty = fall back to baseUrl, then env. */
+    generationBaseUrl: z.string().url().or(z.literal('')).default(''),
+    embeddingBaseUrl: z.string().url().or(z.literal('')).default(''),
+    visionBaseUrl: z.string().url().or(z.literal('')).default(''),
   }),
   anthropic: z.object({
     hasApiKey: z.boolean().default(false),
@@ -50,6 +54,9 @@ export const ProviderSettingsUpdate = z.object({
   ollama: z
     .object({
       baseUrl: z.string().url().or(z.literal('')).optional(),
+      generationBaseUrl: z.string().url().or(z.literal('')).optional(),
+      embeddingBaseUrl: z.string().url().or(z.literal('')).optional(),
+      visionBaseUrl: z.string().url().or(z.literal('')).optional(),
     })
     .optional(),
   anthropic: z
@@ -90,11 +97,12 @@ export const PROVIDER_LABELS: Record<ProviderId, string> = {
 /** Catalog of suggested models per provider, surfaced in the UI dropdowns. */
 export const SUGGESTED_MODELS: Record<
   ProviderId,
-  { generation: string[]; embedding: string[] }
+  { generation: string[]; embedding: string[]; vision: string[] }
 > = {
   ollama: {
     generation: ['llama3.1:8b-instruct', 'llama3.1:70b-instruct', 'qwen2.5:7b', 'mistral:7b-instruct'],
     embedding: ['nomic-embed-text', 'mxbai-embed-large'],
+    vision: ['llava', 'llava:13b', 'llama3.2-vision', 'bakllava'],
   },
   anthropic: {
     generation: [
@@ -103,9 +111,11 @@ export const SUGGESTED_MODELS: Record<
       'claude-haiku-4-5',
     ],
     embedding: [],
+    vision: ['claude-haiku-4-5', 'claude-sonnet-4-5'],
   },
   openai: {
     generation: ['gpt-4.1', 'gpt-4.1-mini', 'gpt-4o', 'gpt-4o-mini'],
     embedding: ['text-embedding-3-small', 'text-embedding-3-large'],
+    vision: ['gpt-4o-mini', 'gpt-4o', 'gpt-4.1-mini'],
   },
 };

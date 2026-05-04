@@ -33,15 +33,24 @@ export default function ModelsSettings() {
     queryFn: () => api.get<ProviderSettings>('/api/providers'),
   });
 
+  // Surface installed Ollama models in every selector so the user can pick
+  // from what's actually pulled, not just our static suggestions list.
+  const { data: ollamaModelsData } = useQuery({
+    queryKey: ['ollama-models'],
+    queryFn: () => api.get<{ models: OllamaModel[] }>('/api/models'),
+    refetchInterval: 10_000,
+  });
+  const installedOllama = (ollamaModelsData?.models ?? []).map((m) => m.name);
+
   if (isLoading || !settings) {
     return <div className="card text-sm text-ink-500">Loading…</div>;
   }
 
   return (
     <div className="space-y-6">
-      <RoleCard role="generation" settings={settings} qc={qc} />
-      <RoleCard role="embedding" settings={settings} qc={qc} />
-      <VisionCard />
+      <RoleCard role="generation" settings={settings} qc={qc} installedOllama={installedOllama} />
+      <RoleCard role="embedding" settings={settings} qc={qc} installedOllama={installedOllama} />
+      <VisionCard installedOllama={installedOllama} />
       <ProviderCredsCard provider="anthropic" settings={settings} qc={qc} />
       <ProviderCredsCard provider="openai" settings={settings} qc={qc} />
       <OllamaCard settings={settings} qc={qc} />
@@ -55,7 +64,7 @@ type VisionCfg = {
   dailyCap?: number;
 };
 
-function VisionCard() {
+function VisionCard({ installedOllama }: { installedOllama: string[] }) {
   const api = useApi();
   const qc = useQueryClient();
   const { data } = useQuery({
@@ -63,25 +72,27 @@ function VisionCard() {
     queryFn: () =>
       api.get<{ settings?: { vision?: VisionCfg } }>('/api/me'),
   });
-  const cfg: VisionCfg = data?.settings?.vision ?? {};
-  const [enabled, setEnabled] = useState(!!cfg.enabled);
-  const [model, setModel] = useState(cfg.model ?? '');
-  const [dailyCap, setDailyCap] = useState<number>(cfg.dailyCap ?? 30);
+  const saved: VisionCfg = data?.settings?.vision ?? {};
+  const [enabled, setEnabled] = useState(!!saved.enabled);
+  const [model, setModel] = useState(saved.model ?? '');
+  const [dailyCap, setDailyCap] = useState<number>(saved.dailyCap ?? 30);
 
   useEffect(() => {
     if (!data) return;
-    setEnabled(!!cfg.enabled);
-    setModel(cfg.model ?? '');
-    setDailyCap(cfg.dailyCap ?? 30);
+    setEnabled(!!saved.enabled);
+    setModel(saved.model ?? '');
+    setDailyCap(saved.dailyCap ?? 30);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data]);
 
   const save = useMutation({
     mutationFn: async () =>
+      // Send only the vision subtree. The server merges into existing
+      // settings (it now patches `settings.vision` rather than replacing
+      // the whole settings doc), so siblings like digestEmail are safe.
       api.patch<unknown>('/api/me', {
         settings: {
-          ...(data?.settings ?? {}),
-          vision: { ...cfg, enabled, model: model.trim() || undefined, dailyCap },
+          vision: { enabled, model: model.trim(), dailyCap },
         },
       }),
     onSuccess: () => {
@@ -91,11 +102,34 @@ function VisionCard() {
     onError: (e: Error) => toast.error(e.message),
   });
 
+  // Combine Ollama installed models, generic vision suggestions across
+  // providers, and the currently-saved value so the dropdown reflects
+  // whatever the user can pick from right now.
+  const suggestionSet = new Set<string>([
+    ...installedOllama,
+    ...SUGGESTED_MODELS.ollama.vision,
+    ...SUGGESTED_MODELS.anthropic.vision,
+    ...SUGGESTED_MODELS.openai.vision,
+  ]);
+  if (saved.model) suggestionSet.add(saved.model);
+  const suggestions = [...suggestionSet];
+
+  const dirty =
+    enabled !== !!saved.enabled ||
+    (model.trim() || '') !== (saved.model ?? '') ||
+    dailyCap !== (saved.dailyCap ?? 30);
+
   return (
     <div className="card">
       <div className="mb-2 flex items-center gap-2">
         <Eye className="h-5 w-5 text-rose-500" />
         <h2 className="font-semibold">Vision (inline images)</h2>
+        <span className="ml-auto text-xs text-ink-500">
+          Saved:{' '}
+          <code>
+            {saved.enabled ? `on / ${saved.model || '(default)'} / cap ${saved.dailyCap ?? 30}` : 'off'}
+          </code>
+        </span>
       </div>
       <p className="text-sm text-ink-500">
         When enabled, the worker asks your generation provider's vision
@@ -119,11 +153,17 @@ function VisionCard() {
             Vision model <span className="text-ink-400">(optional override)</span>
           </span>
           <input
+            list="vision-model-suggestions"
             className="input"
             value={model}
             onChange={(e) => setModel(e.target.value)}
-            placeholder="llava | claude-haiku-4-5-20251001 | gpt-4o-mini"
+            placeholder="llava | claude-haiku-4-5 | gpt-4o-mini"
           />
+          <datalist id="vision-model-suggestions">
+            {suggestions.map((s) => (
+              <option key={s} value={s} />
+            ))}
+          </datalist>
         </label>
         <label className="block text-xs">
           <span className="mb-1 block font-medium">Daily cap</span>
@@ -142,7 +182,7 @@ function VisionCard() {
           type="button"
           className="btn-primary"
           onClick={() => save.mutate()}
-          disabled={save.isPending}
+          disabled={save.isPending || !dirty}
         >
           Save
         </button>
@@ -155,10 +195,12 @@ function RoleCard({
   role,
   settings,
   qc,
+  installedOllama,
 }: {
   role: 'generation' | 'embedding';
   settings: ProviderSettings;
   qc: ReturnType<typeof useQueryClient>;
+  installedOllama: string[];
 }) {
   const api = useApi();
   const current = settings[role];
@@ -176,7 +218,14 @@ function RoleCard({
       ? (['ollama', 'openai'] as const)
       : (['ollama', 'anthropic', 'openai'] as const);
 
-  const suggestions = SUGGESTED_MODELS[provider]?.[role] ?? [];
+  // For Ollama, surface the actually-installed models first (so the user
+  // sees `llama3.1:8b-instruct` without having to remember the tag), then
+  // append any static suggestions they haven't pulled yet.
+  const staticSuggestions = SUGGESTED_MODELS[provider]?.[role] ?? [];
+  const suggestions =
+    provider === 'ollama'
+      ? [...new Set([...installedOllama, ...staticSuggestions])]
+      : staticSuggestions;
 
   const save = useMutation({
     mutationFn: async () =>
@@ -391,6 +440,9 @@ function OllamaCard({
   const api = useApi();
   const { token } = useAuth();
   const [baseUrl, setBaseUrl] = useState(settings.ollama.baseUrl);
+  const [genUrl, setGenUrl] = useState(settings.ollama.generationBaseUrl ?? '');
+  const [embedUrl, setEmbedUrl] = useState(settings.ollama.embeddingBaseUrl ?? '');
+  const [visionUrl, setVisionUrl] = useState(settings.ollama.visionBaseUrl ?? '');
   const [pullName, setPullName] = useState('');
   const [pullProgress, setPullProgress] = useState<{
     name: string;
@@ -407,14 +459,27 @@ function OllamaCard({
 
   const saveBaseUrl = useMutation({
     mutationFn: async () =>
-      api.patch<{ ok: true }>('/api/providers', { ollama: { baseUrl } }),
+      api.patch<{ ok: true }>('/api/providers', {
+        ollama: {
+          baseUrl,
+          generationBaseUrl: genUrl,
+          embeddingBaseUrl: embedUrl,
+          visionBaseUrl: visionUrl,
+        },
+      }),
     onSuccess: () => {
-      toast.success('Ollama URL saved');
+      toast.success('Ollama URLs saved');
       qc.invalidateQueries({ queryKey: ['provider-settings'] });
       qc.invalidateQueries({ queryKey: ['ollama-models'] });
     },
     onError: (err: Error) => toast.error(err.message),
   });
+
+  const urlsDirty =
+    baseUrl !== settings.ollama.baseUrl ||
+    genUrl !== (settings.ollama.generationBaseUrl ?? '') ||
+    embedUrl !== (settings.ollama.embeddingBaseUrl ?? '') ||
+    visionUrl !== (settings.ollama.visionBaseUrl ?? '');
 
   const remove = useMutation({
     mutationFn: async (name: string) =>
@@ -518,13 +583,52 @@ function OllamaCard({
             on your host machine.
           </span>
         </label>
+        <details className="mt-3">
+          <summary className="cursor-pointer text-sm font-medium text-ink-600 hover:text-rose-600 dark:text-ink-300">
+            Per-role overrides (optional — run a dedicated Ollama per role)
+          </summary>
+          <p className="mt-2 text-xs text-ink-500">
+            Point each role at a separate Ollama instance to keep a slow
+            generation call from blocking embeddings, or to pin each model to
+            its own GPU. Leave blank to fall back to the Base URL above.
+          </p>
+          <div className="mt-2 grid gap-3 sm:grid-cols-3">
+            <label className="block text-xs">
+              <span className="mb-1 block font-medium">Generation URL</span>
+              <input
+                className="input"
+                placeholder={baseUrl || 'http://ollama:11434'}
+                value={genUrl}
+                onChange={(e) => setGenUrl(e.target.value)}
+              />
+            </label>
+            <label className="block text-xs">
+              <span className="mb-1 block font-medium">Embedding URL</span>
+              <input
+                className="input"
+                placeholder={baseUrl || 'http://ollama-embed:11434'}
+                value={embedUrl}
+                onChange={(e) => setEmbedUrl(e.target.value)}
+              />
+            </label>
+            <label className="block text-xs">
+              <span className="mb-1 block font-medium">Vision URL</span>
+              <input
+                className="input"
+                placeholder={baseUrl || 'http://ollama-vision:11434'}
+                value={visionUrl}
+                onChange={(e) => setVisionUrl(e.target.value)}
+              />
+            </label>
+          </div>
+        </details>
         <div className="mt-2 flex justify-end">
           <button
             className="btn-secondary"
             onClick={() => saveBaseUrl.mutate()}
-            disabled={baseUrl === settings.ollama.baseUrl || saveBaseUrl.isPending}
+            disabled={!urlsDirty || saveBaseUrl.isPending}
           >
-            Save URL
+            Save URLs
           </button>
         </div>
       </div>
