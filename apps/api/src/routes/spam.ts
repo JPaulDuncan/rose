@@ -5,10 +5,14 @@ import {
   SpamTagRequest,
   type SpamPolicy,
 } from '@rose/shared';
-import { User, Page, Sender } from '@rose/db';
+import { User, Page, Sender, Email } from '@rose/db';
 import { senderDomainTag } from '@rose/email-parser';
 import { userIdOf } from '../middleware/auth.js';
 import { validateBody } from '../middleware/validate.js';
+import {
+  trainBayesForEmails,
+  untrainBayesForEmails,
+} from '../lib/bayesStore.js';
 
 export const spamRouter: Router = Router();
 
@@ -31,9 +35,35 @@ function brandKeyFor(addr: string): { brandKey: string; name: string; domain: st
 }
 
 /**
+ * Days a spam-mark "lives" before it stops counting toward the
+ * auto-quarantine threshold. After 30 days with no fresh mark, one
+ * mark drops off; after 60 days, two; etc. Capped at the existing
+ * spamMarkedCount.
+ */
+const MARK_DECAY_DAYS = 30;
+
+export function decayedSpamMarks(s: {
+  spamMarkedCount?: number;
+  rescuedCount?: number;
+  lastMarkedAt?: Date | null;
+}): { effective: number; decayed: number } {
+  const raw = (s.spamMarkedCount ?? 0) - (s.rescuedCount ?? 0);
+  if (raw <= 0) return { effective: 0, decayed: 0 };
+  if (!s.lastMarkedAt) return { effective: raw, decayed: 0 };
+  const days = Math.max(
+    0,
+    Math.floor((Date.now() - new Date(s.lastMarkedAt).getTime()) / (24 * 3600 * 1000)),
+  );
+  const decayed = Math.floor(days / MARK_DECAY_DAYS);
+  return { effective: Math.max(0, raw - decayed), decayed };
+}
+
+/**
  * Feedback-loop bookkeeping: every spam-mark increments the matching
  * Sender's spamMarkedCount, every rescue increments rescuedCount.
- * `autoQuarantine` flips on once net marks ≥ threshold, off otherwise.
+ * `autoQuarantine` flips on once *decayed* net marks ≥ threshold, so
+ * old marks gradually lose weight and a one-off mismark from months
+ * ago can't keep blocking a brand.
  */
 async function bumpSenderReputation(
   userId: Types.ObjectId,
@@ -56,8 +86,9 @@ async function bumpSenderReputation(
       }));
     sender.spamMarkedCount = Math.max(0, (sender.spamMarkedCount ?? 0) + (delta.spam ?? 0));
     sender.rescuedCount = Math.max(0, (sender.rescuedCount ?? 0) + (delta.rescued ?? 0));
-    const net = (sender.spamMarkedCount ?? 0) - (sender.rescuedCount ?? 0);
-    sender.autoQuarantine = net >= QUARANTINE_THRESHOLD;
+    if ((delta.spam ?? 0) > 0) sender.lastMarkedAt = new Date();
+    const { effective } = decayedSpamMarks(sender);
+    sender.autoQuarantine = effective >= QUARANTINE_THRESHOLD;
     await sender.save();
   }
 }
@@ -101,7 +132,20 @@ spamRouter.post('/sender', validateBody(SpamSenderRequest), async (req, res) => 
   // the strongest possible signal, so push net marks well past the
   // auto-quarantine threshold immediately.
   await bumpSenderReputation(userId, [address], { spam: QUARANTINE_THRESHOLD });
-  res.json({ ok: true, address, pagesAffected: r.modifiedCount ?? 0 });
+  // Train the per-user Bayes classifier on every email from this
+  // sender — capped to keep blocking cheap.
+  const emails = await Email.find({ userId, 'from.address': address })
+    .sort({ date: -1 })
+    .limit(200)
+    .select('subject text')
+    .lean();
+  await trainBayesForEmails(userId, emails, true);
+  res.json({
+    ok: true,
+    address,
+    pagesAffected: r.modifiedCount ?? 0,
+    bayesTrained: emails.length,
+  });
 });
 
 spamRouter.delete('/sender/:address', async (req, res) => {
@@ -126,6 +170,13 @@ spamRouter.delete('/sender/:address', async (req, res) => {
     },
     { $set: { 'flags.userMarkedSpam': false } },
   );
+  // Walk back the Bayes training we did when blocking this sender.
+  const emails = await Email.find({ userId, 'from.address': address })
+    .sort({ date: -1 })
+    .limit(200)
+    .select('subject text')
+    .lean();
+  await untrainBayesForEmails(userId, emails, true);
   res.json({ ok: true });
 });
 
@@ -181,6 +232,10 @@ spamRouter.post('/page/:id', async (req, res) => {
   await page.save();
   if (!wasSpam) {
     await bumpSenderReputation(userId, page.senderAddresses ?? [], { spam: 1 });
+    const emails = await Email.find({ userId, pageId: page._id })
+      .select('subject text')
+      .lean();
+    await trainBayesForEmails(userId, emails, true);
   }
   res.json({ ok: true });
 });
@@ -197,13 +252,24 @@ spamRouter.delete('/page/:id', async (req, res) => {
     res.status(404).json({ error: 'not_found' });
     return;
   }
-  const wasSpam =
+  const wasUserMarked = !!page.flags?.userMarkedSpam;
+  const wasFlagged =
     !!page.flags?.userMarkedSpam || !!page.flags?.autoQuarantined;
   page.set('flags.userMarkedSpam', false);
   page.set('flags.autoQuarantined', false);
   await page.save();
-  if (wasSpam) {
+  if (wasFlagged) {
     await bumpSenderReputation(userId, page.senderAddresses ?? [], { rescued: 1 });
+    const emails = await Email.find({ userId, pageId: page._id })
+      .select('subject text')
+      .lean();
+    // If the page was previously a *user-marked* spam, walk back the
+    // Bayes spam training. Either way, retrain as ham so the model
+    // learns "this kind of mail is OK".
+    if (wasUserMarked) {
+      await untrainBayesForEmails(userId, emails, true);
+    }
+    await trainBayesForEmails(userId, emails, false);
   }
   res.json({ ok: true });
 });
@@ -232,5 +298,13 @@ spamRouter.post('/sender/:address/trust', async (req, res) => {
     { userId, senderAddresses: address },
     { $set: { 'flags.userMarkedSpam': false, 'flags.autoQuarantined': false } },
   );
-  res.json({ ok: true, address });
+  // Train the Bayes classifier on this brand's recent mail as ham —
+  // explicit trust is just as strong a signal as a rescue.
+  const emails = await Email.find({ userId, 'from.address': address })
+    .sort({ date: -1 })
+    .limit(200)
+    .select('subject text')
+    .lean();
+  await trainBayesForEmails(userId, emails, false);
+  res.json({ ok: true, address, bayesTrained: emails.length });
 });

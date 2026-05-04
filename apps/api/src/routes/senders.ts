@@ -27,6 +27,10 @@ function listShape(s: Record<string, unknown>) {
     lastSeenAt: s.lastSeenAt ?? null,
     firstSeenAt: s.firstSeenAt ?? null,
     websites: (s.websites as string[] | undefined)?.slice(0, 6) ?? [],
+    stripAds: !!s.stripAds,
+    spamMarkedCount: (s.spamMarkedCount as number | undefined) ?? 0,
+    rescuedCount: (s.rescuedCount as number | undefined) ?? 0,
+    autoQuarantine: !!s.autoQuarantine,
   };
 }
 
@@ -130,6 +134,7 @@ sendersRouter.patch('/:brandKey', async (req, res) => {
     name?: string;
     logoUrl?: string | null;
     summary?: string;
+    stripAds?: boolean;
   };
   if (typeof body.name === 'string' && body.name.trim()) {
     sender.name = body.name.trim().slice(0, 80);
@@ -147,6 +152,9 @@ sendersRouter.patch('/:brandKey', async (req, res) => {
     sender.summary = body.summary.trim().slice(0, 600);
     sender.summaryLocked = true;
     sender.summaryGeneratedAt = new Date();
+  }
+  if (typeof body.stripAds === 'boolean') {
+    sender.stripAds = body.stripAds;
   }
   await sender.save();
   res.json({ sender: listShape(sender.toObject()) });

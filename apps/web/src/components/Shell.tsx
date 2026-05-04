@@ -13,6 +13,7 @@ import {
   LogOut,
   BookOpen,
   ShieldAlert,
+  Megaphone,
 } from 'lucide-react';
 import clsx from 'clsx';
 import { useAuth } from '../lib/auth';
@@ -28,6 +29,7 @@ const NAV = [
   { to: '/streams', label: 'Streams', icon: Activity, key: 'g t' },
   { to: '/codex', label: 'Codex', icon: BookOpen, key: 'g x' },
   { to: '/quarantine', label: 'Quarantine', icon: ShieldAlert, key: 'g q' },
+  { to: '/promotions', label: 'Promotions', icon: Megaphone, key: 'g p' },
   { to: '/settings', label: 'Settings', icon: Settings, key: 'g s' },
 ];
 
@@ -51,6 +53,7 @@ export function Shell({ children }: { children: ReactNode }) {
     'g t': () => navigate('/streams'),
     'g x': () => navigate('/codex'),
     'g q': () => navigate('/quarantine'),
+    'g p': () => navigate('/promotions'),
     'g s': () => navigate('/settings'),
     n: (e) => {
       const tag = (e.target as HTMLElement)?.tagName;

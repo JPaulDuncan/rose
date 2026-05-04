@@ -13,6 +13,16 @@ export {
   type AuthResults,
   type AuthOutcome,
 } from './metadata.js';
+export {
+  tokenizeForBayes,
+  trainBayes,
+  untrainBayes,
+  scoreBayes,
+  bayesReady,
+  stripAdSectionsStrict,
+  BAYES_MIN_DOCS,
+  type BayesState,
+} from './bayes.js';
 import { extractEmailMetadata, stripAdSections, type EmailMetadata } from './metadata.js';
 
 export type CleanedEmail = {

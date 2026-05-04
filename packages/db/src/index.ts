@@ -18,3 +18,5 @@ export { CalendarEvent } from './models/Event.js';
 export type { EventDoc } from './models/Event.js';
 export { Sender } from './models/Sender.js';
 export type { SenderDoc } from './models/Sender.js';
+export { BayesProfile } from './models/BayesProfile.js';
+export type { BayesProfileDoc } from './models/BayesProfile.js';

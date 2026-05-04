@@ -12,6 +12,7 @@ import {
   Upload,
   BookOpen,
   ShieldAlert,
+  Megaphone,
 } from 'lucide-react';
 import { useApi } from '../lib/api';
 
@@ -76,6 +77,9 @@ export function CommandPalette({
               </Command.Item>
               <Command.Item onSelect={() => go('/quarantine')}>
                 <ShieldAlert className="h-4 w-4" /> Quarantine
+              </Command.Item>
+              <Command.Item onSelect={() => go('/promotions')}>
+                <Megaphone className="h-4 w-4" /> Promotions
               </Command.Item>
               <Command.Item onSelect={() => go('/settings')}>
                 <Settings className="h-4 w-4" /> Settings

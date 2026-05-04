@@ -17,6 +17,7 @@ import {
   renderTemplate,
 } from '@rose/llm';
 import { PageGenerationDraft, slugify, type CitationMap } from '@rose/shared';
+import { stripAdSectionsStrict } from '@rose/email-parser';
 import { redis } from '../lib/redis.js';
 import { logger } from '../lib/logger.js';
 import { resolveProviderForUser } from '../lib/providers.js';
@@ -27,6 +28,7 @@ import {
   recomputeCentroid,
 } from '../services/pageAssignment.js';
 import { upsertSendersFromPage } from '../services/senderUpsert.js';
+import { bayesScoreFor } from '../lib/bayesScore.js';
 import {
   extractEventsForPage,
   syncEventsToPage,
@@ -70,8 +72,14 @@ function groupByThread(emails: EmailDoc[]): EmailDoc[][] {
 }
 
 /** Render thread groups for the LLM with stable e1..eN labels. Returns the
- *  rendered prompt block plus the label→email mapping for citations. */
-function renderLabeledThreads(emails: EmailDoc[]): {
+ *  rendered prompt block plus the label→email mapping for citations.
+ *  When `stripAdsFor` returns true for an email's address, the body gets
+ *  the aggressive ad-strip pass before being sliced into the prompt — so
+ *  the LLM never has to summarise sponsored breaks. */
+function renderLabeledThreads(
+  emails: EmailDoc[],
+  stripAdsFor: (address: string | undefined | null) => boolean = () => false,
+): {
   text: string;
   labels: { label: string; email: EmailDoc }[];
 } {
@@ -97,7 +105,11 @@ function renderLabeledThreads(emails: EmailDoc[]): {
         const from = e.from?.address ?? 'unknown';
         const date = e.date ? new Date(e.date).toISOString() : '';
         const subj = e.subject ?? '';
-        const text = (e.text || e.rawText || '').slice(0, 6000);
+        let text = e.text || e.rawText || '';
+        if (stripAdsFor(e.from?.address)) {
+          text = stripAdSectionsStrict(text).cleaned;
+        }
+        text = text.slice(0, 6000);
         return `  [${label}] From: ${from} | Date: ${date} | Subject: ${subj}\n  """\n  ${text.replace(/\n/g, '\n  ')}\n  """`;
       })
       .join('\n');
@@ -263,7 +275,35 @@ export function startGeneratePageWorker() {
       const categories = await Category.find({ userId }).select('name').lean();
       const stream = isNotificationStream(pageEmails);
       const { selected: promptEmails, elidedSummary } = selectEmailsForPrompt(pageEmails);
-      const { text: labeledThreads, labels } = renderLabeledThreads(promptEmails);
+
+      // Build the per-address strip-ads predicate from Sender records —
+      // brands the user has explicitly toggled get the aggressive
+      // ad-strip pass before their bodies enter the prompt.
+      const promptAddrs = [
+        ...new Set(
+          promptEmails
+            .map((e) => e.from?.address?.toLowerCase())
+            .filter((a): a is string => !!a),
+        ),
+      ];
+      const stripBrands = promptAddrs.length
+        ? await Sender.find({
+            userId,
+            addresses: { $in: promptAddrs },
+            stripAds: true,
+          })
+            .select('addresses')
+            .lean()
+        : [];
+      const stripAddrs = new Set<string>(
+        stripBrands.flatMap((s) => (s.addresses as string[] | undefined) ?? []),
+      );
+      const stripAdsFor = (addr: string | undefined | null) =>
+        !!(addr && stripAddrs.has(addr.toLowerCase()));
+      const { text: labeledThreads, labels } = renderLabeledThreads(
+        promptEmails,
+        stripAdsFor,
+      );
       const distinctThreadKeys = new Set(
         pageEmails.map((e) => e.threadKey ?? `__loose:${String(e._id)}`),
       );
@@ -515,6 +555,15 @@ export function startGeneratePageWorker() {
             .lean()
         : [];
       const autoQuarantined = quarantinedSenders.length > 0;
+
+      // Bayesian classifier — score the trigger email against the
+      // user's per-user profile. Falls through to null on cold-start
+      // (under 30 spam + 30 ham trained); when present, blend with the
+      // heuristic score (60% heuristic, 40% Bayes) so neither side
+      // dominates and a single-mismatch never auto-flips a page.
+      const bayes = await bayesScoreFor(userId, triggerEmail);
+      const blendedSpamScore =
+        bayes != null ? 0.6 * topSpamScore + 0.4 * bayes : topSpamScore;
       // Preserve an existing user flag if the page already had one.
       const previousFlags = (assignment.page?.flags ?? {}) as {
         userMarkedSpam?: boolean;
@@ -522,7 +571,7 @@ export function startGeneratePageWorker() {
       };
       const previousUserMarked = !!previousFlags.userMarkedSpam;
       const flags = {
-        hasLikelySpam: topSpamScore >= 0.5,
+        hasLikelySpam: blendedSpamScore >= 0.5,
         hasMassMailing,
         isSparse: isThin,
         userMarkedSpam: previousUserMarked || senderHit || tagHit,
@@ -558,7 +607,7 @@ export function startGeneratePageWorker() {
         page.set('pageImages', pageImages);
         page.heroImageUrl = heroImageUrl;
         page.set('pageAttachments', pageAttachments);
-        page.spamScore = topSpamScore;
+        page.spamScore = blendedSpamScore;
         page.set('flags', flags);
         page.markModified('flags');
         page.markModified('pageLinks');
@@ -621,7 +670,7 @@ export function startGeneratePageWorker() {
           pageImages,
           heroImageUrl,
           pageAttachments,
-          spamScore: topSpamScore,
+          spamScore: blendedSpamScore,
           flags,
           groupingMode: newGroupingMode,
           primaryTopic,

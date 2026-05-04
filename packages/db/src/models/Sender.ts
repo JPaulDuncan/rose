@@ -60,6 +60,14 @@ const senderSchema = new Schema(
     /** Set when reputation threshold is exceeded — incoming pages from
      *  this brand are auto-marked as quarantined unless the user rescues. */
     autoQuarantine: { type: Boolean, default: false, index: true },
+    /** When true, the worker runs an aggressive ad-strip pass over
+     *  every email body from this brand before feeding it to the LLM.
+     *  Drops sponsored breaks, affiliate-link blocks, and footer
+     *  boilerplate that a normal newsletter would leave intact. */
+    stripAds: { type: Boolean, default: false },
+    /** Timestamp of the last spam-mark for this brand. Used by the
+     *  reputation decay sweep so old marks lose weight over time. */
+    lastMarkedAt: { type: Date, default: null },
   },
   { timestamps: true },
 );

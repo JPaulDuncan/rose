@@ -31,6 +31,10 @@ type Sender = {
   lastSeenAt: string | null;
   firstSeenAt: string | null;
   unsubscribeUrls: string[];
+  stripAds?: boolean;
+  spamMarkedCount?: number;
+  rescuedCount?: number;
+  autoQuarantine?: boolean;
 };
 
 type SenderDetail = {
@@ -82,6 +86,20 @@ export default function SenderPage() {
   if (isLoading) {
     return <div className="px-6 py-10 text-ink-500">Loading sender…</div>;
   }
+  // Mutation lives at this scope so the toggle button below can hit it.
+  const toggleStripAds = useMutation({
+    mutationFn: async (next: boolean) =>
+      api.patch<{ sender: Sender }>(
+        `/api/senders/${encodeURIComponent(brandKey ?? '')}`,
+        { stripAds: next },
+      ),
+    onSuccess: (_r, next) => {
+      toast.success(next ? 'Ads will be stripped from this sender' : 'Strip-ads disabled');
+      qc.invalidateQueries({ queryKey: ['sender', brandKey] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
   if (isError || !data) {
     return (
       <div className="mx-auto w-full max-w-3xl px-6 py-10">
@@ -145,6 +163,22 @@ export default function SenderPage() {
           >
             <Sparkles className="h-3.5 w-3.5" />
             {refresh.isPending ? 'Queued…' : 'Generate brief'}
+          </button>
+          <button
+            className={
+              s.stripAds
+                ? 'btn-secondary text-xs text-rose-600 dark:text-rose-300'
+                : 'btn-ghost text-xs'
+            }
+            onClick={() => toggleStripAds.mutate(!s.stripAds)}
+            disabled={toggleStripAds.isPending}
+            title={
+              s.stripAds
+                ? 'Strip-ads is on for this sender — body ads are removed before the LLM sees them.'
+                : 'Run an aggressive ad-strip pass on this sender\'s mail before generation.'
+            }
+          >
+            {s.stripAds ? '🚫 Strip ads · on' : 'Strip ads'}
           </button>
           <button className="btn-ghost text-xs" onClick={() => setEditing((v) => !v)}>
             <Pencil className="h-3.5 w-3.5" />
