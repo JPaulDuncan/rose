@@ -15,3 +15,4 @@ not auto-generated from code. Update them when the corresponding system changes.
 | [06-auth-and-security.md](./06-auth-and-security.md) | JWT, cookies, encryption |
 | [07-docker-and-ops.md](./07-docker-and-ops.md) | Compose, healthchecks, GPU |
 | [adr/](./adr/) | Short ADRs for irreversible decisions |
+| [plans/](./plans/) | Forward-looking specs for unshipped features (RAG chat, rules, outbound, etc.) |
