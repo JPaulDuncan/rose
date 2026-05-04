@@ -30,6 +30,7 @@ import toast from 'react-hot-toast';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useApi } from '../lib/api';
+import { ShareButton } from '../components/ShareButton';
 
 type Citation = {
   emailId: string;
@@ -233,6 +234,7 @@ export default function PageView() {
           >
             <History className="h-4 w-4" />
           </button>
+          {mode === 'view' && page && <ShareButton pageId={page._id} pageTitle={page.title} />}
           {mode === 'view' ? (
             <button className="btn-secondary" onClick={() => setMode('edit')}>
               <Edit2 className="h-4 w-4" /> Edit

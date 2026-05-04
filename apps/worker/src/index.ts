@@ -1,4 +1,6 @@
+import { Queue } from 'bullmq';
 import { connectMongo } from './lib/db.js';
+import { redis } from './lib/redis.js';
 import { logger } from './lib/logger.js';
 import { startGeneratePageWorker } from './processors/generatePage.js';
 import { startEmbedPageWorker } from './processors/embedPage.js';
@@ -8,6 +10,8 @@ import { startRssSyncWorker } from './processors/rssSync.js';
 import { startSummarizeSenderWorker } from './processors/summarizeSender.js';
 import { startFetchAndParseWorker } from './processors/fetchAndParse.js';
 import { startSendOutboundWorker } from './processors/sendOutbound.js';
+import { startDigestEmailWorker } from './processors/digestEmail.js';
+import { startWebhookDeliverWorker } from './processors/webhookDeliver.js';
 import { startReputationDecaySweep } from './services/reputationSweep.js';
 
 async function bootstrap() {
@@ -20,7 +24,20 @@ async function bootstrap() {
   startSummarizeSenderWorker();
   startFetchAndParseWorker();
   startSendOutboundWorker();
+  startDigestEmailWorker();
+  startWebhookDeliverWorker();
   startReputationDecaySweep();
+  // Repeatable hourly sweep that fires the digest mailer for every
+  // user whose configured local time matches the current hour.
+  const digestQueue = new Queue('rose.digest-email', { connection: redis });
+  await digestQueue.add(
+    'sweep',
+    {},
+    { repeat: { every: 60 * 60 * 1000 }, jobId: 'digest:sweep' },
+  );
+  // Kick off an immediate one-shot so the user doesn't wait an hour
+  // after first enabling.
+  await digestQueue.add('sweep', {}, { attempts: 1, removeOnComplete: 10 });
   logger.info('rose worker started');
 }
 

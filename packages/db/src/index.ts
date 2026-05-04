@@ -30,3 +30,7 @@ export { Rule } from './models/Rule.js';
 export type { RuleDoc } from './models/Rule.js';
 export { RuleAuditLog } from './models/RuleAuditLog.js';
 export type { RuleAuditLogDoc } from './models/RuleAuditLog.js';
+export { ShareLink } from './models/ShareLink.js';
+export type { ShareLinkDoc } from './models/ShareLink.js';
+export { WebhookSubscription } from './models/WebhookSubscription.js';
+export type { WebhookSubscriptionDoc } from './models/WebhookSubscription.js';

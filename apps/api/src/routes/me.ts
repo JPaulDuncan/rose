@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { Types } from 'mongoose';
 import { userIdOf } from '../middleware/auth.js';
 import { User, Page, PageRevision, Email, Category, CalendarEvent } from '@rose/db';
-import { generatePageQueue } from '../lib/queues.js';
+import { generatePageQueue, digestEmailQueue } from '../lib/queues.js';
 
 export const meRouter: Router = Router();
 
@@ -108,4 +108,16 @@ meRouter.post('/reset-wiki', async (req, res) => {
     categoriesDeleted,
     requeued,
   });
+});
+
+/** Manually trigger a digest send for this user, ignoring the
+ *  configured cadence. Used by the "Send now" button in Settings. */
+meRouter.post('/digest-email/send-now', async (req, res) => {
+  const userId = userIdOf(req);
+  const job = await digestEmailQueue.add(
+    'send-now',
+    { userId, force: true },
+    { attempts: 1, removeOnComplete: 50, removeOnFail: 50 },
+  );
+  res.status(202).json({ jobId: job.id });
 });

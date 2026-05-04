@@ -21,6 +21,26 @@ const userSchema = new Schema(
        * via Search, the Codex, and a dedicated "Promotions" view.
        */
       hidePromotions: { type: Boolean, default: true },
+      /**
+       * When and where to mail the daily/weekly digest. Disabled by
+       * default; the user opts in from Settings → Newsletter. We
+       * schedule a coarse hourly worker that consults this struct
+       * per-user instead of an actual per-user repeating job (cleaner
+       * config story and tolerates timezone changes).
+       */
+      digestEmail: {
+        enabled: { type: Boolean, default: false },
+        toAddress: { type: String, default: null },
+        cadence: { type: String, enum: ['daily', 'weekly'], default: 'daily' },
+        /** 'HH:MM' local time. */
+        timeOfDayLocal: { type: String, default: '08:00' },
+        /** 0–6 (Sunday=0); only used for weekly. */
+        weeklyDay: { type: Number, default: 1, min: 0, max: 6 },
+        /** IANA timezone, e.g. 'America/Chicago'. */
+        timezone: { type: String, default: 'UTC' },
+        lastSentAt: { type: Date, default: null },
+        lastError: { type: String, default: null },
+      },
     },
     /**
      * Per-user provider configuration. API keys are stored encrypted via

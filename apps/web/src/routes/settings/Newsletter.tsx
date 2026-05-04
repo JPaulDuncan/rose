@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CloudSun, MapPin, Trash2, Star, Plus, X, RefreshCw } from 'lucide-react';
+import { CloudSun, MapPin, Trash2, Star, Plus, X, RefreshCw, Send, Mail } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useApi } from '../../lib/api';
 
@@ -14,9 +14,197 @@ type WeatherLocation = {
 export default function NewsletterSettings() {
   return (
     <div className="space-y-6">
+      <DigestEmailCard />
       <WeatherLocationCard />
       <FeaturedTagsCard />
       <PromptsCallout />
+    </div>
+  );
+}
+
+type DigestSettings = {
+  enabled?: boolean;
+  toAddress?: string | null;
+  cadence?: 'daily' | 'weekly';
+  timeOfDayLocal?: string;
+  weeklyDay?: number;
+  timezone?: string;
+  lastSentAt?: string | null;
+  lastError?: string | null;
+};
+
+function DigestEmailCard() {
+  const api = useApi();
+  const qc = useQueryClient();
+  const { data } = useQuery({
+    queryKey: ['me'],
+    queryFn: () =>
+      api.get<{
+        email: string;
+        settings?: { digestEmail?: DigestSettings };
+      }>('/api/me'),
+  });
+
+  const cfg: DigestSettings = data?.settings?.digestEmail ?? {};
+  const [enabled, setEnabled] = useState(!!cfg.enabled);
+  const [toAddress, setToAddress] = useState(cfg.toAddress ?? '');
+  const [cadence, setCadence] = useState<'daily' | 'weekly'>(cfg.cadence ?? 'daily');
+  const [timeOfDayLocal, setTimeOfDayLocal] = useState(cfg.timeOfDayLocal ?? '08:00');
+  const [weeklyDay, setWeeklyDay] = useState(cfg.weeklyDay ?? 1);
+  const [timezone, setTimezone] = useState(
+    cfg.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone ?? 'UTC',
+  );
+
+  // Re-hydrate when /api/me responds (initial state can be stale).
+  useEffect(() => {
+    if (!data) return;
+    setEnabled(!!cfg.enabled);
+    setToAddress(cfg.toAddress ?? '');
+    setCadence(cfg.cadence ?? 'daily');
+    setTimeOfDayLocal(cfg.timeOfDayLocal ?? '08:00');
+    setWeeklyDay(cfg.weeklyDay ?? 1);
+    setTimezone(
+      cfg.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone ?? 'UTC',
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data]);
+
+  const save = useMutation({
+    mutationFn: async () =>
+      api.patch<unknown>('/api/me', {
+        settings: {
+          ...(data?.settings ?? {}),
+          digestEmail: {
+            ...cfg,
+            enabled,
+            toAddress: toAddress.trim() || null,
+            cadence,
+            timeOfDayLocal,
+            weeklyDay,
+            timezone,
+          },
+        },
+      }),
+    onSuccess: () => {
+      toast.success('Digest settings saved');
+      qc.invalidateQueries({ queryKey: ['me'] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+  const sendNow = useMutation({
+    mutationFn: async () =>
+      api.post<{ jobId: string }>('/api/me/digest-email/send-now'),
+    onSuccess: () => toast.success('Digest queued — check your inbox in a moment'),
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  return (
+    <div className="card">
+      <div className="mb-2 flex items-center gap-2">
+        <Mail className="h-5 w-5 text-rose-500" />
+        <h2 className="font-semibold">Email this edition</h2>
+      </div>
+      <p className="text-sm text-ink-500">
+        Mail the front-page digest to yourself (or anyone else) on a
+        configurable cadence. Goes out through your first active outbound
+        source — Gmail OAuth preferred, IMAP-derived SMTP otherwise.
+      </p>
+      <label className="mt-4 flex items-center gap-2 text-sm">
+        <input
+          type="checkbox"
+          checked={enabled}
+          onChange={(e) => setEnabled(e.target.checked)}
+        />
+        <span>Send the digest automatically</span>
+      </label>
+
+      <div className="mt-3 grid gap-3 sm:grid-cols-2">
+        <label className="block text-xs">
+          <span className="mb-1 block font-medium">To address</span>
+          <input
+            className="input"
+            type="email"
+            value={toAddress}
+            onChange={(e) => setToAddress(e.target.value)}
+            placeholder={data?.email ?? 'you@example.com'}
+          />
+        </label>
+        <label className="block text-xs">
+          <span className="mb-1 block font-medium">Cadence</span>
+          <select
+            className="input"
+            value={cadence}
+            onChange={(e) => setCadence(e.target.value as 'daily' | 'weekly')}
+          >
+            <option value="daily">Daily</option>
+            <option value="weekly">Weekly</option>
+          </select>
+        </label>
+        <label className="block text-xs">
+          <span className="mb-1 block font-medium">Time (local)</span>
+          <input
+            className="input"
+            type="time"
+            value={timeOfDayLocal}
+            onChange={(e) => setTimeOfDayLocal(e.target.value)}
+          />
+        </label>
+        {cadence === 'weekly' && (
+          <label className="block text-xs">
+            <span className="mb-1 block font-medium">Day of week</span>
+            <select
+              className="input"
+              value={weeklyDay}
+              onChange={(e) => setWeeklyDay(Number(e.target.value))}
+            >
+              {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((d, i) => (
+                <option key={d} value={i}>
+                  {d}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        <label className="block text-xs sm:col-span-2">
+          <span className="mb-1 block font-medium">Timezone (IANA)</span>
+          <input
+            className="input"
+            value={timezone}
+            onChange={(e) => setTimezone(e.target.value)}
+            placeholder="America/Chicago"
+          />
+        </label>
+      </div>
+
+      {cfg.lastSentAt && (
+        <div className="mt-3 text-[11px] uppercase tracking-widest text-ink-500">
+          Last sent {new Date(cfg.lastSentAt).toLocaleString()}
+        </div>
+      )}
+      {cfg.lastError && (
+        <div className="mt-2 rounded border border-red-200 bg-red-50 px-2 py-1 text-xs text-red-700 dark:border-red-800 dark:bg-red-950/30 dark:text-red-200">
+          Last error: {cfg.lastError}
+        </div>
+      )}
+
+      <div className="mt-4 flex justify-end gap-2">
+        <button
+          type="button"
+          className="btn-ghost text-xs"
+          onClick={() => sendNow.mutate()}
+          disabled={sendNow.isPending}
+        >
+          <Send className="h-3.5 w-3.5" /> Send now
+        </button>
+        <button
+          type="button"
+          className="btn-primary"
+          onClick={() => save.mutate()}
+          disabled={save.isPending}
+        >
+          Save
+        </button>
+      </div>
     </div>
   );
 }

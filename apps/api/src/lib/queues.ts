@@ -11,6 +11,8 @@ export const QUEUE_NAMES = {
   summarizeSender: 'rose.summarize-sender',
   fetchAndParse: 'rose.fetch-and-parse',
   sendOutbound: 'rose.send-outbound',
+  digestEmail: 'rose.digest-email',
+  webhookDeliver: 'rose.webhook-deliver',
 } as const;
 
 export type QueueName = (typeof QUEUE_NAMES)[keyof typeof QUEUE_NAMES];
@@ -26,5 +28,7 @@ export const rssSyncQueue = new Queue(QUEUE_NAMES.rssSync, connection);
 export const summarizeSenderQueue = new Queue(QUEUE_NAMES.summarizeSender, connection);
 export const fetchAndParseQueue = new Queue(QUEUE_NAMES.fetchAndParse, connection);
 export const sendOutboundQueue = new Queue(QUEUE_NAMES.sendOutbound, connection);
+export const digestEmailQueue = new Queue(QUEUE_NAMES.digestEmail, connection);
+export const webhookDeliverQueue = new Queue(QUEUE_NAMES.webhookDeliver, connection);
 
 export const generatePageEvents = new QueueEvents(QUEUE_NAMES.generatePage, connection);

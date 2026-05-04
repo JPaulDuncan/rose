@@ -34,6 +34,8 @@ import { chatRouter } from './routes/chat.js';
 import { saveRouter } from './routes/save.js';
 import { replyRouter, outboundRouter } from './routes/reply.js';
 import { rulesRouter } from './routes/rules.js';
+import { shareRouter, sharePublicRouter } from './routes/share.js';
+import { webhooksRouter } from './routes/webhooks.js';
 import { errorHandler } from './middleware/error.js';
 import { requireAuth } from './middleware/auth.js';
 import { apiLimiter } from './middleware/rateLimit.js';
@@ -103,6 +105,11 @@ export async function createServer(): Promise<Express> {
   app.use('/api/emails', requireAuth, replyRouter);
   app.use('/api/outbound', requireAuth, outboundRouter);
   app.use('/api/rules', requireAuth, rulesRouter);
+  app.use('/api/share', requireAuth, shareRouter);
+  app.use('/api/webhooks', requireAuth, webhooksRouter);
+  // Public read-only render — NO auth, mounted outside /api so
+  // anonymous viewers can hit it without a Bearer token.
+  app.use('/share', sharePublicRouter);
 
   app.use(errorHandler);
 

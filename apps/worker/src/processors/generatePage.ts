@@ -30,6 +30,7 @@ import {
 import { upsertSendersFromPage } from '../services/senderUpsert.js';
 import { bayesScoreFor } from '../lib/bayesScore.js';
 import { evaluateRules, type RuleVerdict, emptyVerdict } from '../services/rules.js';
+import { dispatchWebhookEvent } from './webhookDeliver.js';
 import {
   extractEventsForPage,
   syncEventsToPage,
@@ -757,6 +758,31 @@ export function startGeneratePageWorker() {
               { err, pageId: String(pageId) },
               'sender upsert step failed',
             );
+          }
+          // Fan out webhook events to subscribers — best-effort.
+          try {
+            const event = pageWasNew ? 'page.created' : 'page.updated';
+            await dispatchWebhookEvent(userId, event, {
+              page: {
+                id: String(pageObj._id),
+                slug: pageObj.slug,
+                title: pageObj.title,
+                summary: pageObj.summary,
+                tags: pageObj.tags,
+                priority: pageObj.priority,
+                version: pageObj.version,
+                updatedAt: pageObj.updatedAt,
+              },
+              sourceEmailIds: sourceEmailIds.map((x) => String(x)),
+            });
+            if (pageObj.flags?.userMarkedSpam || pageObj.flags?.autoQuarantined) {
+              await dispatchWebhookEvent(userId, 'page.spam.flagged', {
+                page: { id: String(pageObj._id), slug: pageObj.slug, title: pageObj.title },
+                reason: pageObj.flags.autoQuarantined ? 'auto-quarantined' : 'user-marked',
+              });
+            }
+          } catch (err) {
+            logger.warn({ err, pageId: String(pageId) }, 'webhook dispatch failed');
           }
         }
       } catch (err) {

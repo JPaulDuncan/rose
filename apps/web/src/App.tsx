@@ -23,6 +23,7 @@ import AccountSettings from './routes/settings/Account';
 import SourcesSettings from './routes/settings/Sources';
 import SendersSettings from './routes/settings/Senders';
 import RulesSettings from './routes/settings/Rules';
+import IntegrationsSettings from './routes/settings/Integrations';
 import InstructionsSettings from './routes/settings/Instructions';
 import ModelsSettings from './routes/settings/Models';
 import SpamSettings from './routes/settings/Spam';
@@ -77,6 +78,7 @@ export default function App() {
           <Route path="sources" element={<SourcesSettings />} />
           <Route path="senders" element={<SendersSettings />} />
           <Route path="rules" element={<RulesSettings />} />
+          <Route path="integrations" element={<IntegrationsSettings />} />
           <Route path="instructions" element={<InstructionsSettings />} />
           <Route path="models" element={<ModelsSettings />} />
           <Route path="spam" element={<SpamSettings />} />
