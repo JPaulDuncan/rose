@@ -320,7 +320,7 @@ export function startBriefingWorker() {
       }
       return { swept: candidates.length, generated };
     },
-    { connection: redis, concurrency: 1 },
+    { connection: redis, concurrency: 1, lockDuration: 10 * 60_000, stalledInterval: 60_000, maxStalledCount: 1 },
   );
   worker.on('failed', (job, err) =>
     logger.error({ jobId: job?.id, err }, 'briefing failed'),

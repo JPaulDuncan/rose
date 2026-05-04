@@ -148,7 +148,7 @@ export function startDigestEmailWorker() {
       if (sent > 0) logger.info({ swept: candidates.length, sent }, 'digest-email: sweep');
       return { swept: candidates.length, sent };
     },
-    { connection: redis, concurrency: 1 },
+    { connection: redis, concurrency: 1, lockDuration: 10 * 60_000, stalledInterval: 60_000, maxStalledCount: 1 },
   );
   worker.on('failed', (job, err) =>
     logger.error({ jobId: job?.id, err }, 'digest-email failed'),

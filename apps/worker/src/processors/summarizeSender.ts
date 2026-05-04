@@ -87,7 +87,7 @@ export function startSummarizeSenderWorker() {
       await sender.save();
       logger.info({ senderId: String(sender._id) }, 'summary written');
     },
-    { connection: redis, concurrency: 2 },
+    { connection: redis, concurrency: 2, lockDuration: 5 * 60_000, stalledInterval: 60_000, maxStalledCount: 1 },
   );
   worker.on('failed', (job, err) =>
     logger.error({ jobId: job?.id, err }, 'summarize-sender failed'),

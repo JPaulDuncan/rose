@@ -442,6 +442,21 @@ export function startGeneratePageWorker() {
       } else {
         const llmStartedAt = Date.now();
         let buffered = '';
+        // Hard ceiling for the whole call (covers slow Ollama loads),
+        // plus an idle-token watchdog so a hung stream aborts even when
+        // bytes stop arriving mid-response. Both share one AbortController
+        // so whichever fires first cancels the underlying fetch.
+        const ctrl = new AbortController();
+        const HARD_TIMEOUT_MS = 4 * 60_000;
+        const IDLE_TIMEOUT_MS = 90_000;
+        const hardTimer = setTimeout(
+          () => ctrl.abort(new Error('LLM hard timeout exceeded')),
+          HARD_TIMEOUT_MS,
+        );
+        let idleTimer = setTimeout(
+          () => ctrl.abort(new Error('LLM idle timeout — no tokens')),
+          IDLE_TIMEOUT_MS,
+        );
         try {
           for await (const chunk of provider.generateStream({
             model: genModel,
@@ -449,9 +464,15 @@ export function startGeneratePageWorker() {
             system: SYSTEM_PROMPT_BASE,
             format: 'json',
             temperature: 0.2,
+            signal: ctrl.signal,
           })) {
             buffered += chunk.response;
             if (chunk.response) {
+              clearTimeout(idleTimer);
+              idleTimer = setTimeout(
+                () => ctrl.abort(new Error('LLM idle timeout — no tokens')),
+                IDLE_TIMEOUT_MS,
+              );
               await job.updateProgress({
                 type: 'token',
                 jobId: String(job.id),
@@ -475,6 +496,9 @@ export function startGeneratePageWorker() {
             'generate-page: provider call failed',
           );
           throw err;
+        } finally {
+          clearTimeout(hardTimer);
+          clearTimeout(idleTimer);
         }
         logger.debug(
           {
@@ -911,7 +935,7 @@ export function startGeneratePageWorker() {
       );
       return { pageId: pageId.toString(), slug };
     },
-    { connection: redis, concurrency: 2 },
+    { connection: redis, concurrency: 2, lockDuration: 5 * 60_000, stalledInterval: 60_000, maxStalledCount: 1 },
   );
 
   worker.on('failed', (job, err) =>
