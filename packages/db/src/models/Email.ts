@@ -86,6 +86,30 @@ const emailSchema = new Schema(
     spamSignals: { type: [String], default: [] },
     /** Legitimate bulk mail (List-Unsubscribe present). Distinct from spam. */
     isMassMailing: { type: Boolean, default: false },
+    /** 0..1 — likelihood that the email is promotional/marketing
+     *  content. Distinct from spamScore: a wanted newsletter scores
+     *  high here without being spam. */
+    promotionalScore: { type: Number, default: 0, index: true },
+    isPromotional: { type: Boolean, default: false, index: true },
+    promotionalSignals: { type: [String], default: [] },
+    /** SPF/DKIM/DMARC outcomes captured from Authentication-Results. */
+    authResults: {
+      spf: {
+        type: String,
+        enum: ['pass', 'fail', 'softfail', 'neutral', 'none', 'unknown'],
+        default: 'unknown',
+      },
+      dkim: {
+        type: String,
+        enum: ['pass', 'fail', 'softfail', 'neutral', 'none', 'unknown'],
+        default: 'unknown',
+      },
+      dmarc: {
+        type: String,
+        enum: ['pass', 'fail', 'softfail', 'neutral', 'none', 'unknown'],
+        default: 'unknown',
+      },
+    },
     /** Brand-logo candidate scraped from the email head — fed into the
      *  Sender address book on generation. Not surfaced in the UI directly. */
     logoCandidate: {

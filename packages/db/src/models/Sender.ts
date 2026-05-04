@@ -50,6 +50,16 @@ const senderSchema = new Schema(
     pageCount: { type: Number, default: 0 },
     firstSeenAt: { type: Date, default: () => new Date() },
     lastSeenAt: { type: Date, default: () => new Date() },
+    /** Number of pages from this brand the user has marked as spam.
+     *  Drives the auto-quarantine reputation threshold. */
+    spamMarkedCount: { type: Number, default: 0, index: true },
+    /** Number of pages from this brand the user has explicitly rescued.
+     *  Resets/offsets `spamMarkedCount` so a once-blocked sender can be
+     *  trusted again without nuking the record. */
+    rescuedCount: { type: Number, default: 0 },
+    /** Set when reputation threshold is exceeded — incoming pages from
+     *  this brand are auto-marked as quarantined unless the user rescues. */
+    autoQuarantine: { type: Boolean, default: false, index: true },
   },
   { timestamps: true },
 );

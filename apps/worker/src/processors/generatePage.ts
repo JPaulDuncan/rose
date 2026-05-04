@@ -7,6 +7,7 @@ import {
   Instruction,
   Category,
   User,
+  Sender,
   type EmailDoc,
   type PageDoc,
 } from '@rose/db';
@@ -422,6 +423,9 @@ export function startGeneratePageWorker() {
       let priority: 'high' | 'normal' | 'low' = 'normal';
       let topSpamScore = 0;
       let hasMassMailing = false;
+      // Roll up the per-email promotional flag — a page counts as
+      // promotional once a majority of contributing emails are.
+      let promotionalCount = 0;
       const topicCounts = new Map<string, number>();
       const linkAccum = new Map<string, { url: string; text?: string | null; count: number }>();
       const imageAccum = new Map<
@@ -439,6 +443,7 @@ export function startGeneratePageWorker() {
         if (priorityRank[p] > priorityRank[priority]) priority = p;
         topSpamScore = Math.max(topSpamScore, (e.spamScore as number | undefined) ?? 0);
         if (e.isMassMailing) hasMassMailing = true;
+        if (e.isPromotional) promotionalCount += 1;
         for (const t of (e.topics as string[] | undefined) ?? []) {
           topicCounts.set(t, (topicCounts.get(t) ?? 0) + 1);
         }
@@ -494,15 +499,41 @@ export function startGeneratePageWorker() {
       const tagHit =
         (draft.tags ?? []).some((t) => policyTags.has(t)) ||
         topics.some((t) => policyTags.has(t));
+      // Sender-reputation feedback loop: if any contributing sender's
+      // brand has tripped the auto-quarantine threshold, surface this
+      // page in the Quarantine view rather than the main feed.
+      const contributingAddrs = pageEmails
+        .map((e) => (e.from?.address ?? '').toLowerCase())
+        .filter(Boolean);
+      const quarantinedSenders = contributingAddrs.length
+        ? await Sender.find({
+            userId,
+            addresses: { $in: contributingAddrs },
+            autoQuarantine: true,
+          })
+            .select('_id')
+            .lean()
+        : [];
+      const autoQuarantined = quarantinedSenders.length > 0;
       // Preserve an existing user flag if the page already had one.
-      const previousUserMarked = !!(assignment.page?.flags as { userMarkedSpam?: boolean } | undefined)
-        ?.userMarkedSpam;
+      const previousFlags = (assignment.page?.flags ?? {}) as {
+        userMarkedSpam?: boolean;
+        autoQuarantined?: boolean;
+      };
+      const previousUserMarked = !!previousFlags.userMarkedSpam;
       const flags = {
         hasLikelySpam: topSpamScore >= 0.5,
         hasMassMailing,
         isSparse: isThin,
         userMarkedSpam: previousUserMarked || senderHit || tagHit,
         isNotificationStream: stream.yes,
+        // A page is promotional when ≥ 60% of contributing emails are.
+        isPromotional:
+          pageEmails.length > 0 &&
+          promotionalCount / pageEmails.length >= 0.6,
+        // Don't clear an existing autoQuarantine flag silently — it gets
+        // cleared explicitly on rescue.
+        autoQuarantined: autoQuarantined || !!previousFlags.autoQuarantined,
       };
       // -------------------------------------------------------------------------
 

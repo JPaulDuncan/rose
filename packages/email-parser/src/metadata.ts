@@ -13,6 +13,14 @@ export type EmailImage = {
   alt?: string;
 };
 
+/** SPF/DKIM/DMARC outcomes. `unknown` when the header is missing. */
+export type AuthOutcome = 'pass' | 'fail' | 'softfail' | 'neutral' | 'none' | 'unknown';
+export type AuthResults = {
+  spf: AuthOutcome;
+  dkim: AuthOutcome;
+  dmarc: AuthOutcome;
+};
+
 export type EmailMetadata = {
   priority: EmailPriority;
   topics: string[];
@@ -24,6 +32,17 @@ export type EmailMetadata = {
   spamSignals: string[];
   /** True for legitimate mass mailings (List-Unsubscribe present). Distinct from spam. */
   isMassMailing: boolean;
+  /** 0..1 — higher means more likely promotional/advertising content.
+   *  Distinct from spamScore: most newsletters are promotional but not
+   *  spam. We use this to hide promos from Top Stories without flagging
+   *  the sender as malicious. */
+  promotionalScore: number;
+  /** True when promotionalScore is over a confidence threshold. */
+  isPromotional: boolean;
+  /** Reasons that fed into promotionalScore, for transparency. */
+  promotionalSignals: string[];
+  /** Authentication results (SPF/DKIM/DMARC). Unknown when missing. */
+  authResults: AuthResults;
   /** Best logo guess from the email body (for the Sender address book). */
   logoCandidate: { url: string; alt: string | null; confidence: number } | null;
   /** Unsubscribe URLs scraped from List-Unsubscribe header + obvious links. */
@@ -393,6 +412,161 @@ function extractUnsubscribeUrls(parsed: ParsedMail): string[] {
   return [...out].slice(0, 4);
 }
 
+/**
+ * Parse the `Authentication-Results` header into SPF / DKIM / DMARC
+ * outcomes. The header is a free-form list set by the receiving MTA;
+ * we look for the well-known `spf=`, `dkim=`, and `dmarc=` tokens.
+ *
+ * Reference: RFC 8601. We deliberately keep this lenient — many MTAs
+ * stack multiple `Authentication-Results` headers; we concatenate them
+ * and pull the strongest outcome of each method.
+ */
+function parseAuthResults(parsed: ParsedMail): AuthResults {
+  const collect = (name: string): string => {
+    const lines = (parsed.headerLines ?? [])
+      .filter((h) => h.key.toLowerCase() === name.toLowerCase())
+      .map((h) => h.line.replace(/^[^:]+:\s*/, ''));
+    return lines.join(' ; ');
+  };
+  const blob = `${collect('Authentication-Results')} ; ${collect('ARC-Authentication-Results')}`.toLowerCase();
+  const pick = (method: 'spf' | 'dkim' | 'dmarc'): AuthOutcome => {
+    const m = new RegExp(`\\b${method}=([a-z]+)`).exec(blob);
+    if (!m) return 'unknown';
+    const v = m[1];
+    if (v === 'pass' || v === 'fail' || v === 'softfail' || v === 'neutral' || v === 'none')
+      return v;
+    return 'unknown';
+  };
+  return { spf: pick('spf'), dkim: pick('dkim'), dmarc: pick('dmarc') };
+}
+
+/**
+ * Strip obvious advertorial sections out of the cleaned plaintext
+ * before downstream consumers see it. We look for:
+ *   - "Advertisement" / "Sponsored" / "Sponsored Content" headings
+ *   - "—Ad—" / "[Ad]" inline markers around a paragraph
+ *   - "Partner content" blocks
+ * The boundary is the next markdown-style heading, the next blank
+ * separator (≥2 newlines), or 6 consecutive lines — whichever comes
+ * first. Conservative on purpose; we'd rather leave one ad in than
+ * strip real content.
+ */
+const AD_HEADING_RE =
+  /^[ \t]*(advertisement|sponsored(?:\s+content)?|partner\s+content|advertorial|paid\s+(?:partner|content)|promoted\s+content|—\s*ad\s*—|\[\s*ad\s*\])\s*:?\s*$/i;
+const AD_INLINE_RE = /\b(this email is sponsored by|sponsored by\s+\w|presented by|brought to you by)\b/i;
+
+export function stripAdSections(text: string): { cleaned: string; removed: number } {
+  if (!text) return { cleaned: '', removed: 0 };
+  const lines = text.split('\n');
+  const out: string[] = [];
+  let removed = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i] ?? '';
+    if (AD_HEADING_RE.test(line)) {
+      // Drop this line and continue dropping until we hit a blank line
+      // followed by a non-blank line, or 8 lines have elapsed.
+      let j = i + 1;
+      let blanks = 0;
+      while (j < lines.length && j - i < 8) {
+        const next = lines[j] ?? '';
+        if (next.trim() === '') {
+          blanks += 1;
+          if (blanks >= 2) break;
+        } else {
+          blanks = 0;
+        }
+        j += 1;
+      }
+      removed += j - i;
+      i = j; // Skip the block.
+      continue;
+    }
+    if (AD_INLINE_RE.test(line)) {
+      removed += 1;
+      continue; // Drop just this line — the surrounding paragraph stays.
+    }
+    out.push(line);
+  }
+  return { cleaned: out.join('\n').replace(/\n{3,}/g, '\n\n'), removed };
+}
+
+/**
+ * Score how likely an email is promotional content (advertising or
+ * marketing copy). Distinct from spam: a newsletter from a brand the
+ * user actively subscribed to is mass-mail + promotional, but not spam.
+ *
+ * Signals:
+ *   - List-Unsubscribe / List-Id headers (legitimate bulk mail)
+ *   - Image-to-text ratio (mostly-image emails are usually ads)
+ *   - Affiliate / tracking URL params (utm_, ?aff=, /go/, /track/)
+ *   - Common ad phrases ("limited time", "save X%", "shop now", …)
+ *   - Sponsored / advertorial headings inside the body
+ */
+const AFFILIATE_PARAM_RE = /[?&](utm_[a-z]+|aff(?:iliate)?|ref|src|trk|track|partner|cid|mc_cid)=/i;
+const AFFILIATE_PATH_RE = /\/(go|track|click|r|aff|partners?|sponsor)\//i;
+const AD_PHRASES_RE =
+  /\b(limited[- ]?time|shop now|save\s+\d{1,2}%|\d{1,2}%\s+off|free shipping|exclusive offer|best deal|don't miss|hurry|while supplies last|act now|buy now|click here to (?:shop|buy)|coupon code)\b/i;
+
+function computePromotional(
+  parsed: ParsedMail,
+  subject: string,
+  body: string,
+  links: EmailLink[],
+  images: EmailImage[],
+  isMassMailing: boolean,
+): { score: number; signals: string[] } {
+  let score = 0;
+  const signals: string[] = [];
+
+  if (isMassMailing) {
+    score += 0.25;
+    signals.push('legitimate bulk-mail headers present');
+  }
+
+  // Image:text ratio. Below 200 characters of body and ≥4 images is a
+  // dead giveaway for an ad.
+  if (images.length >= 4 && body.length < 600) {
+    score += 0.25;
+    signals.push(`${images.length} images with thin body text`);
+  }
+
+  // Affiliate / tracking link patterns.
+  let affiliateLinks = 0;
+  for (const l of links) {
+    if (AFFILIATE_PARAM_RE.test(l.url) || AFFILIATE_PATH_RE.test(l.url))
+      affiliateLinks += 1;
+  }
+  if (affiliateLinks >= 3) {
+    score += 0.2;
+    signals.push(`${affiliateLinks} affiliate/tracking links`);
+  }
+
+  // Ad phrases in body or subject.
+  if (AD_PHRASES_RE.test(subject)) {
+    score += 0.15;
+    signals.push('subject uses promo language');
+  }
+  if (AD_PHRASES_RE.test(body)) {
+    score += 0.1;
+    signals.push('body uses promo language');
+  }
+
+  // Sponsored heading in the body — strong signal.
+  if (AD_HEADING_RE.test(body) || /\n\s*advertisement\s*\n/i.test(body)) {
+    score += 0.2;
+    signals.push('sponsored/advertorial heading detected');
+  }
+
+  // Generic mass-marketing locals like marketing@, deals@, offers@.
+  const local = (parsed.from?.value?.[0]?.address ?? '').split('@')[0]?.toLowerCase() ?? '';
+  if (/^(marketing|deals|offers|promo|store|shop|sales|brand|news)/.test(local)) {
+    score += 0.1;
+    signals.push(`marketing-style sender local part: ${local}`);
+  }
+
+  return { score: Math.min(1, score), signals };
+}
+
 export function extractEmailMetadata(
   parsed: ParsedMail,
   cleanedText: string,
@@ -411,7 +585,7 @@ export function extractEmailMetadata(
     if (!topics.includes(tag)) topics.unshift(tag);
   }
   const priority = derivePriority(parsed, subject);
-  const { score, signals, isMassMailing } = computeSpam(
+  const { score: spamScoreBase, signals, isMassMailing } = computeSpam(
     parsed,
     subject,
     cleanedText || '',
@@ -420,15 +594,52 @@ export function extractEmailMetadata(
   );
   const logoCandidate = extractLogoCandidate(html, fromAddr);
   const unsubscribeUrls = extractUnsubscribeUrls(parsed);
+  const authResults = parseAuthResults(parsed);
+
+  // Authentication-Results signals. Folding into the existing 0..1
+  // spamScore: each hard fail nudges it up, an aligned pass leaves it
+  // alone (we don't *lower* the score because heuristics already
+  // captured non-auth signals worth keeping).
+  let authScoreBoost = 0;
+  if (authResults.spf === 'fail') {
+    authScoreBoost += 0.15;
+    signals.push('SPF: fail');
+  } else if (authResults.spf === 'softfail') {
+    authScoreBoost += 0.05;
+    signals.push('SPF: softfail');
+  }
+  if (authResults.dkim === 'fail') {
+    authScoreBoost += 0.15;
+    signals.push('DKIM: fail');
+  }
+  if (authResults.dmarc === 'fail') {
+    authScoreBoost += 0.2;
+    signals.push('DMARC: fail');
+  }
+  const spamScore = Math.min(1, spamScoreBase + authScoreBoost);
+
+  const { score: promotionalScore, signals: promotionalSignals } = computePromotional(
+    parsed,
+    subject,
+    cleanedText || '',
+    links,
+    images,
+    isMassMailing,
+  );
+
   return {
     priority,
     topics,
     links,
     images,
-    spamScore: score,
+    spamScore,
     spamSignals: signals,
     logoCandidate,
     unsubscribeUrls,
     isMassMailing,
+    promotionalScore,
+    isPromotional: promotionalScore >= 0.5,
+    promotionalSignals,
+    authResults,
   };
 }

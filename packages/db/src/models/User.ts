@@ -15,6 +15,12 @@ const userSchema = new Schema(
        * overrides take precedence; this is what new feeds default to.
        */
       rssPollIntervalMinutes: { type: Number, default: 30, min: 5, max: 1440 },
+      /**
+       * Hide promotional content (newsletters / ads) from the digest's
+       * primary surfaces. Promotional pages still exist and are reachable
+       * via Search, the Codex, and a dedicated "Promotions" view.
+       */
+      hidePromotions: { type: Boolean, default: true },
     },
     /**
      * Per-user provider configuration. API keys are stored encrypted via

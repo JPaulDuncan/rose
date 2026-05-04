@@ -75,11 +75,25 @@ function startOfDay(d: Date): Date {
 digestRouter.get('/', async (req, res) => {
   const userId = new Types.ObjectId(userIdOf(req));
   const includeSpam = req.query.includeSpam === '1';
+  const includePromotions = req.query.includePromotions === '1';
+  const userPrefs = (await User.findById(userId)
+    .select('featuredTags settings')
+    .lean()) as
+    | {
+        featuredTags?: string[];
+        settings?: { hidePromotions?: boolean };
+      }
+    | null;
+  const hidePromotions = !includePromotions && userPrefs?.settings?.hidePromotions !== false;
 
   const filter: Record<string, unknown> = { userId };
   if (!includeSpam) {
     filter['flags.hasLikelySpam'] = { $ne: true };
     filter['flags.userMarkedSpam'] = { $ne: true };
+    filter['flags.autoQuarantined'] = { $ne: true };
+  }
+  if (hidePromotions) {
+    filter['flags.isPromotional'] = { $ne: true };
   }
 
   // Pull contentMd just long enough to compute word count + pull quote,
@@ -228,10 +242,7 @@ digestRouter.get('/', async (req, res) => {
   // ── Featured sections ────────────────────────────────────────────────
   // Each featured tag becomes a named section in the newsletter, populated
   // with that tag's most-recently-updated pages (across either `tags` or
-  // `topics`, capped at 8 per section). Spam still excluded.
-  const userPrefs = (await User.findById(userId).select('featuredTags').lean()) as
-    | { featuredTags?: string[] }
-    | null;
+  // `topics`, capped at 8 per section). Spam + promotions still excluded.
   const featuredTags = (userPrefs?.featuredTags ?? []).map((t) => t.toLowerCase());
   const featuredSections: { tag: string; pageCount: number; pages: DigestPage[] }[] = [];
   for (const tag of featuredTags) {

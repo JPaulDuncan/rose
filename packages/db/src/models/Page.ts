@@ -121,6 +121,13 @@ const pageSchema = new Schema(
       userMarkedSpam: { type: Boolean, default: false },
       /** Set when ≥70% of contributing emails share one subject template. */
       isNotificationStream: { type: Boolean, default: false, index: true },
+      /** Set when the contributing emails roll up as promotional content. */
+      isPromotional: { type: Boolean, default: false, index: true },
+      /** Set by the sender-reputation loop when the brand has accumulated
+       *  enough user spam-marks to warrant auto-quarantining future mail.
+       *  Distinct from `userMarkedSpam` so the user can see *why* it was
+       *  hidden and rescue with one click. */
+      autoQuarantined: { type: Boolean, default: false, index: true },
     },
     /** Legacy single-thread field — kept for migration. New code uses threadKeys. */
     threadKey: { type: String, default: null },

@@ -14,6 +14,7 @@ import TagPage from './routes/Tag';
 import EmailView from './routes/Email';
 import CodexPage from './routes/Codex';
 import SenderPage from './routes/Sender';
+import QuarantinePage from './routes/Quarantine';
 import SettingsLayout from './routes/settings/Layout';
 import AccountSettings from './routes/settings/Account';
 import SourcesSettings from './routes/settings/Sources';
@@ -61,6 +62,7 @@ export default function App() {
         <Route path="/streams" element={<StreamsPage />} />
         <Route path="/codex" element={<CodexPage />} />
         <Route path="/s/:brandKey" element={<SenderPage />} />
+        <Route path="/quarantine" element={<QuarantinePage />} />
         <Route path="/settings" element={<SettingsLayout />}>
           <Route index element={<Navigate to="account" replace />} />
           <Route path="account" element={<AccountSettings />} />

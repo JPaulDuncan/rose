@@ -77,6 +77,9 @@ export default function SpamSettings() {
         </p>
       </div>
 
+      <PromotionsToggle />
+      <ReputationCard />
+
       <div className="card">
         <div className="mb-3 flex items-center gap-2">
           <UserX className="h-4 w-4 text-rose-500" />
@@ -177,6 +180,69 @@ export default function SpamSettings() {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+function PromotionsToggle() {
+  const api = useApi();
+  const qc = useQueryClient();
+  const { data } = useQuery({
+    queryKey: ['me'],
+    queryFn: () =>
+      api.get<{ settings?: { hidePromotions?: boolean } }>('/api/me'),
+  });
+  const hidePromotions = data?.settings?.hidePromotions !== false;
+  const save = useMutation({
+    mutationFn: async (next: boolean) =>
+      api.patch<unknown>('/api/me', {
+        settings: { ...(data?.settings ?? {}), hidePromotions: next },
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['me'] });
+      qc.invalidateQueries({ queryKey: ['digest'] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+  return (
+    <div className="card">
+      <div className="mb-2 flex items-center gap-2">
+        <TagIcon className="h-4 w-4 text-rose-500" />
+        <h3 className="font-semibold">Promotions</h3>
+      </div>
+      <p className="mb-3 text-sm text-ink-500">
+        Promotional content (newsletters, ads, sponsored mail) is hidden
+        from the front page by default. You can still find these pages
+        through Search and the Codex.
+      </p>
+      <label className="flex items-center gap-2 text-sm">
+        <input
+          type="checkbox"
+          checked={hidePromotions}
+          onChange={(e) => save.mutate(e.target.checked)}
+        />
+        <span>Hide promotional content from the home digest</span>
+      </label>
+    </div>
+  );
+}
+
+function ReputationCard() {
+  return (
+    <div className="card">
+      <div className="mb-2 flex items-center gap-2">
+        <ShieldAlert className="h-4 w-4 text-amber-500" />
+        <h3 className="font-semibold">Sender reputation</h3>
+      </div>
+      <p className="text-sm text-ink-500">
+        Marking pages as spam bumps their sender's reputation. After a
+        few negative marks, future pages from that brand are
+        automatically held for review in{' '}
+        <a href="/quarantine" className="text-rose-600 hover:underline dark:text-rose-300">
+          Quarantine
+        </a>
+        . Trust a sender from there to clear the auto-hold.
+      </p>
     </div>
   );
 }

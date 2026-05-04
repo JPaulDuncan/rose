@@ -5,12 +5,15 @@ export { formatImapError } from './imapErrors.js';
 export {
   extractEmailMetadata,
   senderDomainTag,
+  stripAdSections,
   type EmailMetadata,
   type EmailPriority,
   type EmailLink,
   type EmailImage,
+  type AuthResults,
+  type AuthOutcome,
 } from './metadata.js';
-import { extractEmailMetadata, type EmailMetadata } from './metadata.js';
+import { extractEmailMetadata, stripAdSections, type EmailMetadata } from './metadata.js';
 
 export type CleanedEmail = {
   messageId: string | null;
@@ -175,7 +178,11 @@ export async function parseEmail(raw: Buffer | string): Promise<CleanedEmail> {
   const html = typeof parsed.html === 'string' ? parsed.html : null;
   let text = (parsed.text ?? '').trim();
   if (!text && html) text = htmlToPlain(html);
-  const cleaned = cleanBody(text);
+  // First pass: strip "Sponsored / Advertisement / Partner content"
+  // sections so the LLM never sees ad copy. We keep `rawText` as the
+  // pre-strip body for debugging in the email view.
+  const adStripped = stripAdSections(text);
+  const cleaned = cleanBody(adStripped.cleaned);
   const fromAddrs = pickAddresses(parsed.from);
   const toAddrs = pickAddresses(parsed.to);
   const ccAddrs = pickAddresses(parsed.cc);

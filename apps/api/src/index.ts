@@ -28,6 +28,7 @@ import { providersRouter } from './routes/providers.js';
 import { modelsRouter, modelsStreamRouter } from './routes/models.js';
 import { sendersRouter } from './routes/senders.js';
 import { codexRouter } from './routes/codex.js';
+import { quarantineRouter } from './routes/quarantine.js';
 import { errorHandler } from './middleware/error.js';
 import { requireAuth } from './middleware/auth.js';
 import { apiLimiter } from './middleware/rateLimit.js';
@@ -90,6 +91,7 @@ export async function createServer(): Promise<Express> {
   app.use('/api/models', requireAuth, modelsRouter);
   app.use('/api/senders', requireAuth, sendersRouter);
   app.use('/api/codex', requireAuth, codexRouter);
+  app.use('/api/quarantine', requireAuth, quarantineRouter);
 
   app.use(errorHandler);
 
