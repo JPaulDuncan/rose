@@ -29,6 +29,7 @@ import {
 } from '../services/pageAssignment.js';
 import { upsertSendersFromPage } from '../services/senderUpsert.js';
 import { bayesScoreFor } from '../lib/bayesScore.js';
+import { evaluateRules, type RuleVerdict, emptyVerdict } from '../services/rules.js';
 import {
   extractEventsForPage,
   syncEventsToPage,
@@ -230,13 +231,36 @@ export function startGeneratePageWorker() {
 
       await job.updateProgress({ type: 'started', jobId: String(job.id) });
 
+      // Run user-defined rules first. If any rule archives the email,
+      // skip all downstream work entirely.
+      let verdict: RuleVerdict = emptyVerdict();
+      try {
+        verdict = await evaluateRules(userId, triggerEmail);
+      } catch (err) {
+        logger.warn({ err }, 'rule evaluation failed; continuing without verdict');
+      }
+      if (verdict.archive) {
+        triggerEmail.ingestStatus = 'skipped';
+        await triggerEmail.save();
+        logger.info(
+          { emailId: String(triggerEmail._id), matched: verdict.matchedRules.length },
+          'rules: archive verdict — skipping generation',
+        );
+        return { skipped: true, reason: 'archived-by-rule' } as unknown as { pageId: string; slug: string };
+      }
+
       // Ensure the trigger email has a cached embedding before assignment.
       await ensureEmailEmbedding(triggerEmail);
       // RSS items always feed topic-mode pages (one wiki page per topic),
       // bypassing sender/thread grouping. For email we use the existing
-      // thread → subject-template → sender+centroid path.
-      const assignment =
-        triggerEmail.kind === 'rss'
+      // thread → subject-template → sender+centroid path. A rule with
+      // route.topicPage forces topic-mode regardless of source.
+      const assignment = verdict.forceTopicPage
+        ? await findTopicPageForItem({
+            ...triggerEmail.toObject(),
+            topics: [verdict.forceTopicPage, ...((triggerEmail.topics as string[]) ?? [])],
+          } as typeof triggerEmail)
+        : triggerEmail.kind === 'rss'
           ? await findTopicPageForItem(triggerEmail)
           : await findPageForEmail(triggerEmail);
       logger.info(
@@ -419,12 +443,14 @@ export function startGeneratePageWorker() {
         }
       }
 
-      // Categories
+      // Categories. A `assign.category` rule wins over the LLM's
+      // suggestion so the user's explicit instruction is honoured.
       let categoryId: Types.ObjectId | null = null;
-      if (draft.suggestedCategory) {
+      const categoryName = verdict.assignCategory ?? draft.suggestedCategory;
+      if (categoryName) {
         const cat = await Category.findOneAndUpdate(
-          { userId, name: draft.suggestedCategory },
-          { $setOnInsert: { userId, name: draft.suggestedCategory } },
+          { userId, name: categoryName },
+          { $setOnInsert: { userId, name: categoryName } },
           { upsert: true, new: true },
         );
         categoryId = cat._id as Types.ObjectId;
@@ -570,7 +596,7 @@ export function startGeneratePageWorker() {
         autoQuarantined?: boolean;
       };
       const previousUserMarked = !!previousFlags.userMarkedSpam;
-      const flags = {
+      const baseFlags: Record<string, boolean> = {
         hasLikelySpam: blendedSpamScore >= 0.5,
         hasMassMailing,
         isSparse: isThin,
@@ -582,8 +608,11 @@ export function startGeneratePageWorker() {
           promotionalCount / pageEmails.length >= 0.6,
         // Don't clear an existing autoQuarantine flag silently — it gets
         // cleared explicitly on rescue.
-        autoQuarantined: autoQuarantined || !!previousFlags.autoQuarantined,
+        autoQuarantined:
+          autoQuarantined || !!previousFlags.autoQuarantined || verdict.quarantine,
       };
+      // Rule-driven flag.set actions override the heuristics above.
+      const flags = { ...baseFlags, ...verdict.setFlags };
       // -------------------------------------------------------------------------
 
 
@@ -595,13 +624,19 @@ export function startGeneratePageWorker() {
         page.title = draft.title;
         page.summary = draft.summary;
         page.contentMd = draft.contentMd;
-        page.tags = draft.tags ?? [];
+        // Rule-driven tag mutations: add wins, remove strips both
+        // LLM-emitted tags and previous user tags.
+        const draftTags = draft.tags ?? [];
+        const merged = new Set<string>(draftTags.map((t) => t.toLowerCase()));
+        for (const t of verdict.addTags) merged.add(t);
+        for (const t of verdict.removeTags) merged.delete(t);
+        page.tags = [...merged];
         page.categoryId = categoryId;
         page.sourceEmailIds = sourceEmailIds;
         page.threadKeys = threadKeys;
         page.senderAddresses = senderAddresses;
         page.subjectTemplates = subjectTemplates;
-        page.priority = priority;
+        page.priority = verdict.setPriority ?? priority;
         page.topics = topics;
         page.set('pageLinks', pageLinks);
         page.set('pageImages', pageImages);
@@ -652,19 +687,25 @@ export function startGeneratePageWorker() {
         const primaryTopic = isRss
           ? ((triggerEmail.topics as string[] | undefined)?.[0] ?? null)?.toLowerCase() ?? null
           : null;
+        const draftTagsCreate = draft.tags ?? [];
+        const mergedTagsCreate = new Set<string>(
+          draftTagsCreate.map((t) => t.toLowerCase()),
+        );
+        for (const t of verdict.addTags) mergedTagsCreate.add(t);
+        for (const t of verdict.removeTags) mergedTagsCreate.delete(t);
         const created = await Page.create({
           userId,
           slug,
           title: draft.title,
           summary: draft.summary,
           contentMd: draft.contentMd,
-          tags: draft.tags ?? [],
+          tags: [...mergedTagsCreate],
           categoryId,
           sourceEmailIds,
           threadKeys,
           senderAddresses,
           subjectTemplates,
-          priority,
+          priority: verdict.setPriority ?? priority,
           topics,
           pageLinks,
           pageImages,

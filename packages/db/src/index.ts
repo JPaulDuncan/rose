@@ -26,3 +26,7 @@ export { Message } from './models/Message.js';
 export type { MessageDoc } from './models/Message.js';
 export { OutboundMessage } from './models/OutboundMessage.js';
 export type { OutboundMessageDoc } from './models/OutboundMessage.js';
+export { Rule } from './models/Rule.js';
+export type { RuleDoc } from './models/Rule.js';
+export { RuleAuditLog } from './models/RuleAuditLog.js';
+export type { RuleAuditLogDoc } from './models/RuleAuditLog.js';

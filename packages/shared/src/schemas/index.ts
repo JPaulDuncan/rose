@@ -6,3 +6,4 @@ export * from './source.js';
 export * from './search.js';
 export * from './provider.js';
 export * from './spam.js';
+export * from './rule.js';

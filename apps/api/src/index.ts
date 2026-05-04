@@ -33,6 +33,7 @@ import { promotionsRouter } from './routes/promotions.js';
 import { chatRouter } from './routes/chat.js';
 import { saveRouter } from './routes/save.js';
 import { replyRouter, outboundRouter } from './routes/reply.js';
+import { rulesRouter } from './routes/rules.js';
 import { errorHandler } from './middleware/error.js';
 import { requireAuth } from './middleware/auth.js';
 import { apiLimiter } from './middleware/rateLimit.js';
@@ -101,6 +102,7 @@ export async function createServer(): Promise<Express> {
   app.use('/api/save', requireAuth, saveRouter);
   app.use('/api/emails', requireAuth, replyRouter);
   app.use('/api/outbound', requireAuth, outboundRouter);
+  app.use('/api/rules', requireAuth, rulesRouter);
 
   app.use(errorHandler);
 
