@@ -12,7 +12,12 @@ import { startFetchAndParseWorker } from './processors/fetchAndParse.js';
 import { startSendOutboundWorker } from './processors/sendOutbound.js';
 import { startDigestEmailWorker } from './processors/digestEmail.js';
 import { startWebhookDeliverWorker } from './processors/webhookDeliver.js';
+import {
+  startPushNotifyWorker,
+  startEventSoonSweep,
+} from './processors/pushNotify.js';
 import { startReputationDecaySweep } from './services/reputationSweep.js';
+import { getVapidKeys } from './lib/vapid.js';
 
 async function bootstrap() {
   await connectMongo();
@@ -26,6 +31,11 @@ async function bootstrap() {
   startSendOutboundWorker();
   startDigestEmailWorker();
   startWebhookDeliverWorker();
+  startPushNotifyWorker();
+  startEventSoonSweep();
+  // Initialise VAPID keys at boot (generates on first run, persists
+  // to var/vapid.json so the API can read the public half).
+  getVapidKeys();
   startReputationDecaySweep();
   // Repeatable hourly sweep that fires the digest mailer for every
   // user whose configured local time matches the current hour.

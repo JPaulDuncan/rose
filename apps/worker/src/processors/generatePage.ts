@@ -31,6 +31,7 @@ import { upsertSendersFromPage } from '../services/senderUpsert.js';
 import { bayesScoreFor } from '../lib/bayesScore.js';
 import { evaluateRules, type RuleVerdict, emptyVerdict } from '../services/rules.js';
 import { dispatchWebhookEvent } from './webhookDeliver.js';
+import { evaluatePageNotifications } from './pushNotify.js';
 import {
   extractEventsForPage,
   syncEventsToPage,
@@ -783,6 +784,13 @@ export function startGeneratePageWorker() {
             }
           } catch (err) {
             logger.warn({ err, pageId: String(pageId) }, 'webhook dispatch failed');
+          }
+          // Push notifications — fire matching subscriptions for this
+          // page. Best-effort; failures don't break generation.
+          try {
+            await evaluatePageNotifications(userId, pageObj);
+          } catch (err) {
+            logger.warn({ err, pageId: String(pageId) }, 'push dispatch failed');
           }
         }
       } catch (err) {

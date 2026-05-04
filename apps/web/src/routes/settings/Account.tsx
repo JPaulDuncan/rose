@@ -1,10 +1,16 @@
-import { useState } from 'react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, RefreshCw, Trash2 } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { AlertTriangle, Bell, BellOff, RefreshCw, Trash2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useAuth } from '../../lib/auth';
 import { useTheme } from '../../lib/theme';
 import { useApi } from '../../lib/api';
+import {
+  checkPushSupport,
+  currentEndpoint,
+  subscribePush,
+  unsubscribePush,
+} from '../../lib/push';
 
 type ResetResponse = {
   ok: true;
@@ -49,11 +55,266 @@ export default function AccountSettings() {
         </div>
       </div>
 
+      <PushCard />
+
       <DangerZone />
 
       <button className="btn-secondary" onClick={logout}>
         Sign out
       </button>
+    </div>
+  );
+}
+
+type NotificationRule = {
+  _id: string;
+  kind: 'priority-high' | 'tag' | 'sender' | 'event-soon';
+  match: { tag?: string; brandKey?: string; hoursAhead?: number };
+  enabled: boolean;
+};
+
+function PushCard() {
+  const api = useApi();
+  const qc = useQueryClient();
+  const support = checkPushSupport();
+  const [endpoint, setEndpoint] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const { data: keyResp } = useQuery({
+    queryKey: ['push-key'],
+    queryFn: () => api.get<{ publicKey: string | null }>('/api/push/key'),
+  });
+  const { data: rulesResp } = useQuery({
+    queryKey: ['notification-rules'],
+    queryFn: () => api.get<{ rules: NotificationRule[] }>('/api/push/rules'),
+  });
+
+  useEffect(() => {
+    void currentEndpoint().then(setEndpoint);
+  }, []);
+
+  const subscribed = !!endpoint;
+
+  async function enable() {
+    if (!keyResp?.publicKey) {
+      toast.error('Push not configured by the operator yet');
+      return;
+    }
+    setBusy(true);
+    try {
+      const perm = await Notification.requestPermission();
+      if (perm !== 'granted') {
+        toast.error('Notifications blocked');
+        return;
+      }
+      const sub = await subscribePush(keyResp.publicKey);
+      const keys = sub.keys ?? {};
+      await api.post('/api/push/subscribe', {
+        endpoint: sub.endpoint,
+        keys: { p256dh: keys.p256dh, auth: keys.auth },
+        userAgent: navigator.userAgent,
+      });
+      setEndpoint(sub.endpoint ?? null);
+      toast.success('Push notifications enabled');
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function disable() {
+    setBusy(true);
+    try {
+      const ep = await unsubscribePush();
+      if (ep) await api.post('/api/push/unsubscribe', { endpoint: ep });
+      setEndpoint(null);
+      toast.success('Disabled');
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const addRule = useMutation({
+    mutationFn: async (body: Omit<NotificationRule, '_id' | 'enabled'>) =>
+      api.post<NotificationRule>('/api/push/rules', body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['notification-rules'] }),
+  });
+  const removeRule = useMutation({
+    mutationFn: async (id: string) =>
+      api.del<{ ok: true }>(`/api/push/rules/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['notification-rules'] }),
+  });
+
+  return (
+    <div className="card">
+      <div className="mb-2 flex items-center gap-2">
+        {subscribed ? (
+          <Bell className="h-5 w-5 text-rose-500" />
+        ) : (
+          <BellOff className="h-5 w-5 text-ink-400" />
+        )}
+        <h2 className="font-semibold">Push notifications</h2>
+      </div>
+      {!support.ok ? (
+        <p className="text-sm text-ink-500">
+          Your browser doesn't support WebPush ({support.reason}). On Safari,
+          install Rose to your Home Screen and try again.
+        </p>
+      ) : !keyResp?.publicKey ? (
+        <p className="text-sm text-ink-500">
+          The operator hasn't configured VAPID keys for this deployment yet.
+          The worker will generate and persist a keypair on its next boot;
+          refresh after that.
+        </p>
+      ) : (
+        <>
+          <p className="text-sm text-ink-500">
+            Get a browser notification when a high-priority page lands, a
+            tag you follow gets a new entry, or an extracted calendar event
+            is coming up soon.
+          </p>
+          <div className="mt-3 flex gap-2">
+            {subscribed ? (
+              <button className="btn-ghost" onClick={disable} disabled={busy}>
+                <BellOff className="h-4 w-4" /> Disable on this device
+              </button>
+            ) : (
+              <button className="btn-primary" onClick={enable} disabled={busy}>
+                <Bell className="h-4 w-4" /> Enable on this device
+              </button>
+            )}
+          </div>
+
+          <NotificationRulesList
+            rules={rulesResp?.rules ?? []}
+            onAdd={(r) => addRule.mutate(r)}
+            onRemove={(id) => removeRule.mutate(id)}
+          />
+        </>
+      )}
+    </div>
+  );
+}
+
+function NotificationRulesList({
+  rules,
+  onAdd,
+  onRemove,
+}: {
+  rules: NotificationRule[];
+  onAdd: (r: Omit<NotificationRule, '_id' | 'enabled'>) => void;
+  onRemove: (id: string) => void;
+}) {
+  const [tag, setTag] = useState('');
+  const [brand, setBrand] = useState('');
+  const hasPriority = rules.some((r) => r.kind === 'priority-high');
+  const hasEventSoon = rules.some((r) => r.kind === 'event-soon');
+  return (
+    <div className="mt-4 space-y-3">
+      <div className="text-[10px] uppercase tracking-widest text-ink-500">
+        Tell me about
+      </div>
+      <div className="grid gap-2 sm:grid-cols-2">
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={hasPriority}
+            onChange={() => {
+              if (hasPriority) {
+                const r = rules.find((x) => x.kind === 'priority-high');
+                if (r) onRemove(r._id);
+              } else {
+                onAdd({ kind: 'priority-high', match: {} });
+              }
+            }}
+          />
+          High-priority pages
+        </label>
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={hasEventSoon}
+            onChange={() => {
+              if (hasEventSoon) {
+                const r = rules.find((x) => x.kind === 'event-soon');
+                if (r) onRemove(r._id);
+              } else {
+                onAdd({ kind: 'event-soon', match: { hoursAhead: 6 } });
+              }
+            }}
+          />
+          Calendar events within 6 hours
+        </label>
+      </div>
+
+      <div className="grid gap-2 sm:grid-cols-2">
+        <form
+          className="flex gap-1.5"
+          onSubmit={(e) => {
+            e.preventDefault();
+            const v = tag.trim().toLowerCase();
+            if (!v) return;
+            onAdd({ kind: 'tag', match: { tag: v } });
+            setTag('');
+          }}
+        >
+          <input
+            className="input text-xs"
+            value={tag}
+            onChange={(e) => setTag(e.target.value)}
+            placeholder="follow tag…"
+          />
+          <button className="btn-secondary text-xs" type="submit">
+            Add
+          </button>
+        </form>
+        <form
+          className="flex gap-1.5"
+          onSubmit={(e) => {
+            e.preventDefault();
+            const v = brand.trim().toLowerCase();
+            if (!v) return;
+            onAdd({ kind: 'sender', match: { brandKey: v } });
+            setBrand('');
+          }}
+        >
+          <input
+            className="input text-xs"
+            value={brand}
+            onChange={(e) => setBrand(e.target.value)}
+            placeholder="follow sender brand…"
+          />
+          <button className="btn-secondary text-xs" type="submit">
+            Add
+          </button>
+        </form>
+      </div>
+
+      {rules.filter((r) => r.kind === 'tag' || r.kind === 'sender').length > 0 && (
+        <ul className="flex flex-wrap gap-1.5">
+          {rules
+            .filter((r) => r.kind === 'tag' || r.kind === 'sender')
+            .map((r) => (
+              <li
+                key={r._id}
+                className="inline-flex items-center gap-1 rounded-full bg-rose-100 px-2 py-0.5 text-xs text-rose-800 dark:bg-rose-950/40 dark:text-rose-200"
+              >
+                {r.kind === 'tag' ? `#${r.match.tag}` : `@${r.match.brandKey}`}
+                <button
+                  type="button"
+                  onClick={() => onRemove(r._id)}
+                  className="-mr-1 ml-0.5 rounded-full p-0.5 hover:bg-rose-200 dark:hover:bg-rose-900/60"
+                  aria-label="Remove"
+                >
+                  ×
+                </button>
+              </li>
+            ))}
+        </ul>
+      )}
     </div>
   );
 }

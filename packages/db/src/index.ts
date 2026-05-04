@@ -34,3 +34,7 @@ export { ShareLink } from './models/ShareLink.js';
 export type { ShareLinkDoc } from './models/ShareLink.js';
 export { WebhookSubscription } from './models/WebhookSubscription.js';
 export type { WebhookSubscriptionDoc } from './models/WebhookSubscription.js';
+export { PushSubscription } from './models/PushSubscription.js';
+export type { PushSubscriptionDoc } from './models/PushSubscription.js';
+export { NotificationRule } from './models/NotificationRule.js';
+export type { NotificationRuleDoc } from './models/NotificationRule.js';

@@ -22,6 +22,9 @@ export const env = {
   DEFAULT_GENERATION_MODEL: process.env.DEFAULT_GENERATION_MODEL ?? 'llama3.1:8b-instruct',
   DEFAULT_EMBEDDING_MODEL: process.env.DEFAULT_EMBEDDING_MODEL ?? 'nomic-embed-text',
   ENABLE_REGISTRATION: (process.env.ENABLE_REGISTRATION ?? 'true') === 'true',
+  VAPID_PUBLIC_KEY: process.env.VAPID_PUBLIC_KEY ?? '',
+  VAPID_PRIVATE_KEY: process.env.VAPID_PRIVATE_KEY ?? '',
+  VAPID_SUBJECT: process.env.VAPID_SUBJECT ?? 'mailto:admin@rose.local',
 } as const;
 
 export type Env = typeof env;

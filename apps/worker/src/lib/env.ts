@@ -17,4 +17,10 @@ export const env = {
   GOOGLE_CLIENT_ID: process.env.GOOGLE_CLIENT_ID ?? '',
   GOOGLE_CLIENT_SECRET: process.env.GOOGLE_CLIENT_SECRET ?? '',
   GOOGLE_REDIRECT_URI: process.env.GOOGLE_REDIRECT_URI ?? '',
+  /** WebPush VAPID keypair. Auto-generated on first boot if absent
+   *  and persisted to a file under var/. The public half is exposed
+   *  to the SPA via /api/push/key. */
+  VAPID_PUBLIC_KEY: process.env.VAPID_PUBLIC_KEY ?? '',
+  VAPID_PRIVATE_KEY: process.env.VAPID_PRIVATE_KEY ?? '',
+  VAPID_SUBJECT: process.env.VAPID_SUBJECT ?? 'mailto:admin@rose.local',
 } as const;
