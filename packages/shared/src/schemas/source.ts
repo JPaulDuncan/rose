@@ -1,6 +1,15 @@
 import { z } from 'zod';
 
-export const SourceType = z.enum(['upload', 'imap', 'webhook', 'gmail', 'rss']);
+export const SourceType = z.enum([
+  'upload',
+  'imap',
+  'webhook',
+  'gmail',
+  'rss',
+  'slack',
+  'discord',
+  'gcal',
+]);
 export type SourceType = z.infer<typeof SourceType>;
 
 export const ImapConfig = z.object({
@@ -43,6 +52,38 @@ export const RssConfig = z.object({
 });
 export type RssConfig = z.infer<typeof RssConfig>;
 
+export const SlackConfig = z.object({
+  /** Slack workspace token. xoxb-* (bot) or xoxp-* (user) — operator
+   *  picks per their threat model. We never request write scopes. */
+  token: z.string().min(10),
+  workspaceId: z.string().optional(),
+  watchedChannels: z.array(z.string()).default([]),
+  cadence: z.enum(['daily', 'weekly']).default('daily'),
+  pollIntervalMinutes: z.number().int().min(15).max(1440).default(60),
+});
+export type SlackConfig = z.infer<typeof SlackConfig>;
+
+export const DiscordConfig = z.object({
+  /** Bot token (`Bot xxx`). User installs the Rose bot on their
+   *  server, then pastes the token. */
+  botToken: z.string().min(20),
+  guildId: z.string().min(1),
+  watchedChannels: z.array(z.string()).default([]),
+  cadence: z.enum(['daily', 'weekly']).default('daily'),
+  pollIntervalMinutes: z.number().int().min(15).max(1440).default(60),
+});
+export type DiscordConfig = z.infer<typeof DiscordConfig>;
+
+export const GcalConfig = z.object({
+  /** Set on initial connect; the worker exchanges it once for a
+   *  refresh token, then clears it. */
+  authCode: z.string().optional(),
+  /** Comma-separated calendar IDs to pull. Empty = primary only. */
+  calendarIds: z.array(z.string()).default([]),
+  pollIntervalMinutes: z.number().int().min(5).max(1440).default(15),
+});
+export type GcalConfig = z.infer<typeof GcalConfig>;
+
 export const Source = z.object({
   id: z.string(),
   userId: z.string(),
@@ -65,6 +106,9 @@ export const SourceCreateRequest = z.discriminatedUnion('type', [
     pollIntervalMinutes: z.number().int().min(1).max(1440).default(5),
   }),
   z.object({ type: z.literal('rss'), name: z.string().min(1), config: RssConfig }),
+  z.object({ type: z.literal('slack'), name: z.string().min(1), config: SlackConfig }),
+  z.object({ type: z.literal('discord'), name: z.string().min(1), config: DiscordConfig }),
+  z.object({ type: z.literal('gcal'), name: z.string().min(1), config: GcalConfig }),
 ]);
 export type SourceCreateRequest = z.infer<typeof SourceCreateRequest>;
 
@@ -107,6 +151,14 @@ export type SourceUpdateRequest = z.infer<typeof SourceUpdateRequest>;
 export const SourceTestRequest = z.discriminatedUnion('type', [
   z.object({ type: z.literal('imap'), config: ImapConfig }),
   z.object({ type: z.literal('rss'), config: z.object({ url: z.string().url() }) }),
+  z.object({
+    type: z.literal('slack'),
+    config: z.object({ token: z.string().min(10) }),
+  }),
+  z.object({
+    type: z.literal('discord'),
+    config: z.object({ botToken: z.string().min(20), guildId: z.string().min(1) }),
+  }),
 ]);
 export type SourceTestRequest = z.infer<typeof SourceTestRequest>;
 
@@ -116,6 +168,11 @@ export const SourceTestResponse = z.object({
   /** Sample of feed entry titles when testing an RSS source. */
   feedTitle: z.string().optional(),
   sampleItems: z.array(z.object({ title: z.string(), link: z.string().nullable() })).optional(),
+  /** Slack/Discord workspace info + channels list. */
+  workspaceName: z.string().optional(),
+  channels: z
+    .array(z.object({ id: z.string(), name: z.string(), isPrivate: z.boolean().optional() }))
+    .optional(),
   message: z.string().optional(),
 });
 export type SourceTestResponse = z.infer<typeof SourceTestResponse>;

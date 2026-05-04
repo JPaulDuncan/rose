@@ -28,10 +28,12 @@ const emailSchema = new Schema(
      *   rss       feed entries (sender = feed@<host>)
      *   url       saved web page (sender = web@<host>)
      *   document  uploaded PDF / DOCX / text (sender = you@<host>)
+     *   slack     daily digest of a watched channel (sender = slack@<wsId>)
+     *   discord   daily digest of a watched channel (sender = discord@<guild>)
      */
     kind: {
       type: String,
-      enum: ['email', 'rss', 'url', 'document'],
+      enum: ['email', 'rss', 'url', 'document', 'slack', 'discord'],
       default: 'email',
       index: true,
     },

@@ -3,7 +3,11 @@ import { Schema, model, type InferSchemaType, type HydratedDocument } from 'mong
 const sourceSchema = new Schema(
   {
     userId: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
-    type: { type: String, enum: ['upload', 'imap', 'webhook', 'gmail', 'rss'], required: true },
+    type: {
+      type: String,
+      enum: ['upload', 'imap', 'webhook', 'gmail', 'rss', 'slack', 'discord', 'gcal'],
+      required: true,
+    },
     name: { type: String, required: true },
     status: { type: String, enum: ['active', 'paused', 'error'], default: 'active' },
     /** AES-256-GCM encrypted JSON of source-specific config. */

@@ -14,7 +14,13 @@ import { validateBody } from '../middleware/validate.js';
 import { Source, ApiToken, User } from '@rose/db';
 import { formatImapError } from '@rose/email-parser';
 import { encryptJson, decryptJson } from '../lib/crypto.js';
-import { imapSyncQueue, gmailSyncQueue, rssSyncQueue } from '../lib/queues.js';
+import {
+  imapSyncQueue,
+  gmailSyncQueue,
+  rssSyncQueue,
+  slackSyncQueue,
+  discordSyncQueue,
+} from '../lib/queues.js';
 import { logger } from '../lib/logger.js';
 
 export const sourcesRouter: Router = Router();
@@ -142,6 +148,52 @@ sourcesRouter.post('/', validateBody(SourceCreateRequest), async (req, res) => {
     res.status(201).json(src);
     return;
   }
+
+  if (body.type === 'slack') {
+    const interval = body.config.pollIntervalMinutes;
+    const src = await Source.create({
+      userId,
+      type: 'slack',
+      name: body.name,
+      encryptedConfig: encryptJson(body.config),
+      pollIntervalMinutes: interval,
+    });
+    const payload = { sourceId: src._id.toString(), userId: userId.toString() };
+    await slackSyncQueue.add('sync', payload, {
+      repeat: { every: interval * 60_000 },
+      jobId: `slack:${src._id.toString()}`,
+    });
+    await slackSyncQueue.add('sync', payload, {
+      attempts: 3,
+      removeOnComplete: 50,
+      removeOnFail: 50,
+    });
+    res.status(201).json(src);
+    return;
+  }
+
+  if (body.type === 'discord') {
+    const interval = body.config.pollIntervalMinutes;
+    const src = await Source.create({
+      userId,
+      type: 'discord',
+      name: body.name,
+      encryptedConfig: encryptJson(body.config),
+      pollIntervalMinutes: interval,
+    });
+    const payload = { sourceId: src._id.toString(), userId: userId.toString() };
+    await discordSyncQueue.add('sync', payload, {
+      repeat: { every: interval * 60_000 },
+      jobId: `discord:${src._id.toString()}`,
+    });
+    await discordSyncQueue.add('sync', payload, {
+      attempts: 3,
+      removeOnComplete: 50,
+      removeOnFail: 50,
+    });
+    res.status(201).json(src);
+    return;
+  }
 });
 
 /** Force an immediate one-shot sync for an IMAP or Gmail source. */
@@ -161,6 +213,16 @@ sourcesRouter.post('/:id/sync', async (req, res) => {
   }
   if (src.type === 'gmail') {
     const job = await gmailSyncQueue.add('sync', payload, opts);
+    res.status(202).json({ jobId: job.id });
+    return;
+  }
+  if (src.type === 'slack') {
+    const job = await slackSyncQueue.add('sync', payload, opts);
+    res.status(202).json({ jobId: job.id });
+    return;
+  }
+  if (src.type === 'discord') {
+    const job = await discordSyncQueue.add('sync', payload, opts);
     res.status(202).json({ jobId: job.id });
     return;
   }
@@ -241,8 +303,109 @@ sourcesRouter.post('/test', validateBody(SourceTestRequest), async (req, res) =>
     res.status(result.ok ? 200 : 400).json(result);
     return;
   }
+  if (body.type === 'slack') {
+    const result = await testSlack(body.config.token);
+    res.status(result.ok ? 200 : 400).json(result);
+    return;
+  }
+  if (body.type === 'discord') {
+    const result = await testDiscord(body.config.botToken, body.config.guildId);
+    res.status(result.ok ? 200 : 400).json(result);
+    return;
+  }
   res.status(400).json({ ok: false, message: 'Unsupported source type for test' });
 });
+
+/** Resolve a Slack workspace + list channels using the supplied token.
+ *  Also doubles as a connectivity check before saving the source. */
+async function testSlack(token: string): Promise<
+  | {
+      ok: true;
+      workspaceName: string;
+      channels: { id: string; name: string; isPrivate?: boolean }[];
+    }
+  | { ok: false; message: string }
+> {
+  try {
+    const auth = await fetch('https://slack.com/api/auth.test', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: '',
+      signal: AbortSignal.timeout(8_000),
+    });
+    const aj = (await auth.json()) as { ok?: boolean; team?: string; error?: string };
+    if (!aj.ok) return { ok: false, message: aj.error ?? 'Slack auth.test failed' };
+    const list = await fetch(
+      'https://slack.com/api/conversations.list?types=public_channel,private_channel&exclude_archived=true&limit=200',
+      {
+        headers: { Authorization: `Bearer ${token}` },
+        signal: AbortSignal.timeout(10_000),
+      },
+    );
+    const lj = (await list.json()) as {
+      ok?: boolean;
+      channels?: { id: string; name: string; is_private?: boolean }[];
+      error?: string;
+    };
+    if (!lj.ok) return { ok: false, message: lj.error ?? 'conversations.list failed' };
+    return {
+      ok: true,
+      workspaceName: aj.team ?? 'Slack workspace',
+      channels: (lj.channels ?? []).map((c) => ({
+        id: c.id,
+        name: c.name,
+        isPrivate: !!c.is_private,
+      })),
+    };
+  } catch (err) {
+    return { ok: false, message: (err as Error).message };
+  }
+}
+
+/** Verify a Discord bot token + guild + list text channels. */
+async function testDiscord(
+  botToken: string,
+  guildId: string,
+): Promise<
+  | {
+      ok: true;
+      workspaceName: string;
+      channels: { id: string; name: string }[];
+    }
+  | { ok: false; message: string }
+> {
+  try {
+    const guildRes = await fetch(`https://discord.com/api/v10/guilds/${guildId}`, {
+      headers: { Authorization: `Bot ${botToken}` },
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (!guildRes.ok) {
+      const body = await guildRes.text().catch(() => '');
+      return { ok: false, message: `Discord HTTP ${guildRes.status}: ${body.slice(0, 200)}` };
+    }
+    const guild = (await guildRes.json()) as { name?: string };
+    const chRes = await fetch(`https://discord.com/api/v10/guilds/${guildId}/channels`, {
+      headers: { Authorization: `Bot ${botToken}` },
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!chRes.ok) {
+      return { ok: false, message: `Discord channels HTTP ${chRes.status}` };
+    }
+    const all = (await chRes.json()) as { id: string; name: string; type: number }[];
+    return {
+      ok: true,
+      workspaceName: guild.name ?? `Guild ${guildId}`,
+      channels: all
+        .filter((c) => [0, 5].includes(c.type))
+        .map((c) => ({ id: c.id, name: c.name })),
+    };
+  } catch (err) {
+    return { ok: false, message: (err as Error).message };
+  }
+}
 
 sourcesRouter.patch('/:id', validateBody(SourceUpdateRequest), async (req, res) => {
   const userId = new Types.ObjectId(userIdOf(req));
@@ -304,14 +467,22 @@ sourcesRouter.patch('/:id', validateBody(SourceUpdateRequest), async (req, res) 
 
   if (
     newInterval !== oldInterval &&
-    (src.type === 'imap' || src.type === 'gmail' || src.type === 'rss')
+    (src.type === 'imap' ||
+      src.type === 'gmail' ||
+      src.type === 'rss' ||
+      src.type === 'slack' ||
+      src.type === 'discord')
   ) {
     const queue =
       src.type === 'imap'
         ? imapSyncQueue
         : src.type === 'gmail'
           ? gmailSyncQueue
-          : rssSyncQueue;
+          : src.type === 'rss'
+            ? rssSyncQueue
+            : src.type === 'slack'
+              ? slackSyncQueue
+              : discordSyncQueue;
     const repeatKey = `${src.type}:${src._id.toString()}`;
     await queue.removeRepeatableByKey(repeatKey).catch((err: Error) => {
       logger.warn({ err, repeatKey }, 'failed to remove old repeatable');
@@ -344,6 +515,10 @@ sourcesRouter.delete('/:id', async (req, res) => {
     await gmailSyncQueue.removeRepeatableByKey(`gmail:${src._id.toString()}`).catch(() => null);
   if (src.type === 'rss')
     await rssSyncQueue.removeRepeatableByKey(`rss:${src._id.toString()}`).catch(() => null);
+  if (src.type === 'slack')
+    await slackSyncQueue.removeRepeatableByKey(`slack:${src._id.toString()}`).catch(() => null);
+  if (src.type === 'discord')
+    await discordSyncQueue.removeRepeatableByKey(`discord:${src._id.toString()}`).catch(() => null);
   await ApiToken.deleteMany({ sourceId: src._id });
   await src.deleteOne();
   res.json({ ok: true });

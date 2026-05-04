@@ -12,13 +12,15 @@ import {
   XCircle,
   Clock,
   Rss,
+  Hash,
+  MessageCircle,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useApi } from '../../lib/api';
 
 type Source = {
   _id: string;
-  type: 'imap' | 'webhook' | 'gmail' | 'upload' | 'rss';
+  type: 'imap' | 'webhook' | 'gmail' | 'upload' | 'rss' | 'slack' | 'discord' | 'gcal';
   name: string;
   status: string;
   pollIntervalMinutes?: number;
@@ -89,6 +91,8 @@ export default function SourcesSettings() {
     | { kind: 'edit-imap'; id: string }
     | { kind: 'create-rss' }
     | { kind: 'edit-rss'; id: string }
+    | { kind: 'create-slack' }
+    | { kind: 'create-discord' }
     | { kind: 'webhook' }
     | null
   >(null);
@@ -163,12 +167,18 @@ export default function SourcesSettings() {
   return (
     <div className="space-y-6">
       <RssGlobalDefaults />
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
         <button className="btn-secondary" onClick={() => setForm({ kind: 'create-imap' })}>
           <Mail className="h-4 w-4" /> Connect IMAP
         </button>
         <button className="btn-secondary" onClick={() => setForm({ kind: 'create-rss' })}>
           <Rss className="h-4 w-4" /> Add RSS feed
+        </button>
+        <button className="btn-secondary" onClick={() => setForm({ kind: 'create-slack' })}>
+          <Hash className="h-4 w-4" /> Connect Slack
+        </button>
+        <button className="btn-secondary" onClick={() => setForm({ kind: 'create-discord' })}>
+          <MessageCircle className="h-4 w-4" /> Connect Discord
         </button>
         <button className="btn-secondary" onClick={() => setForm({ kind: 'webhook' })}>
           <Webhook className="h-4 w-4" /> Add Webhook
@@ -223,6 +233,18 @@ export default function SourcesSettings() {
             const { name, ...rssConfig } = values;
             update.mutate({ id: form.id, body: { name, rssConfig } });
           }}
+        />
+      )}
+      {form?.kind === 'create-slack' && (
+        <SlackForm
+          onCancel={() => setForm(null)}
+          onSubmit={(body) => create.mutate(body)}
+        />
+      )}
+      {form?.kind === 'create-discord' && (
+        <DiscordForm
+          onCancel={() => setForm(null)}
+          onSubmit={(body) => create.mutate(body)}
         />
       )}
       {form?.kind === 'webhook' && (
@@ -938,6 +960,406 @@ function WebhookForm({
       <button type="submit" className="btn-primary">
         Create token
       </button>
+    </form>
+  );
+}
+
+type ChannelOpt = { id: string; name: string; isPrivate?: boolean };
+
+function SlackForm({
+  onCancel,
+  onSubmit,
+}: {
+  onCancel: () => void;
+  onSubmit: (body: unknown) => void;
+}) {
+  const api = useApi();
+  const [name, setName] = useState('My workspace');
+  const [token, setToken] = useState('');
+  const [pollMin, setPollMin] = useState(60);
+  const [cadence, setCadence] = useState<'daily' | 'weekly'>('daily');
+  const [tested, setTested] = useState<
+    | { state: 'idle' }
+    | { state: 'pending' }
+    | { state: 'ok'; workspaceName: string; channels: ChannelOpt[] }
+    | { state: 'fail'; message: string }
+  >({ state: 'idle' });
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+
+  async function runTest() {
+    if (!token.trim()) {
+      toast.error('Paste a Slack token first');
+      return;
+    }
+    setTested({ state: 'pending' });
+    try {
+      const r = await api.post<
+        | { ok: true; workspaceName: string; channels: ChannelOpt[] }
+        | { ok: false; message: string }
+      >('/api/sources/test', { type: 'slack', config: { token: token.trim() } });
+      if (r.ok) {
+        setTested({ state: 'ok', workspaceName: r.workspaceName, channels: r.channels });
+        if (!name || name === 'My workspace') setName(`Slack · ${r.workspaceName}`);
+      } else {
+        setTested({ state: 'fail', message: r.message });
+        toast.error(r.message);
+      }
+    } catch (err) {
+      const msg = (err as Error).message;
+      setTested({ state: 'fail', message: msg });
+      toast.error(msg);
+    }
+  }
+
+  return (
+    <form
+      className="card space-y-4"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (picked.size === 0) {
+          toast.error('Pick at least one channel');
+          return;
+        }
+        onSubmit({
+          type: 'slack',
+          name,
+          config: {
+            token: token.trim(),
+            workspaceId: tested.state === 'ok' ? tested.workspaceName : undefined,
+            watchedChannels: [...picked],
+            cadence,
+            pollIntervalMinutes: pollMin,
+          },
+        });
+      }}
+    >
+      <h3 className="font-semibold">Connect a Slack workspace</h3>
+      <p className="text-xs text-ink-500">
+        Create a Slack app at{' '}
+        <a
+          href="https://api.slack.com/apps"
+          target="_blank"
+          rel="noreferrer"
+          className="text-rose-600 hover:underline dark:text-rose-300"
+        >
+          api.slack.com/apps
+        </a>{' '}
+        with the read scopes <code>channels:history</code>,{' '}
+        <code>groups:history</code>, <code>conversations.list</code>,{' '}
+        <code>users:read</code>. Install it to your workspace, then paste the
+        Bot User OAuth Token below.
+      </p>
+
+      <Field label="Display name">
+        <input
+          className="input"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          required
+        />
+      </Field>
+      <Field label="Workspace token (xoxb-… or xoxp-…)">
+        <input
+          className="input"
+          value={token}
+          onChange={(e) => setToken(e.target.value)}
+          placeholder="xoxb-…"
+          autoComplete="off"
+          required
+        />
+      </Field>
+
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Field label="Poll interval (minutes)">
+          <input
+            className="input"
+            type="number"
+            min={15}
+            max={1440}
+            value={pollMin}
+            onChange={(e) => setPollMin(Number(e.target.value))}
+          />
+        </Field>
+        <Field label="Cadence">
+          <select
+            className="input"
+            value={cadence}
+            onChange={(e) => setCadence(e.target.value as 'daily' | 'weekly')}
+          >
+            <option value="daily">Daily digest per channel</option>
+            <option value="weekly">Weekly digest per channel</option>
+          </select>
+        </Field>
+      </div>
+
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          className="btn-secondary text-xs"
+          onClick={runTest}
+          disabled={tested.state === 'pending'}
+        >
+          <PlugZap className={`h-3.5 w-3.5 ${tested.state === 'pending' ? 'animate-pulse' : ''}`} />
+          Test + list channels
+        </button>
+        {tested.state === 'ok' && (
+          <span className="text-[11px] uppercase tracking-widest text-emerald-700 dark:text-emerald-300">
+            <CheckCircle2 className="mr-1 inline-block h-3 w-3" /> {tested.workspaceName}
+          </span>
+        )}
+        {tested.state === 'fail' && (
+          <span className="text-[11px] text-red-600">
+            <XCircle className="mr-1 inline-block h-3 w-3" /> {tested.message}
+          </span>
+        )}
+      </div>
+
+      {tested.state === 'ok' && (
+        <fieldset className="rounded-lg border border-ink-200 p-3 dark:border-ink-800">
+          <legend className="px-1 text-[10px] uppercase tracking-widest text-ink-500">
+            Channels to digest ({tested.channels.length})
+          </legend>
+          <ul className="grid max-h-72 gap-1 overflow-y-auto sm:grid-cols-2">
+            {tested.channels.map((c) => (
+              <li key={c.id}>
+                <label className="flex items-center gap-2 text-xs">
+                  <input
+                    type="checkbox"
+                    checked={picked.has(c.id)}
+                    onChange={(e) => {
+                      const next = new Set(picked);
+                      if (e.target.checked) next.add(c.id);
+                      else next.delete(c.id);
+                      setPicked(next);
+                    }}
+                  />
+                  <span className="truncate">
+                    #{c.name} {c.isPrivate && <span className="text-ink-400">(private)</span>}
+                  </span>
+                </label>
+              </li>
+            ))}
+          </ul>
+        </fieldset>
+      )}
+
+      <div className="flex justify-end gap-2 text-xs">
+        <button type="button" className="btn-ghost" onClick={onCancel}>
+          Cancel
+        </button>
+        <button
+          type="submit"
+          className="btn-primary"
+          disabled={tested.state !== 'ok' || picked.size === 0}
+        >
+          Connect
+        </button>
+      </div>
+    </form>
+  );
+}
+
+function DiscordForm({
+  onCancel,
+  onSubmit,
+}: {
+  onCancel: () => void;
+  onSubmit: (body: unknown) => void;
+}) {
+  const api = useApi();
+  const [name, setName] = useState('My server');
+  const [botToken, setBotToken] = useState('');
+  const [guildId, setGuildId] = useState('');
+  const [pollMin, setPollMin] = useState(60);
+  const [cadence, setCadence] = useState<'daily' | 'weekly'>('daily');
+  const [tested, setTested] = useState<
+    | { state: 'idle' }
+    | { state: 'pending' }
+    | { state: 'ok'; workspaceName: string; channels: ChannelOpt[] }
+    | { state: 'fail'; message: string }
+  >({ state: 'idle' });
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+
+  async function runTest() {
+    if (!botToken.trim() || !guildId.trim()) {
+      toast.error('Bot token + guild ID required');
+      return;
+    }
+    setTested({ state: 'pending' });
+    try {
+      const r = await api.post<
+        | { ok: true; workspaceName: string; channels: ChannelOpt[] }
+        | { ok: false; message: string }
+      >('/api/sources/test', {
+        type: 'discord',
+        config: { botToken: botToken.trim(), guildId: guildId.trim() },
+      });
+      if (r.ok) {
+        setTested({ state: 'ok', workspaceName: r.workspaceName, channels: r.channels });
+        if (!name || name === 'My server') setName(`Discord · ${r.workspaceName}`);
+      } else {
+        setTested({ state: 'fail', message: r.message });
+        toast.error(r.message);
+      }
+    } catch (err) {
+      const msg = (err as Error).message;
+      setTested({ state: 'fail', message: msg });
+      toast.error(msg);
+    }
+  }
+
+  return (
+    <form
+      className="card space-y-4"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (picked.size === 0) {
+          toast.error('Pick at least one channel');
+          return;
+        }
+        onSubmit({
+          type: 'discord',
+          name,
+          config: {
+            botToken: botToken.trim(),
+            guildId: guildId.trim(),
+            watchedChannels: [...picked],
+            cadence,
+            pollIntervalMinutes: pollMin,
+          },
+        });
+      }}
+    >
+      <h3 className="font-semibold">Connect a Discord server</h3>
+      <p className="text-xs text-ink-500">
+        Create a Discord application at{' '}
+        <a
+          href="https://discord.com/developers/applications"
+          target="_blank"
+          rel="noreferrer"
+          className="text-rose-600 hover:underline dark:text-rose-300"
+        >
+          discord.com/developers/applications
+        </a>
+        , add a bot, enable the <strong>Message Content Intent</strong>, and
+        invite it to your server with <code>View Channels</code> +{' '}
+        <code>Read Message History</code> permissions.
+      </p>
+
+      <Field label="Display name">
+        <input
+          className="input"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          required
+        />
+      </Field>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Field label="Bot token">
+          <input
+            className="input"
+            value={botToken}
+            onChange={(e) => setBotToken(e.target.value)}
+            placeholder="MTI…"
+            autoComplete="off"
+            required
+          />
+        </Field>
+        <Field label="Guild (server) ID">
+          <input
+            className="input"
+            value={guildId}
+            onChange={(e) => setGuildId(e.target.value)}
+            placeholder="123456789012345678"
+            required
+          />
+        </Field>
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Field label="Poll interval (minutes)">
+          <input
+            className="input"
+            type="number"
+            min={15}
+            max={1440}
+            value={pollMin}
+            onChange={(e) => setPollMin(Number(e.target.value))}
+          />
+        </Field>
+        <Field label="Cadence">
+          <select
+            className="input"
+            value={cadence}
+            onChange={(e) => setCadence(e.target.value as 'daily' | 'weekly')}
+          >
+            <option value="daily">Daily digest per channel</option>
+            <option value="weekly">Weekly digest per channel</option>
+          </select>
+        </Field>
+      </div>
+
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          className="btn-secondary text-xs"
+          onClick={runTest}
+          disabled={tested.state === 'pending'}
+        >
+          <PlugZap className={`h-3.5 w-3.5 ${tested.state === 'pending' ? 'animate-pulse' : ''}`} />
+          Test + list channels
+        </button>
+        {tested.state === 'ok' && (
+          <span className="text-[11px] uppercase tracking-widest text-emerald-700 dark:text-emerald-300">
+            <CheckCircle2 className="mr-1 inline-block h-3 w-3" /> {tested.workspaceName}
+          </span>
+        )}
+        {tested.state === 'fail' && (
+          <span className="text-[11px] text-red-600">
+            <XCircle className="mr-1 inline-block h-3 w-3" /> {tested.message}
+          </span>
+        )}
+      </div>
+
+      {tested.state === 'ok' && (
+        <fieldset className="rounded-lg border border-ink-200 p-3 dark:border-ink-800">
+          <legend className="px-1 text-[10px] uppercase tracking-widest text-ink-500">
+            Channels to digest ({tested.channels.length})
+          </legend>
+          <ul className="grid max-h-72 gap-1 overflow-y-auto sm:grid-cols-2">
+            {tested.channels.map((c) => (
+              <li key={c.id}>
+                <label className="flex items-center gap-2 text-xs">
+                  <input
+                    type="checkbox"
+                    checked={picked.has(c.id)}
+                    onChange={(e) => {
+                      const next = new Set(picked);
+                      if (e.target.checked) next.add(c.id);
+                      else next.delete(c.id);
+                      setPicked(next);
+                    }}
+                  />
+                  <span className="truncate">#{c.name}</span>
+                </label>
+              </li>
+            ))}
+          </ul>
+        </fieldset>
+      )}
+
+      <div className="flex justify-end gap-2 text-xs">
+        <button type="button" className="btn-ghost" onClick={onCancel}>
+          Cancel
+        </button>
+        <button
+          type="submit"
+          className="btn-primary"
+          disabled={tested.state !== 'ok' || picked.size === 0}
+        >
+          Connect
+        </button>
+      </div>
     </form>
   );
 }

@@ -14,6 +14,8 @@ export const QUEUE_NAMES = {
   digestEmail: 'rose.digest-email',
   webhookDeliver: 'rose.webhook-deliver',
   briefing: 'rose.briefing',
+  slackSync: 'rose.slack-sync',
+  discordSync: 'rose.discord-sync',
 } as const;
 
 export type QueueName = (typeof QUEUE_NAMES)[keyof typeof QUEUE_NAMES];
@@ -32,5 +34,7 @@ export const sendOutboundQueue = new Queue(QUEUE_NAMES.sendOutbound, connection)
 export const digestEmailQueue = new Queue(QUEUE_NAMES.digestEmail, connection);
 export const webhookDeliverQueue = new Queue(QUEUE_NAMES.webhookDeliver, connection);
 export const briefingQueue = new Queue(QUEUE_NAMES.briefing, connection);
+export const slackSyncQueue = new Queue(QUEUE_NAMES.slackSync, connection);
+export const discordSyncQueue = new Queue(QUEUE_NAMES.discordSync, connection);
 
 export const generatePageEvents = new QueueEvents(QUEUE_NAMES.generatePage, connection);
