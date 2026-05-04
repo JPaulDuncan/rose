@@ -7,6 +7,8 @@ import { OllamaProvider } from '@rose/llm';
 import { User } from '@rose/db';
 import { userIdOf } from '../middleware/auth.js';
 import { env } from '../lib/env.js';
+import { resolveProviderForUser } from '../lib/providers.js';
+import { logger } from '../lib/logger.js';
 
 const execFileP = promisify(execFile);
 
@@ -214,4 +216,82 @@ systemRouter.get('/stats', async (req, res) => {
     gpus,
     ollama: instances,
   });
+});
+
+/**
+ * Force-load each configured Ollama-backed role into memory so the user
+ * doesn't have to wait for first-use latency. Useful right after a
+ * worker restart or a Settings → Models change. Cloud providers
+ * (Anthropic, OpenAI) are skipped — there's nothing to preload.
+ *
+ * Reports per-role results so the UI can show which models came up
+ * and which failed. Capped at 60s per call so a missing model can't
+ * stall the request indefinitely.
+ */
+systemRouter.post('/preload-models', async (req, res) => {
+  const userId = userIdOf(req);
+  type RoleResult = {
+    role: 'generation' | 'embedding' | 'vision';
+    provider: string;
+    model: string;
+    ok: boolean;
+    elapsedMs: number;
+    message?: string;
+  };
+  const roles: RoleResult['role'][] = ['generation', 'embedding', 'vision'];
+  const results = await Promise.all(
+    roles.map(async (role): Promise<RoleResult> => {
+      const startedAt = Date.now();
+      try {
+        const r = await resolveProviderForUser(userId, role);
+        // Cloud providers don't have a preload concept. Skip with a
+        // friendly message rather than erroring.
+        if (r.providerId !== 'ollama') {
+          return {
+            role,
+            provider: r.providerId,
+            model: r.model,
+            ok: true,
+            elapsedMs: 0,
+            message: 'cloud provider — no preload needed',
+          };
+        }
+        if (!(r.provider instanceof OllamaProvider)) {
+          throw new Error('expected OllamaProvider instance');
+        }
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 60_000);
+        try {
+          if (role === 'embedding') {
+            // Embedding models load on first /api/embeddings call;
+            // /api/generate with no prompt won't pull them in.
+            await r.provider.embed(r.model, ' ', ctrl.signal);
+          } else {
+            await r.provider.preloadModel(r.model, ctrl.signal);
+          }
+        } finally {
+          clearTimeout(timer);
+        }
+        return {
+          role,
+          provider: r.providerId,
+          model: r.model,
+          ok: true,
+          elapsedMs: Date.now() - startedAt,
+        };
+      } catch (err) {
+        const message = (err as Error).message;
+        logger.warn({ err, role }, 'preload-models: role failed');
+        return {
+          role,
+          provider: 'unknown',
+          model: '',
+          ok: false,
+          elapsedMs: Date.now() - startedAt,
+          message,
+        };
+      }
+    }),
+  );
+  res.json({ results });
 });

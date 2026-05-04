@@ -100,12 +100,42 @@ type SystemStats = {
   }[];
 };
 
+type PreloadResult = {
+  role: 'generation' | 'embedding' | 'vision';
+  provider: string;
+  model: string;
+  ok: boolean;
+  elapsedMs: number;
+  message?: string;
+};
+
 function SystemStatsCard() {
   const api = useApi();
+  const qc = useQueryClient();
   const { data, isLoading, isError } = useQuery({
     queryKey: ['system-stats'],
     queryFn: () => api.get<SystemStats>('/api/system/stats'),
     refetchInterval: 3000,
+  });
+
+  const preload = useMutation({
+    mutationFn: () =>
+      api.post<{ results: PreloadResult[] }>('/api/system/preload-models'),
+    onSuccess: ({ results }) => {
+      const okCount = results.filter((r) => r.ok).length;
+      const failed = results.filter((r) => !r.ok);
+      if (failed.length === 0) {
+        toast.success(`Preloaded ${okCount} model${okCount === 1 ? '' : 's'}`);
+      } else {
+        toast.error(
+          `Preloaded ${okCount}/${results.length}; failed: ${failed
+            .map((r) => `${r.role} (${r.message ?? 'unknown'})`)
+            .join(', ')}`,
+        );
+      }
+      qc.invalidateQueries({ queryKey: ['system-stats'] });
+    },
+    onError: (err: Error) => toast.error(err.message),
   });
 
   if (isLoading) {
@@ -217,7 +247,21 @@ function SystemStatsCard() {
       </div>
 
       <div>
-        <h3 className="mb-2 text-sm font-medium">Loaded Ollama models</h3>
+        <div className="mb-2 flex items-center justify-between gap-2">
+          <h3 className="text-sm font-medium">Loaded Ollama models</h3>
+          <button
+            type="button"
+            className="btn-secondary text-xs"
+            onClick={() => preload.mutate()}
+            disabled={preload.isPending}
+            title="POST /api/generate with empty prompt for each role's model so Ollama loads them all into memory"
+          >
+            <Download
+              className={`h-3 w-3 ${preload.isPending ? 'animate-pulse' : ''}`}
+            />
+            {preload.isPending ? 'Preloading…' : 'Preload models'}
+          </button>
+        </div>
         {data.ollama.length === 0 ? (
           <div className="text-xs text-ink-500">No Ollama instances configured.</div>
         ) : (

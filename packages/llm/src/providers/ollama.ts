@@ -133,6 +133,29 @@ export class OllamaProvider implements LlmProvider {
     }
   }
 
+  /**
+   * Force Ollama to load a model into memory without actually generating
+   * any tokens. Posts `{model, keep_alive}` to `/api/generate` with no
+   * prompt — Ollama documents this as the canonical preload pattern.
+   * Returns once the model has been pulled into VRAM/RAM.
+   */
+  async preloadModel(model: string, signal?: AbortSignal): Promise<void> {
+    const res = await fetch(`${this.cfg.baseUrl}/api/generate`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ model, keep_alive: '30m' }),
+      signal,
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error(`Ollama preload failed (${res.status}): ${body.slice(0, 300)}`);
+    }
+    // Drain — Ollama returns a single JSON object once the model is
+    // resident. We don't need the payload, but we must consume it so
+    // the connection closes promptly.
+    await res.text().catch(() => null);
+  }
+
   async listModels(signal?: AbortSignal): Promise<ModelDescriptor[]> {
     const res = await fetch(`${this.cfg.baseUrl}/api/tags`, { signal });
     if (!res.ok) throw new Error(`Ollama tags failed (${res.status})`);
