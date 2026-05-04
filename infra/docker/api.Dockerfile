@@ -1,4 +1,5 @@
 ARG NODE_VERSION=22-alpine
+ARG NODE_RUNTIME_VERSION=22-bookworm-slim
 FROM node:${NODE_VERSION} AS base
 RUN corepack enable
 WORKDIR /repo
@@ -22,14 +23,14 @@ RUN pnpm --filter @rose/shared build \
  && pnpm --filter @rose/llm build \
  && pnpm --filter @rose/api build
 
-FROM node:${NODE_VERSION} AS runner
+# Runner is glibc-based (Debian) instead of Alpine so that the
+# nvidia-container-toolkit can inject `nvidia-smi` and libnvidia-ml.so
+# at runtime — Alpine's musl can't load NVML's glibc-linked .so files
+# even with gcompat, which produced "NVML: Driver Not Loaded" inside
+# the API container. /api/system/stats can now report GPU compute %,
+# VRAM, and temperature alongside the Ollama loaded-model view.
+FROM node:${NODE_RUNTIME_VERSION} AS runner
 RUN corepack enable
-# `nvidia-container-toolkit` injects glibc-linked binaries (notably
-# /usr/bin/nvidia-smi) into the container at runtime when the host is
-# configured for GPU passthrough. Alpine's musl can't run them as-is —
-# `gcompat` provides the glibc shim so /api/system/stats can shell
-# out to nvidia-smi for GPU telemetry. No-op on hosts without a GPU.
-RUN apk add --no-cache gcompat
 WORKDIR /repo
 ENV NODE_ENV=production
 COPY --from=build /repo /repo
