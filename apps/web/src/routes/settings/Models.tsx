@@ -85,6 +85,11 @@ type SystemStats = {
     memoryTotalMb: number | null;
     temperatureC: number | null;
   }[];
+  gpuProbe: {
+    binary: string | null;
+    ok: boolean;
+    message?: string;
+  };
   ollama: {
     role: string;
     baseUrl: string;
@@ -202,11 +207,34 @@ function SystemStatsCard() {
           <Zap className="h-4 w-4 text-rose-500" />
           <h3 className="text-sm font-medium">GPUs</h3>
           <span className="text-xs text-ink-500">
-            {data.gpus.length === 0
-              ? 'none detected (nvidia-smi not available)'
-              : `${data.gpus.length} found`}
+            {data.gpus.length > 0
+              ? `${data.gpus.length} found`
+              : data.gpuProbe.ok
+                ? 'none detected'
+                : 'unavailable'}
           </span>
         </div>
+        {data.gpus.length === 0 && (
+          <div className="rounded-lg border border-amber-200 bg-amber-50 p-2 text-xs text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/40 dark:text-amber-200">
+            <div className="font-medium">nvidia-smi probe</div>
+            <div className="mt-0.5">
+              {data.gpuProbe.binary ? (
+                <>
+                  Tried <code>{data.gpuProbe.binary}</code> —{' '}
+                  {data.gpuProbe.message ?? 'failed'}
+                </>
+              ) : (
+                data.gpuProbe.message
+              )}
+            </div>
+            <div className="mt-1 text-amber-800 dark:text-amber-300">
+              Fix: install <code>nvidia-container-toolkit</code> on the host,
+              run <code>nvidia-ctk runtime configure --runtime=docker</code>,
+              restart Docker, then{' '}
+              <code>docker compose up -d --force-recreate api</code>.
+            </div>
+          </div>
+        )}
         {data.gpus.length > 0 && (
           <ul className="space-y-2">
             {data.gpus.map((g) => {

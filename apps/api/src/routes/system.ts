@@ -41,44 +41,85 @@ type OllamaInstance = {
   loaded: LoadedModel[];
 };
 
+type GpuProbe = {
+  binary: string | null;
+  ok: boolean;
+  message?: string;
+};
+
 /**
- * Best-effort `nvidia-smi` shell-out. Returns an empty array when the
- * binary isn't present, the call times out, or the output can't be
- * parsed — the UI degrades gracefully to "no GPUs detected".
+ * Best-effort `nvidia-smi` shell-out. Tries each candidate binary in
+ * turn — the nvidia-container-toolkit usually injects to /usr/bin but
+ * some hosts mount it elsewhere. Returns the parsed rows AND a probe
+ * report so the UI can explain why GPUs are missing (binary not
+ * present, non-zero exit, parse failure, etc) instead of just saying
+ * "none detected".
  */
-async function readGpuStats(): Promise<GpuStat[]> {
-  try {
-    const { stdout } = await execFileP(
-      'nvidia-smi',
-      [
-        '--query-gpu=index,name,utilization.gpu,memory.used,memory.total,temperature.gpu',
-        '--format=csv,noheader,nounits',
-      ],
-      { timeout: 1500 },
-    );
-    return stdout
-      .split('\n')
-      .map((line) => line.trim())
-      .filter(Boolean)
-      .map((line) => {
-        const [index, name, util, used, total, temp] = line.split(',').map((s) => s.trim());
-        const num = (s?: string): number | null => {
-          if (!s) return null;
-          const n = Number(s);
-          return Number.isFinite(n) ? n : null;
-        };
+async function readGpuStats(): Promise<{ gpus: GpuStat[]; probe: GpuProbe }> {
+  const candidates = [
+    'nvidia-smi',
+    '/usr/bin/nvidia-smi',
+    '/usr/local/nvidia/bin/nvidia-smi',
+  ];
+  let lastError = 'nvidia-smi not found on PATH or any common location';
+  for (const binary of candidates) {
+    try {
+      const { stdout } = await execFileP(
+        binary,
+        [
+          '--query-gpu=index,name,utilization.gpu,memory.used,memory.total,temperature.gpu',
+          '--format=csv,noheader,nounits',
+        ],
+        { timeout: 3000 },
+      );
+      const gpus = stdout
+        .split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .map((line) => {
+          const [index, name, util, used, total, temp] = line.split(',').map((s) => s.trim());
+          const num = (s?: string): number | null => {
+            if (!s) return null;
+            const n = Number(s);
+            return Number.isFinite(n) ? n : null;
+          };
+          return {
+            index: num(index) ?? 0,
+            name: name ?? 'GPU',
+            utilizationPct: num(util),
+            memoryUsedMb: num(used),
+            memoryTotalMb: num(total),
+            temperatureC: num(temp),
+          };
+        });
+      if (gpus.length === 0) {
         return {
-          index: num(index) ?? 0,
-          name: name ?? 'GPU',
-          utilizationPct: num(util),
-          memoryUsedMb: num(used),
-          memoryTotalMb: num(total),
-          temperatureC: num(temp),
+          gpus: [],
+          probe: {
+            binary,
+            ok: false,
+            message: 'nvidia-smi ran but reported no GPUs',
+          },
         };
-      });
-  } catch {
-    return [];
+      }
+      return { gpus, probe: { binary, ok: true } };
+    } catch (err) {
+      const e = err as NodeJS.ErrnoException & { stderr?: string; signal?: string };
+      // ENOENT = binary not on this path; try the next one. Anything
+      // else is a real failure and we surface it.
+      if (e.code === 'ENOENT') {
+        lastError = `not found at ${binary}`;
+        continue;
+      }
+      const detail = (e.stderr ?? '').toString().trim().slice(0, 300);
+      lastError = `${binary} failed: ${e.message}${detail ? ` — ${detail}` : ''}${
+        e.signal ? ` (signal ${e.signal})` : ''
+      }`;
+      // Hard fail — the binary exists but couldn't run successfully.
+      return { gpus: [], probe: { binary, ok: false, message: lastError } };
+    }
   }
+  return { gpus: [], probe: { binary: null, ok: false, message: lastError } };
 }
 
 /**
@@ -182,7 +223,7 @@ systemRouter.get('/stats', async (req, res) => {
     seen.set(resolved, list);
   }
 
-  const [gpus, containerMem, ...instances] = await Promise.all([
+  const [gpuResult, containerMem, ...instances] = await Promise.all([
     readGpuStats(),
     readContainerMemory(),
     ...[...seen.entries()].map(([url, roles]) => probeOllama(roles.join('+'), url)),
@@ -213,7 +254,8 @@ systemRouter.get('/stats', async (req, res) => {
         cgroupCurrentBytes: containerMem.currentBytes,
       },
     },
-    gpus,
+    gpus: gpuResult.gpus,
+    gpuProbe: gpuResult.probe,
     ollama: instances,
   });
 });
