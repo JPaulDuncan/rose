@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { Types } from 'mongoose';
-import { Page, Category, Sender } from '@rose/db';
+import { Page, Category, Sender, normalizeCategoryName } from '@rose/db';
 import { userIdOf } from '../middleware/auth.js';
 
 export const codexRouter: Router = Router();
@@ -56,31 +56,70 @@ codexRouter.get('/', async (req, res) => {
     updatedAt: p.updatedAt,
   });
 
-  // Bucket pages by category id. Pages with no categoryId fall through
-  // to the "orphans" bucket and surface under "Uncatalogued".
-  const byCat = new Map<string, ReturnType<typeof entryShape>[]>();
-  const orphans: ReturnType<typeof entryShape>[] = [];
+  // Build a map from each Category._id → its normalized chapter key.
+  // Legacy rows may not have populated `normalizedName`; fall back to
+  // computing it on the fly so existing duplicates collapse here even
+  // before the worker re-saves them.
+  const catKey = new Map<string, string>();
+  for (const c of categories) {
+    const key = c.normalizedName?.trim() || normalizeCategoryName(c.name ?? '');
+    catKey.set(String(c._id), key);
+  }
+
+  // Bucket pages by their category's *normalized* key. Pages with no
+  // categoryId fall through to the "orphans" bucket and surface under
+  // "Uncatalogued".
+  type Entry = ReturnType<typeof entryShape>;
+  const byKey = new Map<string, Entry[]>();
+  const orphans: Entry[] = [];
   for (const p of pages) {
     const shape = entryShape(p);
     const cid = p.categoryId ? String(p.categoryId) : null;
-    if (!cid) {
+    const key = cid ? catKey.get(cid) : null;
+    if (!key) {
       orphans.push(shape);
-    } else {
-      const arr = byCat.get(cid) ?? [];
-      arr.push(shape);
-      byCat.set(cid, arr);
+      continue;
+    }
+    const arr = byKey.get(key) ?? [];
+    arr.push(shape);
+    byKey.set(key, arr);
+  }
+
+  // For each normalized key, pick the canonical Category as the one
+  // with the most contributing pages, breaking ties on most recent
+  // updatedAt. The display name is whatever that Category row holds.
+  const canonical = new Map<string, (typeof categories)[number]>();
+  for (const c of categories) {
+    const key = c.normalizedName?.trim() || normalizeCategoryName(c.name ?? '');
+    const cur = canonical.get(key);
+    if (!cur) {
+      canonical.set(key, c);
+      continue;
+    }
+    const count = (id: Types.ObjectId) =>
+      pages.filter((p) => String(p.categoryId) === String(id)).length;
+    const cAt = (c.updatedAt ?? c.createdAt) as Date | undefined;
+    const curAt = (cur.updatedAt ?? cur.createdAt) as Date | undefined;
+    if (
+      count(c._id) > count(cur._id) ||
+      (count(c._id) === count(cur._id) && (cAt?.getTime() ?? 0) > (curAt?.getTime() ?? 0))
+    ) {
+      canonical.set(key, c);
     }
   }
 
-  const chapters = categories
-    .map((c) => ({
-      _id: String(c._id),
-      name: c.name,
-      parentId: c.parentId ? String(c.parentId) : null,
-      icon: c.icon ?? null,
-      color: c.color ?? null,
-      entries: byCat.get(String(c._id)) ?? [],
-    }))
+  const chapters = [...canonical.values()]
+    .map((c) => {
+      const key = c.normalizedName?.trim() || normalizeCategoryName(c.name ?? '');
+      return {
+        _id: String(c._id),
+        name: c.name,
+        parentId: c.parentId ? String(c.parentId) : null,
+        icon: c.icon ?? null,
+        color: c.color ?? null,
+        entries: byKey.get(key) ?? [],
+      };
+    })
     .filter((c) => c.entries.length > 0)
     .sort((a, b) => b.entries.length - a.entries.length);
 

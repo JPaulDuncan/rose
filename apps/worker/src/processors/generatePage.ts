@@ -6,6 +6,7 @@ import {
   PageRevision,
   Instruction,
   Category,
+  normalizeCategoryName,
   User,
   Sender,
   type EmailDoc,
@@ -448,15 +449,32 @@ export function startGeneratePageWorker() {
 
       // Categories. A `assign.category` rule wins over the LLM's
       // suggestion so the user's explicit instruction is honoured.
+      // We look up by the *normalized* name so case + punctuation
+      // variants ("Email Marketing", "email-marketing") collapse onto
+      // a single Category row.
       let categoryId: Types.ObjectId | null = null;
       const categoryName = verdict.assignCategory ?? draft.suggestedCategory;
       if (categoryName) {
-        const cat = await Category.findOneAndUpdate(
-          { userId, name: categoryName },
-          { $setOnInsert: { userId, name: categoryName } },
-          { upsert: true, new: true },
-        );
-        categoryId = cat._id as Types.ObjectId;
+        const normalizedName = normalizeCategoryName(categoryName);
+        const cat =
+          (await Category.findOne({ userId, normalizedName })) ??
+          (await Category.findOne({ userId, name: categoryName }));
+        if (cat) {
+          // Make sure the normalizedName is populated on legacy rows
+          // so subsequent lookups hit the indexed path.
+          if (!cat.normalizedName) {
+            cat.normalizedName = normalizedName;
+            await cat.save();
+          }
+          categoryId = cat._id as Types.ObjectId;
+        } else {
+          const created = await Category.create({
+            userId,
+            name: categoryName,
+            normalizedName,
+          });
+          categoryId = created._id as Types.ObjectId;
+        }
       }
 
       // Build citation map from labels actually cited.
