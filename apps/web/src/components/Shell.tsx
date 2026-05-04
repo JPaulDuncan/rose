@@ -14,6 +14,7 @@ import {
   BookOpen,
   ShieldAlert,
   Megaphone,
+  Sparkles,
 } from 'lucide-react';
 import clsx from 'clsx';
 import { useAuth } from '../lib/auth';
@@ -24,6 +25,7 @@ import { useHotkeys } from '../hooks/useHotkeys';
 const NAV = [
   { to: '/', label: 'Home', icon: HomeIcon, key: 'g h' },
   { to: '/inbox', label: 'Inbox', icon: InboxIcon, key: 'g i' },
+  { to: '/chat', label: 'Ask', icon: Sparkles, key: 'g a' },
   { to: '/search', label: 'Search', icon: Search, key: '/' },
   { to: '/calendar', label: 'Calendar', icon: CalendarIcon, key: 'g c' },
   { to: '/streams', label: 'Streams', icon: Activity, key: 'g t' },
@@ -49,6 +51,7 @@ export function Shell({ children }: { children: ReactNode }) {
     },
     'g h': () => navigate('/'),
     'g i': () => navigate('/inbox'),
+    'g a': () => navigate('/chat'),
     'g c': () => navigate('/calendar'),
     'g t': () => navigate('/streams'),
     'g x': () => navigate('/codex'),

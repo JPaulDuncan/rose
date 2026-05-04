@@ -13,6 +13,7 @@ import {
   BookOpen,
   ShieldAlert,
   Megaphone,
+  Sparkles,
 } from 'lucide-react';
 import { useApi } from '../lib/api';
 
@@ -62,6 +63,9 @@ export function CommandPalette({
               </Command.Item>
               <Command.Item onSelect={() => go('/inbox')}>
                 <Inbox className="h-4 w-4" /> Inbox
+              </Command.Item>
+              <Command.Item onSelect={() => go('/chat')}>
+                <Sparkles className="h-4 w-4" /> Ask the wiki
               </Command.Item>
               <Command.Item onSelect={() => go('/search')}>
                 <Search className="h-4 w-4" /> Search

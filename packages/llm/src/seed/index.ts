@@ -181,4 +181,28 @@ NOAA periods:
 
 Output the brief only.`,
   },
+  {
+    name: 'chat.answer',
+    scope: 'chat',
+    description:
+      "Answers a question over the user's wiki using retrieved page snippets. Cites every claim with [pN] tokens that match the labels in the context.",
+    variables: ['context', 'history', 'question'],
+    isDefault: true,
+    template: `You are answering a question over the user's personal wiki.
+
+CONTEXT (each retrieved page is labelled \`[pN]\`):
+{{context}}
+
+CONVERSATION SO FAR
+{{history}}
+
+QUESTION
+{{question}}
+
+REQUIREMENTS
+- Cite every concrete claim with \`[pN]\` tokens that match the labels above.
+- If the context doesn't contain the answer, say so plainly — never invent facts about the user's data.
+- Reply in plain markdown; no preamble, no headings, no "Sure! Here is…" filler.
+- Keep it tight — say only what the question requires.`,
+  },
 ];

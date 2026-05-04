@@ -15,6 +15,7 @@ const instructionSchema = new Schema(
         'weather',
         'events',
         'sender',
+        'chat',
       ],
       required: true,
     },

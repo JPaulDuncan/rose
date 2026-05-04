@@ -20,3 +20,7 @@ export { Sender } from './models/Sender.js';
 export type { SenderDoc } from './models/Sender.js';
 export { BayesProfile } from './models/BayesProfile.js';
 export type { BayesProfileDoc } from './models/BayesProfile.js';
+export { Conversation } from './models/Conversation.js';
+export type { ConversationDoc } from './models/Conversation.js';
+export { Message } from './models/Message.js';
+export type { MessageDoc } from './models/Message.js';
