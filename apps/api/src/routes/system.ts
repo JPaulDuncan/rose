@@ -104,14 +104,27 @@ async function readGpuStats(): Promise<{ gpus: GpuStat[]; probe: GpuProbe }> {
       }
       return { gpus, probe: { binary, ok: true } };
     } catch (err) {
-      const e = err as NodeJS.ErrnoException & { stderr?: string; signal?: string };
+      const e = err as NodeJS.ErrnoException & {
+        stderr?: string;
+        stdout?: string;
+        signal?: string;
+      };
       // ENOENT = binary not on this path; try the next one. Anything
       // else is a real failure and we surface it.
       if (e.code === 'ENOENT') {
         lastError = `not found at ${binary}`;
         continue;
       }
-      const detail = (e.stderr ?? '').toString().trim().slice(0, 300);
+      // nvidia-smi prints "NVML: Driver Not Loaded" and similar to
+      // stdout, not stderr — capture both so the UI shows the real
+      // reason instead of a bare "Command failed".
+      const detail = [
+        (e.stderr ?? '').toString().trim(),
+        (e.stdout ?? '').toString().trim(),
+      ]
+        .filter(Boolean)
+        .join(' / ')
+        .slice(0, 400);
       lastError = `${binary} failed: ${e.message}${detail ? ` — ${detail}` : ''}${
         e.signal ? ` (signal ${e.signal})` : ''
       }`;
