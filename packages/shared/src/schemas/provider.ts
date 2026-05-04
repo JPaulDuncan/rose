@@ -7,11 +7,32 @@ export type ProviderId = z.infer<typeof ProviderId>;
 export const ProviderRole = z.enum(['generation', 'embedding']);
 export type ProviderRole = z.infer<typeof ProviderRole>;
 
+/** Optional sampling overrides for the generation provider. Null = use
+ *  the worker's per-call default. topK/repeatPenalty/numCtx are
+ *  Ollama-only; OpenAI/Anthropic ignore them. */
+export const GenerationParams = z.object({
+  temperature: z.number().min(0).max(2).nullable().default(null),
+  maxTokens: z.number().int().min(1).max(32768).nullable().default(null),
+  topP: z.number().min(0).max(1).nullable().default(null),
+  topK: z.number().int().min(1).max(200).nullable().default(null),
+  repeatPenalty: z.number().min(0).max(4).nullable().default(null),
+  numCtx: z.number().int().min(512).max(131072).nullable().default(null),
+});
+export type GenerationParams = z.infer<typeof GenerationParams>;
+
 /** Public view of a user's provider settings. API keys are NEVER returned. */
 export const ProviderSettings = z.object({
   generation: z.object({
     provider: ProviderId.default('ollama'),
     model: z.string().default('llama3.1:8b-instruct'),
+    params: GenerationParams.default({
+      temperature: null,
+      maxTokens: null,
+      topP: null,
+      topK: null,
+      repeatPenalty: null,
+      numCtx: null,
+    }),
   }),
   embedding: z.object({
     /** Anthropic excluded — no embeddings API. */
@@ -41,8 +62,9 @@ export type ProviderSettings = z.infer<typeof ProviderSettings>;
 export const ProviderSettingsUpdate = z.object({
   generation: z
     .object({
-      provider: ProviderId,
-      model: z.string().min(1),
+      provider: ProviderId.optional(),
+      model: z.string().min(1).optional(),
+      params: GenerationParams.partial().optional(),
     })
     .optional(),
   embedding: z

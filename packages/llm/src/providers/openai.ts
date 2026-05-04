@@ -39,6 +39,9 @@ export class OpenAIProvider implements LlmProvider {
         stream: true,
         temperature: opts.temperature ?? 0.2,
         max_tokens: opts.maxTokens ?? 4096,
+        // top_p passed through when set; OpenAI doesn't expose top_k or
+        // a vendor-style repeat_penalty on the public API.
+        ...(opts.topP != null ? { top_p: opts.topP } : {}),
         ...(opts.format === 'json' ? { response_format: { type: 'json_object' } } : {}),
         messages: [
           ...(opts.system ? [{ role: 'system', content: opts.system }] : []),

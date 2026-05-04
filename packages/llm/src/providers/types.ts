@@ -8,7 +8,19 @@ export type GenerateOptions = {
    *  fall back to instructing JSON-only via the system prompt. */
   format?: 'json';
   temperature?: number;
+  /** Maps to Ollama `num_predict`, Anthropic `max_tokens`,
+   *  OpenAI `max_tokens`. Null/undefined = provider default. */
   maxTokens?: number;
+  /** Nucleus sampling. All three providers honour this. */
+  topP?: number;
+  /** Top-K sampling. Ollama-only — silently ignored elsewhere. */
+  topK?: number;
+  /** Penalty applied to tokens that have appeared recently.
+   *  Ollama-only — silently ignored elsewhere. */
+  repeatPenalty?: number;
+  /** Context window size in tokens. Ollama-only — Anthropic/OpenAI
+   *  derive this from the model. */
+  numCtx?: number;
   signal?: AbortSignal;
 };
 

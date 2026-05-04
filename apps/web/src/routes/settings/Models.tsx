@@ -554,11 +554,38 @@ function RoleCard({
   const [provider, setProvider] = useState<ProviderId>(current.provider as ProviderId);
   const [model, setModel] = useState(current.model);
 
+  // Per-task default the worker uses when the user hasn't overridden.
+  // Surfaced in placeholders so the user knows what they're tuning.
+  const taskDefaults: Record<string, number | string> = {
+    temperature: 0.2,
+    maxTokens: 4096,
+    topP: '—',
+    topK: '—',
+    repeatPenalty: '—',
+    numCtx: 8192,
+  };
+
+  // Sampler overrides — generation role only. `null` = "use the
+  // worker's default for the task that called the LLM".
+  const savedParams = (
+    role === 'generation' ? (current as { params?: Record<string, number | null> }).params : undefined
+  ) ?? {
+    temperature: null,
+    maxTokens: null,
+    topP: null,
+    topK: null,
+    repeatPenalty: null,
+    numCtx: null,
+  };
+  const [params, setParams] = useState<Record<string, number | null>>(savedParams);
+
   // Keep local state in sync if the server settings change underneath us.
   useEffect(() => {
     setProvider(current.provider as ProviderId);
     setModel(current.model);
-  }, [current.provider, current.model]);
+    setParams(savedParams);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [current.provider, current.model, JSON.stringify(savedParams)]);
 
   const allowedProviders =
     role === 'embedding'
@@ -575,10 +602,11 @@ function RoleCard({
       : staticSuggestions;
 
   const save = useMutation({
-    mutationFn: async () =>
-      api.patch<{ ok: true }>('/api/providers', {
-        [role]: { provider, model },
-      }),
+    mutationFn: async () => {
+      const body: Record<string, unknown> = { provider, model };
+      if (role === 'generation') body.params = params;
+      return api.patch<{ ok: true }>('/api/providers', { [role]: body });
+    },
     onSuccess: () => {
       toast.success(`Saved — ${role} now uses ${provider}/${model}`);
       qc.invalidateQueries({ queryKey: ['provider-settings'] });
@@ -586,6 +614,22 @@ function RoleCard({
     },
     onError: (err: Error) => toast.error(err.message),
   });
+
+  const paramsDirty =
+    role === 'generation' && JSON.stringify(params) !== JSON.stringify(savedParams);
+  const dirty =
+    provider !== current.provider || model !== current.model || paramsDirty;
+
+  const setParam = (key: string, raw: string) => {
+    const trimmed = raw.trim();
+    if (trimmed === '') {
+      setParams({ ...params, [key]: null });
+      return;
+    }
+    const n = Number(trimmed);
+    if (!Number.isFinite(n)) return;
+    setParams({ ...params, [key]: n });
+  };
 
   const test = useMutation({
     mutationFn: async () =>
@@ -646,6 +690,53 @@ function RoleCard({
         </label>
       </div>
 
+      {role === 'generation' && (
+        <details className="rounded border border-ink-200 bg-ink-50 px-3 py-2 dark:border-ink-800 dark:bg-ink-900">
+          <summary className="cursor-pointer text-sm font-medium text-ink-600 hover:text-rose-600 dark:text-ink-300">
+            Advanced sampling (temperature, top-p, num_ctx, …)
+          </summary>
+          <p className="mt-2 text-xs text-ink-500">
+            Leave a field blank to use the per-task default the worker
+            applies (<code>0.2</code> for JSON-mode wiki generation,{' '}
+            <code>0.4</code> for the narrative briefing). <strong>Heads up:</strong>{' '}
+            temperatures above ~0.4 noticeably increase the rate of
+            malformed JSON, which makes generate-page jobs fail with{' '}
+            <code>LLM returned invalid JSON</code>.
+          </p>
+          <p className="mt-1 text-xs text-ink-500">
+            <code>topK</code>, <code>repeatPenalty</code>, and{' '}
+            <code>numCtx</code> are Ollama-specific — Anthropic and
+            OpenAI silently ignore them.
+          </p>
+          <div className="mt-3 grid gap-3 sm:grid-cols-3">
+            {(
+              [
+                ['temperature', 'Temperature', '0–2'],
+                ['topP', 'top_p', '0–1'],
+                ['topK', 'top_k', '1–200 (Ollama)'],
+                ['repeatPenalty', 'repeat_penalty', '~1.1 (Ollama)'],
+                ['maxTokens', 'max_tokens', 'integer'],
+                ['numCtx', 'num_ctx', '512–131072 (Ollama)'],
+              ] as const
+            ).map(([key, label, hint]) => (
+              <label key={key} className="block text-xs">
+                <span className="mb-1 block font-medium">
+                  {label} <span className="font-normal text-ink-400">({hint})</span>
+                </span>
+                <input
+                  className="input"
+                  type="number"
+                  step="any"
+                  placeholder={`default ${taskDefaults[key]}`}
+                  value={params[key] == null ? '' : String(params[key])}
+                  onChange={(e) => setParam(key, e.target.value)}
+                />
+              </label>
+            ))}
+          </div>
+        </details>
+      )}
+
       <div className="flex justify-end gap-2">
         <button
           type="button"
@@ -660,10 +751,7 @@ function RoleCard({
           type="button"
           className="btn-primary"
           onClick={() => save.mutate()}
-          disabled={
-            save.isPending ||
-            (provider === current.provider && model === current.model)
-          }
+          disabled={save.isPending || !dirty}
         >
           Save
         </button>

@@ -56,6 +56,10 @@ export class AnthropicProvider implements LlmProvider {
         messages: [{ role: 'user', content: opts.prompt }],
         max_tokens: opts.maxTokens ?? 4096,
         temperature: opts.temperature ?? 0.2,
+        // top_p / top_k passed through when set; Anthropic ignores
+        // unsupported sampler params silently.
+        ...(opts.topP != null ? { top_p: opts.topP } : {}),
+        ...(opts.topK != null ? { top_k: opts.topK } : {}),
         stream: true,
       }),
       signal: opts.signal,

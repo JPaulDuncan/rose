@@ -11,7 +11,7 @@ import { renderTemplate, SYSTEM_PROMPT_BASE } from '@rose/llm';
 import { slugify } from '@rose/shared';
 import { redis } from '../lib/redis.js';
 import { logger } from '../lib/logger.js';
-import { resolveProviderForUser } from '../lib/providers.js';
+import { resolveProviderForUser, applyParamOverrides } from '../lib/providers.js';
 
 const QUEUE = 'rose.briefing';
 
@@ -202,15 +202,21 @@ async function generateBriefingForUser(
     clusters: clustersBlock,
   });
 
-  const { provider, model: genModel, providerId } = await resolveProviderForUser(
-    userId,
-    'generation',
-  );
+  const { provider, model: genModel, providerId, params: userParams } =
+    await resolveProviderForUser(userId, 'generation');
+  // Briefing is a narrative write — slightly higher temp than the
+  // JSON-mode generate-page job. User overrides win.
+  const merged = applyParamOverrides({ temperature: 0.4 }, userParams);
   const text = await provider.generate({
     model: genModel,
     prompt,
     system: SYSTEM_PROMPT_BASE,
-    temperature: 0.4,
+    temperature: merged.temperature ?? 0.4,
+    maxTokens: merged.maxTokens ?? undefined,
+    topP: merged.topP ?? undefined,
+    topK: merged.topK ?? undefined,
+    repeatPenalty: merged.repeatPenalty ?? undefined,
+    numCtx: merged.numCtx ?? undefined,
   });
   const body = text.trim();
   if (!body) return { generated: false, reason: 'empty LLM output' };

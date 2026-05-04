@@ -21,7 +21,7 @@ import { PageGenerationDraft, slugify, type CitationMap } from '@rose/shared';
 import { stripAdSectionsStrict } from '@rose/email-parser';
 import { redis } from '../lib/redis.js';
 import { logger } from '../lib/logger.js';
-import { resolveProviderForUser } from '../lib/providers.js';
+import { resolveProviderForUser, applyParamOverrides } from '../lib/providers.js';
 import {
   ensureEmailEmbedding,
   findPageForEmail,
@@ -372,10 +372,8 @@ export function startGeneratePageWorker() {
           elidedNote,
       });
 
-      const { provider, model: genModel, providerId } = await resolveProviderForUser(
-        userId,
-        'generation',
-      );
+      const { provider, model: genModel, providerId, params: userParams } =
+        await resolveProviderForUser(userId, 'generation');
       logger.info(
         {
           providerId,
@@ -458,12 +456,21 @@ export function startGeneratePageWorker() {
           IDLE_TIMEOUT_MS,
         );
         try {
+          // 0.2 keeps the JSON well-formed; user can raise it via
+          // Settings → Models → Generation → Advanced if they want
+          // more variety, at the cost of occasional Zod parse failures.
+          const merged = applyParamOverrides({ temperature: 0.2 }, userParams);
           for await (const chunk of provider.generateStream({
             model: genModel,
             prompt,
             system: SYSTEM_PROMPT_BASE,
             format: 'json',
-            temperature: 0.2,
+            temperature: merged.temperature ?? 0.2,
+            maxTokens: merged.maxTokens ?? undefined,
+            topP: merged.topP ?? undefined,
+            topK: merged.topK ?? undefined,
+            repeatPenalty: merged.repeatPenalty ?? undefined,
+            numCtx: merged.numCtx ?? undefined,
             signal: ctrl.signal,
           })) {
             buffered += chunk.response;

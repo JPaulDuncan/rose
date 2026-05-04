@@ -8,10 +8,24 @@ import {
 import { decryptJson } from './crypto.js';
 import { env } from './env.js';
 
+/** Optional sampler overrides plumbed in from the user's settings.
+ *  Each field is null/undefined when the user hasn't customised it,
+ *  in which case the call site should fall back to its baked-in
+ *  per-task default (e.g. 0.2 for JSON-mode wiki generation). */
+export type GenerationParamOverrides = {
+  temperature?: number | null;
+  maxTokens?: number | null;
+  topP?: number | null;
+  topK?: number | null;
+  repeatPenalty?: number | null;
+  numCtx?: number | null;
+};
+
 export type ResolvedProvider = {
   provider: LlmProvider;
   providerId: ProviderId;
   model: string;
+  params: GenerationParamOverrides;
 };
 
 type Role = 'generation' | 'embedding' | 'vision';
@@ -61,10 +75,17 @@ export async function resolveProviderForUser(
   const model =
     roleCfg.model ||
     (cfgRole === 'generation' ? env.DEFAULT_GENERATION_MODEL : env.DEFAULT_EMBEDDING_MODEL);
+  // Sampler overrides live on the generation role; embedding has none.
+  // Vision inherits the generation role's params (it uses the same
+  // model family for describe-image calls).
+  const params: GenerationParamOverrides =
+    cfgRole === 'generation'
+      ? ((cfg.generation?.params as GenerationParamOverrides | undefined) ?? {})
+      : {};
 
   if (providerId === 'ollama') {
     const baseUrl = ollamaUrlForRole(cfg.ollama ?? undefined, role);
-    return { provider: buildProvider({ id: 'ollama', baseUrl }), providerId, model };
+    return { provider: buildProvider({ id: 'ollama', baseUrl }), providerId, model, params };
   }
 
   if (providerId === 'anthropic') {
@@ -79,6 +100,7 @@ export async function resolveProviderForUser(
       provider: buildProvider({ id: 'anthropic', apiKey, baseUrl }),
       providerId,
       model,
+      params,
     };
   }
 
@@ -91,6 +113,7 @@ export async function resolveProviderForUser(
       provider: buildProvider({ id: 'openai', apiKey, baseUrl }),
       providerId,
       model,
+      params,
     };
   }
 

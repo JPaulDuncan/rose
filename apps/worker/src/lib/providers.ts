@@ -8,10 +8,20 @@ import {
 import { decryptJson } from './crypto.js';
 import { env } from './env.js';
 
+export type GenerationParamOverrides = {
+  temperature?: number | null;
+  maxTokens?: number | null;
+  topP?: number | null;
+  topK?: number | null;
+  repeatPenalty?: number | null;
+  numCtx?: number | null;
+};
+
 export type ResolvedProvider = {
   provider: LlmProvider;
   providerId: ProviderId;
   model: string;
+  params: GenerationParamOverrides;
 };
 
 type Role = 'generation' | 'embedding' | 'vision';
@@ -50,10 +60,14 @@ export async function resolveProviderForUser(
   const model =
     roleCfg.model ||
     (cfgRole === 'generation' ? env.DEFAULT_GENERATION_MODEL : env.DEFAULT_EMBEDDING_MODEL);
+  const params: GenerationParamOverrides =
+    cfgRole === 'generation'
+      ? ((cfg.generation?.params as GenerationParamOverrides | undefined) ?? {})
+      : {};
 
   if (providerId === 'ollama') {
     const baseUrl = ollamaUrlForRole(cfg.ollama ?? undefined, role);
-    return { provider: buildProvider({ id: 'ollama', baseUrl }), providerId, model };
+    return { provider: buildProvider({ id: 'ollama', baseUrl }), providerId, model, params };
   }
 
   if (providerId === 'anthropic') {
@@ -68,6 +82,7 @@ export async function resolveProviderForUser(
       provider: buildProvider({ id: 'anthropic', apiKey, baseUrl }),
       providerId,
       model,
+      params,
     };
   }
 
@@ -80,8 +95,34 @@ export async function resolveProviderForUser(
       provider: buildProvider({ id: 'openai', apiKey, baseUrl }),
       providerId,
       model,
+      params,
     };
   }
 
   throw new Error(`Unknown provider: ${providerId as string}`);
+}
+
+/**
+ * Merge a call-site default object (e.g. `{ temperature: 0.2 }`) with
+ * the user's saved overrides — non-null user values win. Returns the
+ * full merged set so call sites can spread every supported sampler
+ * field into `provider.generate()` whether the user set it or not.
+ */
+export function applyParamOverrides(
+  defaults: GenerationParamOverrides,
+  overrides: GenerationParamOverrides,
+): Required<{ [K in keyof GenerationParamOverrides]: number | null }> {
+  const merged: Record<string, number | null> = {
+    temperature: null,
+    maxTokens: null,
+    topP: null,
+    topK: null,
+    repeatPenalty: null,
+    numCtx: null,
+    ...defaults,
+  };
+  for (const [k, v] of Object.entries(overrides)) {
+    if (v != null) merged[k] = v;
+  }
+  return merged as Required<{ [K in keyof GenerationParamOverrides]: number | null }>;
 }

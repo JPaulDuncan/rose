@@ -27,6 +27,14 @@ providersRouter.get('/', async (req, res) => {
     generation: {
       provider: cfg.generation?.provider ?? 'ollama',
       model: cfg.generation?.model ?? 'llama3.1:8b-instruct',
+      params: {
+        temperature: cfg.generation?.params?.temperature ?? null,
+        maxTokens: cfg.generation?.params?.maxTokens ?? null,
+        topP: cfg.generation?.params?.topP ?? null,
+        topK: cfg.generation?.params?.topK ?? null,
+        repeatPenalty: cfg.generation?.params?.repeatPenalty ?? null,
+        numCtx: cfg.generation?.params?.numCtx ?? null,
+      },
     },
     embedding: {
       provider: cfg.embedding?.provider ?? 'ollama',
@@ -62,7 +70,19 @@ providersRouter.patch('/', validateBody(ProviderSettingsUpdate), async (req, res
   // Record so partial in-place mutation typechecks. The runtime shape is fine.
   const p = (user.providers ??
     ({} as Record<string, unknown>)) as Record<string, Record<string, unknown>>;
-  if (body.generation) p.generation = { ...(p.generation ?? {}), ...body.generation };
+  if (body.generation) {
+    // Deep-merge params so a partial update (e.g. just temperature)
+    // doesn't blow away the rest of the sampling knobs.
+    const incoming = body.generation;
+    const existing = (p.generation ?? {}) as Record<string, unknown>;
+    p.generation = {
+      ...existing,
+      ...incoming,
+      ...(incoming.params
+        ? { params: { ...((existing.params as Record<string, unknown>) ?? {}), ...incoming.params } }
+        : {}),
+    };
+  }
   if (body.embedding) p.embedding = { ...(p.embedding ?? {}), ...body.embedding };
   if (body.ollama) p.ollama = { ...(p.ollama ?? {}), ...body.ollama };
   if (body.anthropic) {

@@ -89,6 +89,21 @@ const userSchema = new Schema(
           default: 'ollama',
         },
         model: { type: String, default: 'llama3.1:8b-instruct' },
+        /**
+         * Optional sampling overrides for every generate-page-style call.
+         * Anything left null falls back to the per-call default in the
+         * worker (0.2 for JSON mode, 0.4 for narrative writes). topK,
+         * repeatPenalty, and numCtx are Ollama-only — silently ignored
+         * by Anthropic/OpenAI. maxTokens maps to num_predict / max_tokens.
+         */
+        params: {
+          temperature: { type: Number, default: null, min: 0, max: 2 },
+          maxTokens: { type: Number, default: null, min: 1, max: 32768 },
+          topP: { type: Number, default: null, min: 0, max: 1 },
+          topK: { type: Number, default: null, min: 1, max: 200 },
+          repeatPenalty: { type: Number, default: null, min: 0, max: 4 },
+          numCtx: { type: Number, default: null, min: 512, max: 131072 },
+        },
       },
       embedding: {
         provider: { type: String, enum: ['ollama', 'openai'], default: 'ollama' },

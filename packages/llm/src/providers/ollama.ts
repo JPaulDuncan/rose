@@ -49,6 +49,17 @@ export class OllamaProvider implements LlmProvider {
   constructor(private readonly cfg: OllamaProviderConfig) {}
 
   async *generateStream(opts: GenerateOptions): AsyncGenerator<GenerateChunk> {
+    // Drop undefined keys so Ollama's per-model defaults win when a
+    // user hasn't set anything — the API treats `null` differently
+    // from "field absent" for some sampler params.
+    const samplerOptions: Record<string, number> = {
+      temperature: opts.temperature ?? 0.2,
+      num_ctx: opts.numCtx ?? 8192,
+    };
+    if (opts.topP != null) samplerOptions.top_p = opts.topP;
+    if (opts.topK != null) samplerOptions.top_k = opts.topK;
+    if (opts.repeatPenalty != null) samplerOptions.repeat_penalty = opts.repeatPenalty;
+    if (opts.maxTokens != null) samplerOptions.num_predict = opts.maxTokens;
     const res = await fetch(`${this.cfg.baseUrl}/api/generate`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -58,10 +69,7 @@ export class OllamaProvider implements LlmProvider {
         system: opts.system,
         format: opts.format,
         stream: true,
-        options: {
-          temperature: opts.temperature ?? 0.2,
-          num_ctx: 8192,
-        },
+        options: samplerOptions,
       }),
       signal: opts.signal,
     });
