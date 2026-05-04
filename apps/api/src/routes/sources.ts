@@ -20,6 +20,7 @@ import {
   rssSyncQueue,
   slackSyncQueue,
   discordSyncQueue,
+  gcalSyncQueue,
 } from '../lib/queues.js';
 import { logger } from '../lib/logger.js';
 
@@ -194,6 +195,29 @@ sourcesRouter.post('/', validateBody(SourceCreateRequest), async (req, res) => {
     res.status(201).json(src);
     return;
   }
+
+  if (body.type === 'gcal') {
+    const interval = body.config.pollIntervalMinutes;
+    const src = await Source.create({
+      userId,
+      type: 'gcal',
+      name: body.name,
+      encryptedConfig: encryptJson(body.config),
+      pollIntervalMinutes: interval,
+    });
+    const payload = { sourceId: src._id.toString(), userId: userId.toString() };
+    await gcalSyncQueue.add('sync', payload, {
+      repeat: { every: interval * 60_000 },
+      jobId: `gcal:${src._id.toString()}`,
+    });
+    await gcalSyncQueue.add('sync', payload, {
+      attempts: 3,
+      removeOnComplete: 50,
+      removeOnFail: 50,
+    });
+    res.status(201).json(src);
+    return;
+  }
 });
 
 /** Force an immediate one-shot sync for an IMAP or Gmail source. */
@@ -223,6 +247,11 @@ sourcesRouter.post('/:id/sync', async (req, res) => {
   }
   if (src.type === 'discord') {
     const job = await discordSyncQueue.add('sync', payload, opts);
+    res.status(202).json({ jobId: job.id });
+    return;
+  }
+  if (src.type === 'gcal') {
+    const job = await gcalSyncQueue.add('sync', payload, opts);
     res.status(202).json({ jobId: job.id });
     return;
   }
@@ -471,7 +500,8 @@ sourcesRouter.patch('/:id', validateBody(SourceUpdateRequest), async (req, res) 
       src.type === 'gmail' ||
       src.type === 'rss' ||
       src.type === 'slack' ||
-      src.type === 'discord')
+      src.type === 'discord' ||
+      src.type === 'gcal')
   ) {
     const queue =
       src.type === 'imap'
@@ -482,7 +512,9 @@ sourcesRouter.patch('/:id', validateBody(SourceUpdateRequest), async (req, res) 
             ? rssSyncQueue
             : src.type === 'slack'
               ? slackSyncQueue
-              : discordSyncQueue;
+              : src.type === 'discord'
+                ? discordSyncQueue
+                : gcalSyncQueue;
     const repeatKey = `${src.type}:${src._id.toString()}`;
     await queue.removeRepeatableByKey(repeatKey).catch((err: Error) => {
       logger.warn({ err, repeatKey }, 'failed to remove old repeatable');
@@ -519,6 +551,8 @@ sourcesRouter.delete('/:id', async (req, res) => {
     await slackSyncQueue.removeRepeatableByKey(`slack:${src._id.toString()}`).catch(() => null);
   if (src.type === 'discord')
     await discordSyncQueue.removeRepeatableByKey(`discord:${src._id.toString()}`).catch(() => null);
+  if (src.type === 'gcal')
+    await gcalSyncQueue.removeRepeatableByKey(`gcal:${src._id.toString()}`).catch(() => null);
   await ApiToken.deleteMany({ sourceId: src._id });
   await src.deleteOne();
   res.json({ ok: true });

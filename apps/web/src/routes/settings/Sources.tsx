@@ -14,6 +14,7 @@ import {
   Rss,
   Hash,
   MessageCircle,
+  CalendarDays,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useApi } from '../../lib/api';
@@ -93,6 +94,7 @@ export default function SourcesSettings() {
     | { kind: 'edit-rss'; id: string }
     | { kind: 'create-slack' }
     | { kind: 'create-discord' }
+    | { kind: 'create-gcal' }
     | { kind: 'webhook' }
     | null
   >(null);
@@ -180,6 +182,9 @@ export default function SourcesSettings() {
         <button className="btn-secondary" onClick={() => setForm({ kind: 'create-discord' })}>
           <MessageCircle className="h-4 w-4" /> Connect Discord
         </button>
+        <button className="btn-secondary" onClick={() => setForm({ kind: 'create-gcal' })}>
+          <CalendarDays className="h-4 w-4" /> Google Calendar
+        </button>
         <button className="btn-secondary" onClick={() => setForm({ kind: 'webhook' })}>
           <Webhook className="h-4 w-4" /> Add Webhook
         </button>
@@ -243,6 +248,12 @@ export default function SourcesSettings() {
       )}
       {form?.kind === 'create-discord' && (
         <DiscordForm
+          onCancel={() => setForm(null)}
+          onSubmit={(body) => create.mutate(body)}
+        />
+      )}
+      {form?.kind === 'create-gcal' && (
+        <GcalForm
           onCancel={() => setForm(null)}
           onSubmit={(body) => create.mutate(body)}
         />
@@ -1357,6 +1368,105 @@ function DiscordForm({
           className="btn-primary"
           disabled={tested.state !== 'ok' || picked.size === 0}
         >
+          Connect
+        </button>
+      </div>
+    </form>
+  );
+}
+
+function GcalForm({
+  onCancel,
+  onSubmit,
+}: {
+  onCancel: () => void;
+  onSubmit: (body: unknown) => void;
+}) {
+  const [name, setName] = useState('My Google Calendar');
+  const [authCode, setAuthCode] = useState('');
+  const [calendarIds, setCalendarIds] = useState('');
+  const [pollMin, setPollMin] = useState(15);
+
+  return (
+    <form
+      className="card space-y-4"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (!authCode.trim()) {
+          toast.error('Auth code required');
+          return;
+        }
+        onSubmit({
+          type: 'gcal',
+          name,
+          config: {
+            authCode: authCode.trim(),
+            calendarIds: calendarIds
+              .split(/[,;\s]+/)
+              .map((s) => s.trim())
+              .filter(Boolean),
+            pollIntervalMinutes: pollMin,
+          },
+        });
+      }}
+    >
+      <h3 className="font-semibold">Connect Google Calendar (read-only)</h3>
+      <p className="text-xs text-ink-500">
+        Pulls events from your calendars and merges them into Rose's
+        calendar view. Operator must have <code>GOOGLE_CLIENT_ID</code> /
+        {' '}<code>GOOGLE_CLIENT_SECRET</code> set. Generate an auth code by
+        visiting Google's OAuth consent screen with the{' '}
+        <code>https://www.googleapis.com/auth/calendar.readonly</code>
+        {' '}scope and <code>access_type=offline</code> +
+        {' '}<code>prompt=consent</code> to ensure a refresh token is issued.
+        Paste the resulting code here — Rose exchanges it once and
+        discards it.
+      </p>
+
+      <Field label="Display name">
+        <input
+          className="input"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          required
+        />
+      </Field>
+      <Field label="Auth code">
+        <input
+          className="input"
+          value={authCode}
+          onChange={(e) => setAuthCode(e.target.value)}
+          autoComplete="off"
+          required
+        />
+      </Field>
+      <Field
+        label="Calendar IDs (optional, comma-separated)"
+        hint={'Empty = the user’s primary calendar. Use "primary" or specific calendar IDs.'}
+      >
+        <input
+          className="input"
+          value={calendarIds}
+          onChange={(e) => setCalendarIds(e.target.value)}
+          placeholder="primary, foo@group.calendar.google.com"
+        />
+      </Field>
+      <Field label="Poll interval (minutes)">
+        <input
+          className="input"
+          type="number"
+          min={5}
+          max={1440}
+          value={pollMin}
+          onChange={(e) => setPollMin(Number(e.target.value))}
+        />
+      </Field>
+
+      <div className="flex justify-end gap-2 text-xs">
+        <button type="button" className="btn-ghost" onClick={onCancel}>
+          Cancel
+        </button>
+        <button type="submit" className="btn-primary">
           Connect
         </button>
       </div>

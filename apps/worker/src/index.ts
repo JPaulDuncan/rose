@@ -9,6 +9,7 @@ import { startGmailSyncWorker } from './processors/gmailSync.js';
 import { startRssSyncWorker } from './processors/rssSync.js';
 import { startSlackSyncWorker } from './processors/slackSync.js';
 import { startDiscordSyncWorker } from './processors/discordSync.js';
+import { startGcalSyncWorker } from './processors/gcalSync.js';
 import { startSummarizeSenderWorker } from './processors/summarizeSender.js';
 import { startFetchAndParseWorker } from './processors/fetchAndParse.js';
 import { startSendOutboundWorker } from './processors/sendOutbound.js';
@@ -31,6 +32,7 @@ async function bootstrap() {
   startRssSyncWorker();
   startSlackSyncWorker();
   startDiscordSyncWorker();
+  startGcalSyncWorker();
   startSummarizeSenderWorker();
   startFetchAndParseWorker();
   startSendOutboundWorker();
