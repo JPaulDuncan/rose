@@ -14,6 +14,7 @@ import {
   ShieldAlert,
   Megaphone,
   Sparkles,
+  Link2,
 } from 'lucide-react';
 import { useApi } from '../lib/api';
 
@@ -90,6 +91,9 @@ export function CommandPalette({
               </Command.Item>
             </Command.Group>
             <Command.Group heading="Actions">
+              <Command.Item onSelect={() => go('/save')}>
+                <Link2 className="h-4 w-4" /> Save URL or document
+              </Command.Item>
               <Command.Item onSelect={() => go('/inbox?upload=1')}>
                 <Upload className="h-4 w-4" /> Upload an email
               </Command.Item>

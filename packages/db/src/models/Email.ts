@@ -21,13 +21,33 @@ const emailSchema = new Schema(
     userId: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
     sourceId: { type: Schema.Types.ObjectId, ref: 'Source', default: null },
     /**
-     * Discriminator. `'email'` for traditional inbound mail. `'rss'` for
-     * feed entries normalized into the same shape (subject = entry title,
-     * from = feed identity, text/html = entry content). RSS items always
-     * route to topic-mode pages instead of sender/thread grouping.
+     * Discriminator across all ingested content kinds. The shape is
+     * the same — subject, from, text/html, attachments — but the
+     * source differs:
+     *   email     traditional inbound mail
+     *   rss       feed entries (sender = feed@<host>)
+     *   url       saved web page (sender = web@<host>)
+     *   document  uploaded PDF / DOCX / text (sender = you@<host>)
      */
-    kind: { type: String, enum: ['email', 'rss'], default: 'email', index: true },
+    kind: {
+      type: String,
+      enum: ['email', 'rss', 'url', 'document'],
+      default: 'email',
+      index: true,
+    },
     messageId: { type: String, default: null },
+    /** Original URL when this row came from a URL save or a fetched
+     *  document. Indexed for fast dedup. */
+    sourceUrl: { type: String, default: null, index: true },
+    /** Document metadata for `kind='document'` rows. */
+    documentMeta: {
+      filename: { type: String, default: null },
+      contentType: { type: String, default: null },
+      size: { type: Number, default: 0 },
+      pageCount: { type: Number, default: null },
+    },
+    /** Site name from OpenGraph / Twitter card on URL saves. */
+    siteName: { type: String, default: null },
     threadKey: { type: String, default: null, index: true },
     /** Normalized subject shape for grouping templated notifications. */
     subjectTemplate: { type: String, default: null, index: true },

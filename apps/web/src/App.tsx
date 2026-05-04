@@ -17,6 +17,7 @@ import SenderPage from './routes/Sender';
 import QuarantinePage from './routes/Quarantine';
 import PromotionsPage from './routes/Promotions';
 import ChatPage from './routes/Chat';
+import SavePage from './routes/Save';
 import SettingsLayout from './routes/settings/Layout';
 import AccountSettings from './routes/settings/Account';
 import SourcesSettings from './routes/settings/Sources';
@@ -68,6 +69,7 @@ export default function App() {
         <Route path="/promotions" element={<PromotionsPage />} />
         <Route path="/chat" element={<ChatPage />} />
         <Route path="/chat/:id" element={<ChatPage />} />
+        <Route path="/save" element={<SavePage />} />
         <Route path="/settings" element={<SettingsLayout />}>
           <Route index element={<Navigate to="account" replace />} />
           <Route path="account" element={<AccountSettings />} />
