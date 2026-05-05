@@ -6,6 +6,8 @@ export {
   extractEmailMetadata,
   senderDomainTag,
   stripAdSections,
+  isNominalTag,
+  filterNominalTags,
   type EmailMetadata,
   type EmailPriority,
   type EmailLink,

@@ -18,7 +18,7 @@ import {
   renderTemplate,
 } from '@rose/llm';
 import { PageGenerationDraft, slugify, type CitationMap } from '@rose/shared';
-import { stripAdSectionsStrict } from '@rose/email-parser';
+import { stripAdSectionsStrict, filterNominalTags } from '@rose/email-parser';
 import { redis } from '../lib/redis.js';
 import { logger } from '../lib/logger.js';
 import { resolveProviderForUser, applyParamOverrides } from '../lib/providers.js';
@@ -645,10 +645,17 @@ export function startGeneratePageWorker() {
           });
         }
       }
-      const topics = [...topicCounts.entries()]
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, 12)
-        .map(([t]) => t);
+      // Topics are aggregated from per-email extracted topics (which
+      // filterNominalTags has already cleaned) AND any forceTopicPage
+      // override. Re-filter here as a defense-in-depth step in case
+      // a legacy email carried unfiltered topics on it from before
+      // this change shipped.
+      const topics = filterNominalTags(
+        [...topicCounts.entries()]
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 12)
+          .map(([t]) => t),
+      );
       const pageLinks = [...linkAccum.values()]
         .sort((a, b) => b.count - a.count)
         .slice(0, 50);
@@ -729,9 +736,13 @@ export function startGeneratePageWorker() {
         page.summary = draft.summary;
         page.contentMd = draft.contentMd;
         // Rule-driven tag mutations: add wins, remove strips both
-        // LLM-emitted tags and previous user tags.
-        const draftTags = draft.tags ?? [];
-        const merged = new Set<string>(draftTags.map((t) => t.toLowerCase()));
+        // LLM-emitted tags and previous user tags. We pass the LLM's
+        // tags through filterNominalTags first so courtesy openers
+        // ("please", "how", "thanks") and other obvious non-nouns
+        // never make it onto Page.tags. Rule-engine `addTags` are
+        // user-curated and therefore exempt from the filter.
+        const draftTags = filterNominalTags(draft.tags ?? []);
+        const merged = new Set<string>(draftTags);
         for (const t of verdict.addTags) merged.add(t);
         for (const t of verdict.removeTags) merged.delete(t);
         page.tags = [...merged];
@@ -795,10 +806,10 @@ export function startGeneratePageWorker() {
         const primaryTopic = isRss
           ? ((triggerEmail.topics as string[] | undefined)?.[0] ?? null)?.toLowerCase() ?? null
           : null;
-        const draftTagsCreate = draft.tags ?? [];
-        const mergedTagsCreate = new Set<string>(
-          draftTagsCreate.map((t) => t.toLowerCase()),
-        );
+        // Same nominal filter as the update branch above — LLM tags
+        // sanitised, rule-engine adds exempt.
+        const draftTagsCreate = filterNominalTags(draft.tags ?? []);
+        const mergedTagsCreate = new Set<string>(draftTagsCreate);
         for (const t of verdict.addTags) mergedTagsCreate.add(t);
         for (const t of verdict.removeTags) mergedTagsCreate.delete(t);
         const created = await Page.create({

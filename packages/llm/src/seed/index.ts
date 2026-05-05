@@ -33,7 +33,13 @@ EMAIL BODY:
 
 Respond with JSON only, matching this shape:
 {"category": "<existing or new category name>", "isNewCategory": <bool>, "tags": ["tag1", "tag2"]}
-At most 5 tags. Tags are short, lowercase, hyphenated.`,
+
+TAGS — strict rules:
+- At most 5 tags.
+- Each tag is a NOUN or PROPER NOUN that names a topic, entity, project, product, person, place, or concept the email is about.
+- Lowercase, hyphenated for multi-word phrases (e.g. "product-launch", "acme-corp", "q3-budget").
+- NEVER emit verbs ("review", "submit", "update"), interjections ("hi", "thanks", "regards"), question/courtesy words ("please", "how", "what"), email-status words ("re", "fwd", "reply"), generic small-talk ("here", "now", "today"), or pure filler ("just", "really", "actually").
+- If unsure whether something is a noun, drop it — fewer high-quality tags beats noise.`,
   },
   {
     name: 'generate.wiki-page',
@@ -65,7 +71,7 @@ CITATIONS
 GROUND RULES
 - Do NOT invent participants, dates, numbers, decisions, or developments that aren't in the source. If messages contradict each other, lead with the latest position and mention the prior view as context.
 - NEVER write filler or meta-commentary about the source — phrases like "the email is empty", "no content provided", "this thread has no information", "the message contains only a subject" are forbidden. If body text is sparse, work from the available metadata (subject, sender, date) instead. If there is genuinely nothing to say, output one short paragraph using only that metadata.
-- Tags: 3–7 short lowercase tags, hyphenated.
+- Tags: 3–7 short lowercase tags, hyphenated. Each tag is a NOUN or PROPER NOUN — a topic, entity, project, product, person, place, or concept the page is about. NEVER emit verbs, courtesy/question words ("please", "how", "what", "thanks"), email-status words ("re", "fwd"), or generic fillers ("here", "now", "today"). If unsure whether something is a noun, drop it.
 
 ADDITIONAL INSTRUCTIONS FROM USER:
 {{extra_instructions}}

@@ -114,11 +114,128 @@ function extractLinks(text: string, html: string | null): EmailLink[] {
   });
 }
 
+/**
+ * Words a tag/topic must never be on its own, even when capitalised
+ * mid-sentence by the LLM or by a courtesy opener like "Please …".
+ *
+ * Three groups:
+ *   1. Pronouns + auxiliaries + articles + prepositions — the "small
+ *      grammar" of English that's never a topic on its own.
+ *   2. Question words / WH-words ("how", "what", "when", "why",
+ *      "where", "which", "who", "whom", "whose"). These almost
+ *      always start a sentence ("How can I…") and the LLM frequently
+ *      lifts them into tags.
+ *   3. Common verbs, modals, interjections, and email-style courtesy
+ *      words ("please", "thanks", "thank", "hello", "hi", "regards",
+ *      "okay", "cheers") that have no business being a topic.
+ *
+ * Lower-cased lookup; callers normalise before checking.
+ */
 const STOPWORDS = new Set(
-  'the a an and or but of in on at to for with by from is are was were be been being have has had do does did will would shall should may might can could this that these those it its as if then so not no yes you your we us our they them their he she his her i me my'.split(
-    ' ',
-  ),
+  (
+    // Group 1 — grammar
+    'the a an and or but of in on at to for with by from into onto upon ' +
+    'is are was were be been being am have has had do does did doing ' +
+    'will would shall should may might can could must ought ' +
+    'this that these those it its as if then so than ' +
+    'not no nor yes ' +
+    'you your yours we us our ours they them their theirs ' +
+    'he she his her hers i me my mine ' +
+    // Group 2 — WH / question words
+    'how what when where why which who whom whose ' +
+    // Group 3 — courtesy / interjection / common verbs / fillers
+    'please thanks thank thx ty ' +
+    'hi hello hey howdy greetings dear ' +
+    'regards cheers sincerely best ' +
+    'ok okay yep nope yeah nah ' +
+    're fwd reply forward ' +
+    'about over again still also too just only even ' +
+    'get got go going gone going come came coming come went ' +
+    'see saw seen seeing look looked looking looks ' +
+    'know knew known knowing think thought thinking ' +
+    'want wanted wants wanting need needed needs needing ' +
+    'make made made making take took taken taking ' +
+    'use used uses using try tried trying tries ' +
+    'put set let say said says saying tell told tells telling ' +
+    'find found finds finding give gave given gives giving ' +
+    'work worked working works done doing ' +
+    'here there everywhere anywhere somewhere nowhere ' +
+    'now today tomorrow yesterday soon later already ' +
+    'very really actually basically literally honestly ' +
+    'something anything everything nothing someone anyone everyone noone ' +
+    'much many lot lots more most less least ' +
+    'good bad better worse best worst nice great ' +
+    'one two three four five six seven eight nine ten ' +
+    'first second third next last final ' +
+    'because while although though even unless until since whether ' +
+    'asap fyi tbd tba tldr tl;dr btw imo iirc'
+  ).split(/\s+/),
 );
+
+/** Things a tag obviously can't be regardless of case. */
+const NON_NOUN_PATTERNS: RegExp[] = [
+  /\?$/, // ends with a question mark
+  /[!?]/, // contains punctuation a noun shouldn't
+  /^[0-9]+$/, // pure digits
+  /^[^a-z0-9]/i, // doesn't start with a letter/digit
+];
+
+/**
+ * Heuristic "is this string a plausible noun-or-proper-noun tag?".
+ * Not a real POS tagger — that requires a model and would be heavy
+ * for what we want — but a sensible filter the LLM and the heuristic
+ * topic extractor both flow through, so junk like "please", "how",
+ * "thanks" never lands on a Page.tags / Page.topics array.
+ *
+ * Returns true when the input looks tag-shaped:
+ *   - at least 3 chars
+ *   - all words must be either non-stopwords OR have a capital
+ *     (proper noun signal). "Re" alone fails; "Re Marketing" fails;
+ *     "Marketing" passes; "Acme Corp" passes; "How to Cook" fails
+ *     because "How" + "to" carry the courtesy/question signal.
+ *   - no obvious non-noun shapes (question marks, pure digits, etc).
+ */
+export function isNominalTag(raw: string): boolean {
+  const s = raw.trim();
+  if (s.length < 3) return false;
+  for (const re of NON_NOUN_PATTERNS) if (re.test(s)) return false;
+  const words = s.split(/[\s\-_]+/).filter(Boolean);
+  if (words.length === 0) return false;
+  // Every word must either be NOT a stopword, OR be capitalised (a
+  // proper noun keeps a stopword-shaped surface like "May" or "Will"
+  // legitimate when capitalised in context).
+  for (const w of words) {
+    const lower = w.toLowerCase();
+    if (STOPWORDS.has(lower)) {
+      // Lowercase stopword in a multi-word phrase is fine ("Bank of
+      // America"); but a single-word stopword tag is never OK.
+      if (words.length === 1) return false;
+    }
+  }
+  // Single-word tags also have to look like a word. A bare two-letter
+  // acronym we let through ("AI", "ML"); a bare lowercased common
+  // word like "system" or "thing" passes here too — we're not going
+  // to outlaw common nouns.
+  return true;
+}
+
+/**
+ * Filter + dedupe a list of candidate tags down to those that look
+ * like nominal topics. Lowercases on the way in so callers don't
+ * have to. Stable order preserves the input ranking.
+ */
+export function filterNominalTags(raw: readonly string[]): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const t of raw) {
+    const s = t.trim().toLowerCase();
+    if (!s || seen.has(s)) continue;
+    if (!isNominalTag(s)) continue;
+    seen.add(s);
+    out.push(s);
+  }
+  return out;
+}
 
 /**
  * Pull <img> URLs out of HTML. Skips tracking pixels (1x1, hosts in
@@ -175,7 +292,11 @@ function extractTopics(subject: string, body: string): string[] {
     seen.set(phrase, (seen.get(phrase) ?? 0) + 1);
   }
   const sorted = [...seen.entries()].sort((a, b) => b[1] - a[1]);
-  return sorted.slice(0, 8).map(([w]) => w);
+  // Filter to plausibly-nominal phrases — drops "Please", "How",
+  // "Thanks" and the like that happen to be capitalised at sentence
+  // start. Hashtags came in with weight 5 and are usually fine on
+  // their own, but if the user types "#how" it still gets dropped.
+  return filterNominalTags(sorted.map(([w]) => w)).slice(0, 8);
 }
 
 function computeSpam(
