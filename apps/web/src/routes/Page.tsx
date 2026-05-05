@@ -25,6 +25,7 @@ import {
   UserX,
   TagIcon as TagXIcon,
   CheckSquare,
+  ChevronDown,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import ReactMarkdown from 'react-markdown';
@@ -549,59 +550,164 @@ function SourcesSection({
   const all = [...cited, ...synthesized];
   if (all.length === 0) return null;
 
+  // Group consecutive sources from the same sender into a single
+  // expandable row. On a notification-stream page where 25/26
+  // messages come from "Acme Marketing" this collapses 25 nearly-
+  // identical entries into one "25 messages from Acme (May 1 –
+  // May 5)" row, with the individual subjects available on click.
+  // Cited sources (the ones the LLM linked into the body) are
+  // never collapsed — those are footnote references and need to
+  // remain individually addressable for [eN] anchors to resolve.
+  type Group = {
+    sender: string;
+    cited: { label: string; data: Citation }[];
+    uncited: { label: string; data: Citation }[];
+  };
+  const groups: Group[] = [];
+  for (const item of all) {
+    const sender = item.data.from ?? 'unknown sender';
+    const last = groups[groups.length - 1];
+    const isCited = item.label.startsWith('e');
+    if (last && last.sender === sender) {
+      (isCited ? last.cited : last.uncited).push(item);
+    } else {
+      groups.push({
+        sender,
+        cited: isCited ? [item] : [],
+        uncited: isCited ? [] : [item],
+      });
+    }
+  }
+
   return (
-    <section className="card mt-6">
-      <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold">
-        <Mail className="h-4 w-4 text-rose-500" />
-        Sources ({all.length})
-      </h2>
+    <CountedSection
+      icon={<Mail className="h-4 w-4 text-rose-500" />}
+      title="Sources"
+      count={all.length}
+      collapseAt={8}
+    >
       <ol className="space-y-2 text-sm">
-        {all.map(({ label, data: c }) => {
-          const isCited = label.startsWith('e');
-          return (
-            <li
-              key={label}
-              id={`source-${label}`}
-              className="rounded-lg border border-ink-200 p-2 transition-colors dark:border-ink-800"
-            >
-              <div className="flex items-start gap-2">
-                {isCited ? (
-                  <span className="rounded bg-rose-100 px-1.5 py-0.5 text-[10px] font-semibold text-rose-700 dark:bg-rose-950/50 dark:text-rose-300">
-                    {label}
-                  </span>
-                ) : (
-                  <span
-                    className="rounded bg-ink-100 px-1.5 py-0.5 text-[10px] font-semibold text-ink-600 dark:bg-ink-800 dark:text-ink-300"
-                    title="Source email — not directly cited in the body"
-                  >
-                    src
-                  </span>
-                )}
-                <div className="min-w-0 flex-1">
-                  <div className="truncate font-medium">{c.subject || '(no subject)'}</div>
-                  <div className="text-xs text-ink-500">
-                    {c.from ?? 'unknown sender'}
-                    {c.date && (
-                      <>
-                        {' · '}
-                        {new Date(c.date).toLocaleString()}
-                      </>
-                    )}
-                  </div>
-                </div>
-                <Link
-                  to={`/e/${c.emailId}`}
-                  className="btn-ghost text-xs"
-                  title="Open the original email"
-                >
-                  <ExternalLink className="h-3 w-3" />
-                </Link>
-              </div>
-            </li>
-          );
-        })}
+        {groups.map((g, idx) => (
+          <SourceGroup key={`${g.sender}-${idx}`} group={g} />
+        ))}
       </ol>
-    </section>
+    </CountedSection>
+  );
+}
+
+function SourceGroup({
+  group,
+}: {
+  group: {
+    sender: string;
+    cited: { label: string; data: Citation }[];
+    uncited: { label: string; data: Citation }[];
+  };
+}) {
+  const totalUncited = group.uncited.length;
+  const dates = group.uncited
+    .map((s) => (s.data.date ? new Date(s.data.date) : null))
+    .filter((d): d is Date => !!d);
+  let dateRange = '';
+  if (dates.length) {
+    const lo = new Date(Math.min(...dates.map((d) => d.getTime())));
+    const hi = new Date(Math.max(...dates.map((d) => d.getTime())));
+    const fmt = (d: Date) => d.toLocaleDateString();
+    dateRange = fmt(lo) === fmt(hi) ? fmt(lo) : `${fmt(lo)} – ${fmt(hi)}`;
+  }
+
+  return (
+    <>
+      {/* Cited rows always render expanded — they're footnote anchors. */}
+      {group.cited.map(({ label, data: c }) => (
+        <SourceRow key={label} label={label} data={c} />
+      ))}
+      {/* Uncited rows: roll up runs of >2 from the same sender. */}
+      {totalUncited > 2 ? (
+        <li className="rounded-lg border border-ink-200 dark:border-ink-800">
+          <details>
+            <summary className="flex cursor-pointer items-center gap-2 p-2 hover:bg-ink-50 dark:hover:bg-ink-900">
+              <span className="rounded bg-ink-100 px-1.5 py-0.5 text-[10px] font-semibold text-ink-600 dark:bg-ink-800 dark:text-ink-300">
+                ×{totalUncited}
+              </span>
+              <div className="min-w-0 flex-1">
+                <div className="truncate font-medium">{group.sender}</div>
+                {dateRange && (
+                  <div className="text-xs text-ink-500">{dateRange}</div>
+                )}
+              </div>
+              <ChevronDown className="h-4 w-4 text-ink-400 transition-transform [details[open]_&]:rotate-180" />
+            </summary>
+            <ol className="space-y-2 px-2 pb-2 pt-1">
+              {group.uncited.map(({ label, data: c }) => (
+                <SourceRow key={label} label={label} data={c} hideSender />
+              ))}
+            </ol>
+          </details>
+        </li>
+      ) : (
+        group.uncited.map(({ label, data: c }) => (
+          <SourceRow key={label} label={label} data={c} />
+        ))
+      )}
+    </>
+  );
+}
+
+function SourceRow({
+  label,
+  data: c,
+  hideSender = false,
+}: {
+  label: string;
+  data: Citation;
+  hideSender?: boolean;
+}) {
+  const isCited = label.startsWith('e');
+  return (
+    <li
+      id={`source-${label}`}
+      className="rounded-lg border border-ink-200 p-2 transition-colors dark:border-ink-800"
+    >
+      <div className="flex items-start gap-2">
+        {isCited ? (
+          <span className="rounded bg-rose-100 px-1.5 py-0.5 text-[10px] font-semibold text-rose-700 dark:bg-rose-950/50 dark:text-rose-300">
+            {label}
+          </span>
+        ) : (
+          <span
+            className="rounded bg-ink-100 px-1.5 py-0.5 text-[10px] font-semibold text-ink-600 dark:bg-ink-800 dark:text-ink-300"
+            title="Source email — not directly cited in the body"
+          >
+            src
+          </span>
+        )}
+        <div className="min-w-0 flex-1">
+          <div className="truncate font-medium">{c.subject || '(no subject)'}</div>
+          {!hideSender && (
+            <div className="text-xs text-ink-500">
+              {c.from ?? 'unknown sender'}
+              {c.date && (
+                <>
+                  {' · '}
+                  {new Date(c.date).toLocaleString()}
+                </>
+              )}
+            </div>
+          )}
+          {hideSender && c.date && (
+            <div className="text-xs text-ink-500">{new Date(c.date).toLocaleString()}</div>
+          )}
+        </div>
+        <Link
+          to={`/e/${c.emailId}`}
+          className="btn-ghost text-xs"
+          title="Open the original email"
+        >
+          <ExternalLink className="h-3 w-3" />
+        </Link>
+      </div>
+    </li>
   );
 }
 
@@ -858,44 +964,222 @@ function hostOf(url: string): string {
   }
 }
 
-function LinksBlock({
-  links,
+/**
+ * Card-shaped section with a count badge that auto-collapses into a
+ * `<details>` when item count crosses `collapseAt`. Replaces the
+ * previous "every reference section is visually equal-weighted"
+ * layout — a 3-topic page no longer renders the same surface area as
+ * a 30-source notification stream.
+ */
+function CountedSection({
+  icon,
+  title,
+  count,
+  collapseAt,
+  children,
 }: {
-  links: { url: string; text?: string | null; count: number }[];
+  icon: React.ReactNode;
+  title: string;
+  count: number;
+  collapseAt: number;
+  children: React.ReactNode;
 }) {
-  if (!links.length) return null;
+  const collapsed = count > collapseAt;
+  const header = (
+    <span className="flex items-center gap-2 text-sm font-semibold">
+      {icon}
+      {title} ({count})
+    </span>
+  );
+  if (!collapsed) {
+    return (
+      <section className="card mt-6">
+        <h2 className="mb-3">{header}</h2>
+        {children}
+      </section>
+    );
+  }
   return (
     <section className="card mt-6">
-      <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold">
-        <LinkIcon className="h-4 w-4 text-rose-500" />
-        Links ({links.length})
-      </h2>
-      <ul className="space-y-1.5 text-sm">
-        {links.slice(0, 25).map((l) => (
-          <li key={l.url} className="flex items-start gap-2">
-            <ExternalLink className="mt-0.5 h-3.5 w-3.5 shrink-0 text-ink-400" />
-            <a
-              href={l.url}
-              target="_blank"
-              rel="noreferrer"
-              className="min-w-0 flex-1 truncate text-rose-600 hover:underline dark:text-rose-400"
-              title={l.url}
-            >
-              {l.text || hostOf(l.url)}
-            </a>
-            <span className="shrink-0 text-xs text-ink-400">{hostOf(l.url)}</span>
-            {l.count > 1 && (
-              <span
-                className="shrink-0 rounded bg-ink-100 px-1 text-[10px] text-ink-600 dark:bg-ink-800 dark:text-ink-300"
-                title={`Appeared in ${l.count} source emails`}
-              >
-                ×{l.count}
-              </span>
-            )}
+      <details>
+        <summary className="flex cursor-pointer items-center justify-between text-sm font-semibold hover:text-rose-700 dark:hover:text-rose-300">
+          {header}
+          <ChevronDown className="h-4 w-4 transition-transform [details[open]_&]:rotate-180" />
+        </summary>
+        <div className="mt-3">{children}</div>
+      </details>
+    </section>
+  );
+}
+
+/**
+ * Hosts that almost always represent tracking, click-redirects, or
+ * unsubscribe plumbing rather than the article/content URL the user
+ * cares about. Match is on hostname, not the full URL — works for
+ * both `t.co/abc` and `r.email.acme.com/click/...`. Demoting these
+ * into a secondary bucket reclaims the Links list for actual content.
+ */
+const TRACKING_HOST_PATTERNS: RegExp[] = [
+  /^t\.co$/,
+  /^bit\.ly$/,
+  /^tinyurl\.com$/,
+  /^lnkd\.in$/,
+  /^ow\.ly$/,
+  /^buff\.ly$/,
+  /^mailchi\.mp$/,
+  /^mandrillapp\.com$/,
+  /(^|\.)sendgrid\.net$/,
+  /(^|\.)sg\.send$/,
+  /(^|\.)mktoresp\.com$/,
+  /(^|\.)hsforms\.com$/,
+  /(^|\.)hubspotemail\.net$/,
+  /^r\..+\..+/,
+  /^link\..+\..+/,
+  /^click\..+\..+/,
+  /^track(ing)?\..+\..+/,
+  /^ct\..+\..+/,
+  /^email\..+\..+/,
+  /^e\..+\..+/,
+];
+
+function isTrackingHost(host: string): boolean {
+  const h = host.toLowerCase();
+  return TRACKING_HOST_PATTERNS.some((re) => re.test(h));
+}
+
+function isUnsubscribeUrl(url: string): boolean {
+  return /\b(unsubscribe|opt[-_]?out|preferences|email[-_]?settings)\b/i.test(url);
+}
+
+type LinkRow = { url: string; text?: string | null; count: number };
+
+/**
+ * Group a flat link list by hostname so 12 separate "example.com/foo"
+ * rows from one tracking-template digest collapse into a single
+ * `example.com (×12)` group with the per-URL rows nested underneath.
+ * Sorts groups by total count desc so the heaviest hosts surface first.
+ */
+function groupByHost(links: LinkRow[]): { host: string; total: number; rows: LinkRow[] }[] {
+  const map = new Map<string, LinkRow[]>();
+  for (const l of links) {
+    const h = hostOf(l.url);
+    const arr = map.get(h) ?? [];
+    arr.push(l);
+    map.set(h, arr);
+  }
+  return [...map.entries()]
+    .map(([host, rows]) => ({
+      host,
+      total: rows.reduce((s, r) => s + r.count, 0),
+      rows: rows.sort((a, b) => b.count - a.count),
+    }))
+    .sort((a, b) => b.total - a.total);
+}
+
+function LinkLi({ link }: { link: LinkRow }) {
+  return (
+    <li className="flex items-start gap-2">
+      <ExternalLink className="mt-0.5 h-3.5 w-3.5 shrink-0 text-ink-400" />
+      <a
+        href={link.url}
+        target="_blank"
+        rel="noreferrer"
+        className="min-w-0 flex-1 truncate text-rose-600 hover:underline dark:text-rose-400"
+        title={link.url}
+      >
+        {link.text || link.url}
+      </a>
+      {link.count > 1 && (
+        <span
+          className="shrink-0 rounded bg-ink-100 px-1 text-[10px] text-ink-600 dark:bg-ink-800 dark:text-ink-300"
+          title={`Appeared in ${link.count} source emails`}
+        >
+          ×{link.count}
+        </span>
+      )}
+    </li>
+  );
+}
+
+function LinksBlock({ links }: { links: LinkRow[] }) {
+  if (!links.length) return null;
+
+  // Two-bucket split: content links surface, tracking/unsubscribe
+  // links go into a collapsed sub-list at the bottom. The user's
+  // complaint was that mailing-list infrastructure URLs drown out
+  // real content links; this is the fix.
+  const content: LinkRow[] = [];
+  const utility: LinkRow[] = [];
+  for (const l of links) {
+    const host = hostOf(l.url);
+    if (isTrackingHost(host) || isUnsubscribeUrl(l.url)) utility.push(l);
+    else content.push(l);
+  }
+  const contentGroups = groupByHost(content);
+
+  return (
+    <CountedSection
+      icon={<LinkIcon className="h-4 w-4 text-rose-500" />}
+      title="Links"
+      count={links.length}
+      collapseAt={5}
+    >
+      <ul className="space-y-3 text-sm">
+        {contentGroups.map((g) => (
+          <li key={g.host}>
+            <div className="mb-1 flex items-center gap-2 text-xs uppercase tracking-wider text-ink-500">
+              <span>{g.host}</span>
+              {g.rows.length > 1 && (
+                <span className="rounded bg-ink-100 px-1 text-[10px] dark:bg-ink-800">
+                  {g.rows.length} link{g.rows.length === 1 ? '' : 's'}
+                </span>
+              )}
+            </div>
+            <ul className="space-y-1 pl-1">
+              {g.rows.slice(0, 8).map((r) => (
+                <LinkLi key={r.url} link={r} />
+              ))}
+              {g.rows.length > 8 && (
+                <li className="pl-5 text-xs italic text-ink-500">
+                  +{g.rows.length - 8} more on {g.host}
+                </li>
+              )}
+            </ul>
           </li>
         ))}
       </ul>
-    </section>
+
+      {utility.length > 0 && (
+        <details className="mt-4 border-t border-ink-200 pt-3 dark:border-ink-800">
+          <summary className="cursor-pointer text-xs text-ink-500 hover:text-rose-600 dark:hover:text-rose-300">
+            Tracking & utility links ({utility.length})
+          </summary>
+          <ul className="mt-2 space-y-1 text-xs">
+            {utility.slice(0, 50).map((l) => (
+              <li key={l.url} className="flex items-start gap-2">
+                <ExternalLink className="mt-0.5 h-3 w-3 shrink-0 text-ink-400" />
+                <a
+                  href={l.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="min-w-0 flex-1 truncate text-ink-500 hover:text-rose-600 dark:hover:text-rose-300"
+                  title={l.url}
+                >
+                  {hostOf(l.url)}
+                  {isUnsubscribeUrl(l.url) ? ' · unsubscribe' : ''}
+                </a>
+                {l.count > 1 && (
+                  <span className="shrink-0 text-[10px] text-ink-400">×{l.count}</span>
+                )}
+              </li>
+            ))}
+            {utility.length > 50 && (
+              <li className="text-ink-400">+{utility.length - 50} more</li>
+            )}
+          </ul>
+        </details>
+      )}
+    </CountedSection>
   );
 }
 
@@ -918,11 +1202,12 @@ function AttachmentsBlock({
 }) {
   if (!attachments.length) return null;
   return (
-    <section className="card mt-6">
-      <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold">
-        <Paperclip className="h-4 w-4 text-rose-500" />
-        Attachments ({attachments.length})
-      </h2>
+    <CountedSection
+      icon={<Paperclip className="h-4 w-4 text-rose-500" />}
+      title="Attachments"
+      count={attachments.length}
+      collapseAt={5}
+    >
       <ul className="space-y-1.5 text-sm">
         {attachments.map((a, i) => (
           <li key={`${a.fromEmailId}-${a.filename}-${i}`} className="flex items-center gap-2">
@@ -940,7 +1225,7 @@ function AttachmentsBlock({
           </li>
         ))}
       </ul>
-    </section>
+    </CountedSection>
   );
 }
 
@@ -1119,17 +1404,18 @@ function ImagesBlock({
   const rest = images.filter((i) => i.url !== heroUrl);
   if (rest.length === 0) return null;
   return (
-    <section className="card mt-6">
-      <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold">
-        <ImageIcon className="h-4 w-4 text-rose-500" />
-        Images ({images.length})
-      </h2>
+    <CountedSection
+      icon={<ImageIcon className="h-4 w-4 text-rose-500" />}
+      title="Images"
+      count={images.length}
+      collapseAt={6}
+    >
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4">
         {rest.slice(0, 16).map((img) => (
           <Thumb key={img.url} {...img} />
         ))}
       </div>
-    </section>
+    </CountedSection>
   );
 }
 
