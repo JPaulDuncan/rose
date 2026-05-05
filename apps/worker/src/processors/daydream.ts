@@ -5,6 +5,12 @@ import {
   WikipediaAdapter,
   WikidataAdapter,
   OpenAlexAdapter,
+  WiktionaryAdapter,
+  CrossrefAdapter,
+  ArxivAdapter,
+  HackerNewsAdapter,
+  StackExchangeAdapter,
+  GitHubAdapter,
   type DaydreamAdapter,
   type DaydreamSnippet,
 } from '@rose/llm';
@@ -37,9 +43,11 @@ type DaydreamUserSettings = {
     wikidata?: { enabled?: boolean; lang?: string };
     openalex?: { enabled?: boolean; mailto?: string };
     linkGraph?: { enabled?: boolean; minHostCount?: number };
-    stackexchange?: { enabled?: boolean; sites?: string[] };
+    stackexchange?: { enabled?: boolean; sites?: string[]; apiKey?: string };
     arxiv?: { enabled?: boolean };
     hackernews?: { enabled?: boolean };
+    crossref?: { enabled?: boolean; mailto?: string };
+    github?: { enabled?: boolean; token?: string };
   };
   skip?: {
     senderBrandKeys?: string[];
@@ -85,11 +93,29 @@ function buildAdapters(
   if (cfg.sources?.wikipedia?.enabled !== false) {
     adapters.push(new WikipediaAdapter());
   }
+  if (cfg.sources?.wiktionary?.enabled) {
+    adapters.push(new WiktionaryAdapter());
+  }
   if (cfg.sources?.wikidata?.enabled) {
     adapters.push(new WikidataAdapter());
   }
   if (cfg.sources?.openalex?.enabled) {
     adapters.push(new OpenAlexAdapter());
+  }
+  if (cfg.sources?.crossref?.enabled) {
+    adapters.push(new CrossrefAdapter());
+  }
+  if (cfg.sources?.arxiv?.enabled) {
+    adapters.push(new ArxivAdapter());
+  }
+  if (cfg.sources?.hackernews?.enabled) {
+    adapters.push(new HackerNewsAdapter());
+  }
+  if (cfg.sources?.stackexchange?.enabled) {
+    adapters.push(new StackExchangeAdapter());
+  }
+  if (cfg.sources?.github?.enabled) {
+    adapters.push(new GitHubAdapter());
   }
   if (cfg.sources?.linkGraph?.enabled) {
     adapters.push(new LinkGraphAdapter(userId));
@@ -100,8 +126,6 @@ function buildAdapters(
   if (libraryEnabled) {
     adapters.push(new LibraryAdapter(userId));
   }
-  // Wiktionary, Stack Exchange, arXiv, Hacker News, custom adapters
-  // ship in subsequent passes per plan 10.
   return adapters;
 }
 
@@ -114,6 +138,10 @@ function adapterOptions(
   return {
     cache: webCache,
     openalexMailto: cfg.sources?.openalex?.mailto ?? '',
+    crossrefMailto: cfg.sources?.crossref?.mailto ?? '',
+    githubToken: cfg.sources?.github?.token ?? '',
+    stackexchangeSites: cfg.sources?.stackexchange?.sites ?? ['stackoverflow'],
+    stackexchangeKey: cfg.sources?.stackexchange?.apiKey ?? '',
     minHostCount: cfg.sources?.linkGraph?.minHostCount ?? 2,
   };
 }

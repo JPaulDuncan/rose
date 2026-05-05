@@ -2,3 +2,9 @@ export type { DaydreamAdapter, DaydreamSnippet, AdapterContext } from './types.j
 export { WikipediaAdapter } from './wikipedia.js';
 export { WikidataAdapter } from './wikidata.js';
 export { OpenAlexAdapter } from './openalex.js';
+export { WiktionaryAdapter } from './wiktionary.js';
+export { CrossrefAdapter } from './crossref.js';
+export { ArxivAdapter } from './arxiv.js';
+export { HackerNewsAdapter } from './hackernews.js';
+export { StackExchangeAdapter } from './stackexchange.js';
+export { GitHubAdapter } from './github.js';

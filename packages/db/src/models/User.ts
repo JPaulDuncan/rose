@@ -137,10 +137,22 @@ const userSchema = new Schema(
           },
           stackexchange: {
             enabled: { type: Boolean, default: false },
-            sites: { type: [String], default: ['stackoverflow.com'] },
+            sites: { type: [String], default: ['stackoverflow'] },
+            /** Optional API key (10K req/day vs 300/day anon). */
+            apiKey: { type: String, default: '' },
           },
           arxiv: { enabled: { type: Boolean, default: false } },
           hackernews: { enabled: { type: Boolean, default: false } },
+          /** Crossref — DOI metadata, polite-pool with mailto. */
+          crossref: {
+            enabled: { type: Boolean, default: false },
+            mailto: { type: String, default: '' },
+          },
+          /** GitHub — public repo search, optional PAT bumps to 5K/h. */
+          github: {
+            enabled: { type: Boolean, default: false },
+            token: { type: String, default: '' },
+          },
         },
         skip: {
           senderBrandKeys: { type: [String], default: [] },

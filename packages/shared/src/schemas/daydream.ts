@@ -36,10 +36,19 @@ export const DaydreamSettings = z.object({
     }),
     stackexchange: z.object({
       enabled: z.boolean().default(false),
-      sites: z.array(z.string()).default(['stackoverflow.com']),
+      sites: z.array(z.string()).default(['stackoverflow']),
+      apiKey: z.string().default(''),
     }),
     arxiv: z.object({ enabled: z.boolean().default(false) }),
     hackernews: z.object({ enabled: z.boolean().default(false) }),
+    crossref: z.object({
+      enabled: z.boolean().default(false),
+      mailto: z.string().default(''),
+    }),
+    github: z.object({
+      enabled: z.boolean().default(false),
+      token: z.string().default(''),
+    }),
   }),
   skip: z.object({
     senderBrandKeys: z.array(z.string()).default([]),

@@ -341,10 +341,178 @@ export default function DaydreamSettings() {
                 />
               }
             />
+            <SourceToggle
+              label="Wiktionary"
+              hint="Definitions + etymologies for terms too narrow for Wikipedia. Single-word queries only."
+              enabled={form.sources.wiktionary.enabled}
+              onToggle={(v) =>
+                setForm({
+                  ...form,
+                  sources: {
+                    ...form.sources,
+                    wiktionary: { ...form.sources.wiktionary, enabled: v },
+                  },
+                })
+              }
+              extra={
+                <input
+                  className="input w-20 text-xs"
+                  value={form.sources.wiktionary.lang}
+                  onChange={(e) =>
+                    setForm({
+                      ...form,
+                      sources: {
+                        ...form.sources,
+                        wiktionary: { ...form.sources.wiktionary, lang: e.target.value },
+                      },
+                    })
+                  }
+                  placeholder="en"
+                  title="ISO language code"
+                />
+              }
+            />
+            <SourceToggle
+              label="Crossref"
+              hint="DOI metadata across 150M+ scholarly works. Best when OpenAlex doesn't have the record."
+              enabled={form.sources.crossref.enabled}
+              onToggle={(v) =>
+                setForm({
+                  ...form,
+                  sources: {
+                    ...form.sources,
+                    crossref: { ...form.sources.crossref, enabled: v },
+                  },
+                })
+              }
+              extra={
+                <input
+                  className="input w-44 text-xs"
+                  value={form.sources.crossref.mailto}
+                  onChange={(e) =>
+                    setForm({
+                      ...form,
+                      sources: {
+                        ...form.sources,
+                        crossref: { ...form.sources.crossref, mailto: e.target.value },
+                      },
+                    })
+                  }
+                  placeholder="you@example.com"
+                  title="Polite-pool email — bumps the rate limit. Optional."
+                />
+              }
+            />
+            <SourceToggle
+              label="arXiv"
+              hint="Pre-prints across math, CS, physics, statistics, and adjacent fields. No key, but ~1 query / 3 sec sustained."
+              enabled={form.sources.arxiv.enabled}
+              onToggle={(v) =>
+                setForm({
+                  ...form,
+                  sources: {
+                    ...form.sources,
+                    arxiv: { ...form.sources.arxiv, enabled: v },
+                  },
+                })
+              }
+            />
+            <SourceToggle
+              label="Hacker News"
+              hint="Discussion + commentary across HN's full archive (Algolia search)."
+              enabled={form.sources.hackernews.enabled}
+              onToggle={(v) =>
+                setForm({
+                  ...form,
+                  sources: {
+                    ...form.sources,
+                    hackernews: { ...form.sources.hackernews, enabled: v },
+                  },
+                })
+              }
+            />
+            <SourceToggle
+              label="Stack Exchange"
+              hint="Programming/technical Q&A. Comma-separated site keywords (stackoverflow, superuser, askubuntu, …). 300/day anon, 10K with key."
+              enabled={form.sources.stackexchange.enabled}
+              onToggle={(v) =>
+                setForm({
+                  ...form,
+                  sources: {
+                    ...form.sources,
+                    stackexchange: { ...form.sources.stackexchange, enabled: v },
+                  },
+                })
+              }
+              extra={
+                <input
+                  className="input w-56 text-xs"
+                  value={(form.sources.stackexchange.sites ?? []).join(', ')}
+                  onChange={(e) =>
+                    setForm({
+                      ...form,
+                      sources: {
+                        ...form.sources,
+                        stackexchange: {
+                          ...form.sources.stackexchange,
+                          sites: e.target.value
+                            .split(',')
+                            .map((s) => s.trim())
+                            .filter(Boolean),
+                        },
+                      },
+                    })
+                  }
+                  placeholder="stackoverflow, superuser"
+                  title="Stack Exchange site keywords (comma-separated)."
+                />
+              }
+            />
+            <SourceToggle
+              label="GitHub"
+              hint="Public repo search. Description + stars + topics per hit. PAT bumps the rate limit from 60/h to 5K/h."
+              enabled={form.sources.github.enabled}
+              onToggle={(v) =>
+                setForm({
+                  ...form,
+                  sources: {
+                    ...form.sources,
+                    github: { ...form.sources.github, enabled: v },
+                  },
+                })
+              }
+              extra={
+                <input
+                  className="input w-44 text-xs"
+                  type="password"
+                  autoComplete="new-password"
+                  value={form.sources.github.token}
+                  onChange={(e) =>
+                    setForm({
+                      ...form,
+                      sources: {
+                        ...form.sources,
+                        github: { ...form.sources.github, token: e.target.value },
+                      },
+                    })
+                  }
+                  placeholder="ghp_… (optional)"
+                  title="Personal access token. Public repo search needs no scopes."
+                />
+              }
+            />
             <p className="text-xs italic text-ink-400">
-              Wiktionary, Stack Exchange, arXiv, Hacker News, and a
-              user-curated Library are coming in subsequent passes per
-              plan 10.
+              Federated web-search adapters (Marginalia, Brave, Mojeek)
+              and additional Tier 1 sources (PubMed, MusicBrainz,
+              OpenLibrary) are deferred to follow-up passes per plan 10.
+              The Library substrate already lives in{' '}
+              <a
+                href="/settings/library"
+                className="text-rose-600 hover:underline dark:text-rose-300"
+              >
+                Settings → Library
+              </a>
+              .
             </p>
           </div>
         </div>
