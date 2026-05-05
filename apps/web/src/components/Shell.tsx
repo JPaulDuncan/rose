@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -17,6 +17,8 @@ import {
   Sparkles,
   Bookmark,
   X,
+  ChevronDown,
+  Menu,
 } from 'lucide-react';
 import clsx from 'clsx';
 import { useApi } from '../lib/api';
@@ -25,22 +27,35 @@ import { useTheme } from '../lib/theme';
 import { CommandPalette } from './CommandPalette';
 import { useHotkeys } from '../hooks/useHotkeys';
 
-const NAV = [
+type NavItem = {
+  to: string;
+  label: string;
+  icon: typeof HomeIcon;
+  key: string;
+};
+
+// Primary destinations stay in the bar; secondary "filtered view"-style
+// pages collapse into a More dropdown so the bar doesn't get crowded
+// at small/medium widths.
+const PRIMARY_NAV: NavItem[] = [
   { to: '/', label: 'Home', icon: HomeIcon, key: 'g h' },
   { to: '/chat', label: 'Ask', icon: Sparkles, key: 'g a' },
   { to: '/search', label: 'Search', icon: Search, key: '/' },
   { to: '/calendar', label: 'Calendar', icon: CalendarIcon, key: 'g c' },
-  { to: '/streams', label: 'Streams', icon: Activity, key: 'g t' },
   { to: '/codex', label: 'Codex', icon: BookOpen, key: 'g x' },
+];
+
+const SECONDARY_NAV: NavItem[] = [
+  { to: '/streams', label: 'Streams', icon: Activity, key: 'g t' },
   { to: '/quarantine', label: 'Quarantine', icon: ShieldAlert, key: 'g q' },
   { to: '/promotions', label: 'Promotions', icon: Megaphone, key: 'g p' },
-  { to: '/settings', label: 'Settings', icon: Settings, key: 'g s' },
 ];
 
 export function Shell({ children }: { children: ReactNode }) {
   const { user, logout } = useAuth();
   const { theme, setTheme } = useTheme();
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
   const navigate = useNavigate();
 
   useHotkeys({
@@ -68,69 +83,271 @@ export function Shell({ children }: { children: ReactNode }) {
   });
 
   return (
-    <div className="flex h-screen overflow-hidden">
-      <aside className="hidden w-60 shrink-0 border-r border-ink-200 bg-white p-4 md:flex md:flex-col dark:border-ink-800 dark:bg-ink-900">
-        <div className="mb-6 flex items-center gap-2">
-          <img src="/rose.svg" className="h-7 w-7" alt="" />
-          <span className="text-lg font-semibold tracking-tight">Rose</span>
-        </div>
-        <nav className="flex flex-1 flex-col gap-1">
-          {NAV.map((n) => (
-            <NavLink
-              key={n.to}
-              to={n.to}
-              end={n.to === '/'}
-              className={({ isActive }) =>
-                clsx(
-                  'flex items-center justify-between rounded-lg px-3 py-2 text-sm font-medium transition-colors',
-                  isActive
-                    ? 'bg-rose-50 text-rose-900 dark:bg-rose-950/40 dark:text-rose-100'
-                    : 'text-ink-700 hover:bg-ink-100 dark:text-ink-200 dark:hover:bg-ink-800',
-                )
-              }
-            >
-              <span className="flex items-center gap-3">
-                <n.icon className="h-4 w-4" />
-                {n.label}
-              </span>
-              <span className="text-xs text-ink-400">{n.key}</span>
-            </NavLink>
-          ))}
-          <SavedSearchRail />
-        </nav>
-        <button
-          className="btn-ghost justify-start"
-          onClick={() => setPaletteOpen(true)}
-        >
-          <Command className="h-4 w-4" /> Palette
-          <span className="ml-auto text-xs text-ink-400">⌘K</span>
-        </button>
-        <div className="mt-3 flex items-center justify-between rounded-lg border border-ink-200 p-2 text-xs dark:border-ink-800">
-          <div className="truncate">
-            <div className="truncate font-medium">{user?.displayName}</div>
-            <div className="truncate text-ink-500">{user?.email}</div>
-          </div>
-          <div className="flex items-center gap-1">
+    <div className="flex h-screen flex-col overflow-hidden">
+      <header className="sticky top-0 z-30 border-b border-ink-200 bg-white/95 backdrop-blur dark:border-ink-800 dark:bg-ink-900/95">
+        <div className="mx-auto flex h-14 w-full max-w-7xl items-center gap-2 px-4">
+          {/* Brand */}
+          <NavLink to="/" className="flex shrink-0 items-center gap-2">
+            <img src="/rose.svg" className="h-7 w-7" alt="" />
+            <span className="text-lg font-semibold tracking-tight">Rose</span>
+          </NavLink>
+
+          {/* Primary nav — labels on lg, icons-only on md, hidden on sm */}
+          <nav className="ml-4 hidden items-center gap-0.5 md:flex">
+            {PRIMARY_NAV.map((n) => (
+              <TopNavLink key={n.to} item={n} />
+            ))}
+            <MoreMenu items={SECONDARY_NAV} />
+          </nav>
+
+          {/* Right cluster */}
+          <div className="ml-auto flex items-center gap-1">
             <button
-              className="btn-ghost"
+              type="button"
+              className="hidden items-center gap-2 rounded-lg border border-ink-200 px-2.5 py-1.5 text-xs text-ink-500 hover:bg-ink-50 dark:border-ink-800 dark:hover:bg-ink-800 sm:flex"
+              onClick={() => setPaletteOpen(true)}
+              title="Command palette (⌘K)"
+            >
+              <Command className="h-3.5 w-3.5" />
+              <span className="hidden lg:inline">Palette</span>
+              <kbd className="rounded bg-ink-100 px-1 py-0.5 text-[10px] font-medium text-ink-500 dark:bg-ink-800">
+                ⌘K
+              </kbd>
+            </button>
+            <button
+              type="button"
+              className="rounded-lg p-1.5 text-ink-500 hover:bg-ink-100 dark:hover:bg-ink-800"
               onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
               aria-label="Toggle theme"
+              title="Toggle theme"
             >
               {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
             </button>
-            <button className="btn-ghost" onClick={logout} aria-label="Log out">
-              <LogOut className="h-4 w-4" />
+            <NavLink
+              to="/settings"
+              className={({ isActive }) =>
+                clsx(
+                  'rounded-lg p-1.5',
+                  isActive
+                    ? 'bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-200'
+                    : 'text-ink-500 hover:bg-ink-100 dark:hover:bg-ink-800',
+                )
+              }
+              aria-label="Settings"
+              title="Settings (g s)"
+            >
+              <Settings className="h-4 w-4" />
+            </NavLink>
+            <UserMenu user={user} onLogout={logout} />
+            {/* Mobile hamburger */}
+            <button
+              type="button"
+              className="rounded-lg p-1.5 text-ink-500 hover:bg-ink-100 dark:hover:bg-ink-800 md:hidden"
+              onClick={() => setMobileOpen((v) => !v)}
+              aria-label="Toggle menu"
+            >
+              <Menu className="h-4 w-4" />
             </button>
           </div>
         </div>
-      </aside>
 
-      <main className="flex flex-1 flex-col overflow-hidden">
-        <div className="flex-1 overflow-y-auto">{children}</div>
-      </main>
+        {/* Pinned saved searches — second row, only renders when present */}
+        <SavedSearchStrip />
+
+        {/* Mobile menu drawer (open on hamburger click) */}
+        {mobileOpen && (
+          <div className="border-t border-ink-200 px-4 py-2 md:hidden dark:border-ink-800">
+            <nav className="flex flex-col gap-0.5">
+              {[...PRIMARY_NAV, ...SECONDARY_NAV].map((n) => (
+                <NavLink
+                  key={n.to}
+                  to={n.to}
+                  end={n.to === '/'}
+                  onClick={() => setMobileOpen(false)}
+                  className={({ isActive }) =>
+                    clsx(
+                      'flex items-center gap-3 rounded-lg px-3 py-2 text-sm',
+                      isActive
+                        ? 'bg-rose-50 text-rose-900 dark:bg-rose-950/40 dark:text-rose-100'
+                        : 'text-ink-700 hover:bg-ink-100 dark:text-ink-200 dark:hover:bg-ink-800',
+                    )
+                  }
+                >
+                  <n.icon className="h-4 w-4" />
+                  <span>{n.label}</span>
+                  <span className="ml-auto text-xs text-ink-400">{n.key}</span>
+                </NavLink>
+              ))}
+            </nav>
+          </div>
+        )}
+      </header>
+
+      <main className="flex-1 overflow-y-auto">{children}</main>
 
       <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
     </div>
+  );
+}
+
+function TopNavLink({ item }: { item: NavItem }) {
+  return (
+    <NavLink
+      to={item.to}
+      end={item.to === '/'}
+      className={({ isActive }) =>
+        clsx(
+          'flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm font-medium transition-colors',
+          isActive
+            ? 'bg-rose-50 text-rose-900 dark:bg-rose-950/40 dark:text-rose-100'
+            : 'text-ink-700 hover:bg-ink-100 dark:text-ink-200 dark:hover:bg-ink-800',
+        )
+      }
+      title={`${item.label} (${item.key})`}
+    >
+      <item.icon className="h-4 w-4" />
+      <span className="hidden lg:inline">{item.label}</span>
+    </NavLink>
+  );
+}
+
+/**
+ * Lightweight click-outside dropdown — used for both More and the
+ * user menu. Avoids pulling in a popover library for two simple
+ * dropdowns that don't need full keyboard semantics (the command
+ * palette covers that).
+ */
+function Dropdown({
+  trigger,
+  children,
+  align = 'left',
+}: {
+  trigger: (open: boolean, toggle: () => void) => ReactNode;
+  children: (close: () => void) => ReactNode;
+  align?: 'left' | 'right';
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (!ref.current?.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('mousedown', onDoc);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDoc);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+  return (
+    <div ref={ref} className="relative">
+      {trigger(open, () => setOpen((v) => !v))}
+      {open && (
+        <div
+          className={clsx(
+            'absolute top-full z-40 mt-1 min-w-[180px] rounded-lg border border-ink-200 bg-white p-1 shadow-lg dark:border-ink-800 dark:bg-ink-950',
+            align === 'right' ? 'right-0' : 'left-0',
+          )}
+        >
+          {children(() => setOpen(false))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MoreMenu({ items }: { items: NavItem[] }) {
+  const navigate = useNavigate();
+  return (
+    <Dropdown
+      trigger={(open, toggle) => (
+        <button
+          type="button"
+          onClick={toggle}
+          className={clsx(
+            'flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-sm font-medium transition-colors',
+            open
+              ? 'bg-ink-100 text-ink-900 dark:bg-ink-800 dark:text-ink-100'
+              : 'text-ink-700 hover:bg-ink-100 dark:text-ink-200 dark:hover:bg-ink-800',
+          )}
+        >
+          <span className="hidden lg:inline">More</span>
+          <ChevronDown className="h-3.5 w-3.5" />
+        </button>
+      )}
+    >
+      {(close) =>
+        items.map((n) => (
+          <button
+            key={n.to}
+            type="button"
+            onClick={() => {
+              navigate(n.to);
+              close();
+            }}
+            className="flex w-full items-center justify-between gap-3 rounded px-2.5 py-1.5 text-left text-sm hover:bg-ink-100 dark:hover:bg-ink-800"
+          >
+            <span className="flex items-center gap-2">
+              <n.icon className="h-4 w-4" />
+              {n.label}
+            </span>
+            <span className="text-[10px] text-ink-400">{n.key}</span>
+          </button>
+        ))
+      }
+    </Dropdown>
+  );
+}
+
+function UserMenu({
+  user,
+  onLogout,
+}: {
+  user: { displayName?: string; email?: string } | null;
+  onLogout: () => void;
+}) {
+  const initial = (user?.displayName ?? user?.email ?? '?')
+    .charAt(0)
+    .toUpperCase();
+  return (
+    <Dropdown
+      align="right"
+      trigger={(_open, toggle) => (
+        <button
+          type="button"
+          onClick={toggle}
+          className="flex h-8 w-8 items-center justify-center rounded-full bg-rose-100 text-sm font-semibold text-rose-700 hover:bg-rose-200 dark:bg-rose-950/40 dark:text-rose-200"
+          aria-label="User menu"
+          title={user?.displayName ?? user?.email ?? 'Account'}
+        >
+          {initial}
+        </button>
+      )}
+    >
+      {(close) => (
+        <>
+          <div className="border-b border-ink-200 px-2.5 py-1.5 dark:border-ink-800">
+            <div className="truncate text-sm font-medium">{user?.displayName}</div>
+            <div className="truncate text-xs text-ink-500">{user?.email}</div>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              onLogout();
+              close();
+            }}
+            className="flex w-full items-center gap-2 rounded px-2.5 py-1.5 text-left text-sm text-ink-700 hover:bg-ink-100 dark:text-ink-200 dark:hover:bg-ink-800"
+          >
+            <LogOut className="h-4 w-4" />
+            Log out
+          </button>
+        </>
+      )}
+    </Dropdown>
   );
 }
 
@@ -141,7 +358,12 @@ type SavedSearch = {
   pinned: boolean;
 };
 
-function SavedSearchRail() {
+/**
+ * Pinned saved searches as a thin strip under the top bar — only
+ * rendered when at least one is pinned, so the chrome stays at 56px
+ * for users who haven't bookmarked anything.
+ */
+function SavedSearchStrip() {
   const api = useApi();
   const qc = useQueryClient();
   const navigate = useNavigate();
@@ -158,39 +380,41 @@ function SavedSearchRail() {
   const pinned = (data?.savedSearches ?? []).filter((s) => s.pinned);
   if (pinned.length === 0) return null;
   return (
-    <div className="mt-4 border-t border-ink-200 pt-3 dark:border-ink-800">
-      <div className="mb-1 flex items-center gap-1 px-3 text-[10px] uppercase tracking-widest text-ink-500">
-        <Bookmark className="h-3 w-3" />
-        Smart folders
+    <div className="border-t border-ink-200 dark:border-ink-800">
+      <div className="mx-auto flex w-full max-w-7xl items-center gap-2 overflow-x-auto px-4 py-1.5">
+        <Bookmark className="h-3 w-3 shrink-0 text-ink-400" />
+        <span className="shrink-0 text-[10px] uppercase tracking-widest text-ink-500">
+          Smart folders
+        </span>
+        {pinned.map((s) => (
+          <div
+            key={s.id}
+            className="group flex shrink-0 items-center gap-1 rounded-full bg-ink-100 px-2.5 py-0.5 text-xs hover:bg-rose-100 hover:text-rose-700 dark:bg-ink-800 dark:hover:bg-rose-950/40 dark:hover:text-rose-200"
+          >
+            <button
+              type="button"
+              onClick={() =>
+                navigate(`/search?q=${encodeURIComponent(s.query ?? '')}`)
+              }
+              className="truncate"
+              title={s.query}
+            >
+              {s.name}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                if (confirm(`Remove "${s.name}" from saved searches?`))
+                  remove.mutate(s.id);
+              }}
+              className="opacity-0 transition-opacity group-hover:opacity-100"
+              aria-label="Remove"
+            >
+              <X className="h-3 w-3 text-ink-400 hover:text-red-600" />
+            </button>
+          </div>
+        ))}
       </div>
-      {pinned.map((s) => (
-        <div
-          key={s.id}
-          className="group flex items-center gap-1 rounded-lg px-3 py-1.5 text-sm text-ink-700 hover:bg-ink-100 dark:text-ink-200 dark:hover:bg-ink-800"
-        >
-          <button
-            type="button"
-            onClick={() =>
-              navigate(`/search?q=${encodeURIComponent(s.query ?? '')}`)
-            }
-            className="min-w-0 flex-1 truncate text-left"
-            title={s.query}
-          >
-            {s.name}
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              if (confirm(`Remove "${s.name}" from saved searches?`))
-                remove.mutate(s.id);
-            }}
-            className="opacity-0 transition-opacity group-hover:opacity-100"
-            aria-label="Remove"
-          >
-            <X className="h-3 w-3 text-ink-400 hover:text-red-600" />
-          </button>
-        </div>
-      ))}
     </div>
   );
 }
