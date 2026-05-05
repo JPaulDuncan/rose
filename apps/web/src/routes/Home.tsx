@@ -144,7 +144,6 @@ export default function HomePage() {
 
       <div className="mt-10 grid gap-8 lg:grid-cols-[1fr_280px]">
         <div className="min-w-0 space-y-10">
-          <UpcomingEvents />
           {data.featuredSections.length > 0 && (
             <FeaturedSections
               sections={data.featuredSections}
@@ -172,6 +171,7 @@ export default function HomePage() {
         </div>
 
         <aside className="space-y-6">
+          <UpcomingEvents />
           <FeaturedTagsWidget featuredTags={data.featuredTags} />
           <Sidebar
             topSenders={data.topSenders}
@@ -1252,6 +1252,13 @@ type UpcomingEvent = {
   sourceKind: 'email' | 'rss' | null;
 };
 
+/**
+ * Compact sidebar widget — was a hero-sized "Datebook" newspaper
+ * spread on the main column, but pushed the actual articles too far
+ * down on every render. Now lives in the right rail next to the
+ * other reference widgets, capped at the next ~7 events with a
+ * "See calendar →" link for the full list.
+ */
 function UpcomingEvents() {
   const api = useApi();
   const { data } = useQuery({
@@ -1263,8 +1270,9 @@ function UpcomingEvents() {
 
   if (!data || data.events.length === 0) return null;
 
-  // Group events by calendar day so a single day with N events renders one
-  // date header + N stacked rows instead of N repeated date columns.
+  // Group events by calendar day. The sidebar is narrow so we render
+  // a tight stacked list rather than the side-by-side date column the
+  // newspaper version had.
   const byDay = new Map<string, { date: Date; events: UpcomingEvent[] }>();
   for (const e of data.events) {
     const d = new Date(e.start);
@@ -1275,65 +1283,64 @@ function UpcomingEvents() {
   }
   const groups = [...byDay.values()].sort((a, b) => +a.date - +b.date);
 
-  return (
-    <section className="space-y-4 border-t-4 border-double border-ink-900 pt-8 dark:border-ink-100">
-      <div className="border-b-2 border-ink-900 pb-2 dark:border-ink-100">
-        <div className="text-[10px] uppercase tracking-[0.25em] text-ink-500">
-          Datebook
-        </div>
-        <div className="mt-0.5 flex items-baseline justify-between gap-4">
-          <h2 className="font-serif text-4xl font-black leading-none tracking-tight">
-            The Week Ahead
-          </h2>
-          <Link
-            to="/calendar"
-            className="shrink-0 text-[11px] uppercase tracking-widest text-ink-500 hover:text-ink-900 dark:hover:text-ink-100"
-          >
-            {data.events.length} upcoming ·{' '}
-            <span className="font-medium text-rose-600 dark:text-rose-300">
-              See calendar →
-            </span>
-          </Link>
-        </div>
-      </div>
+  // Cap visible events at ~7 so the sidebar stays a sidebar.
+  const VISIBLE_CAP = 7;
+  let shown = 0;
+  const limited: { date: Date; events: UpcomingEvent[] }[] = [];
+  for (const g of groups) {
+    if (shown >= VISIBLE_CAP) break;
+    const remaining = VISIBLE_CAP - shown;
+    const slice = g.events.slice(0, remaining);
+    limited.push({ date: g.date, events: slice });
+    shown += slice.length;
+  }
+  const more = data.events.length - shown;
 
-      <div className="divide-y divide-ink-200 dark:divide-ink-800">
-        {groups.map((g) => (
-          <DatebookDay key={g.date.toISOString()} date={g.date} events={g.events} />
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function DatebookDay({ date, events }: { date: Date; events: UpcomingEvent[] }) {
-  const dateLabel = date
-    .toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
-    .toUpperCase();
-  const weekday = date.toLocaleDateString(undefined, { weekday: 'short' });
   return (
-    <div className="grid gap-4 py-4 sm:grid-cols-[120px_1fr]">
-      <div className="text-center sm:border-r sm:border-ink-200 sm:pr-4 sm:text-right sm:dark:border-ink-800">
-        <div className="font-serif text-2xl font-bold leading-none tracking-tight">
-          {dateLabel}
-        </div>
-        <div className="mt-1 text-[10px] uppercase tracking-widest text-ink-500">
-          {weekday}
-        </div>
-        <div className="mt-1 text-[10px] uppercase tracking-widest text-ink-400">
-          {events.length} {events.length === 1 ? 'event' : 'events'}
-        </div>
+    <div className="card">
+      <div className="mb-3 flex items-center justify-between gap-2 text-xs uppercase tracking-widest text-ink-500">
+        <span className="flex items-center gap-1.5">
+          <Calendar className="h-3.5 w-3.5" />
+          Upcoming
+        </span>
+        <Link
+          to="/calendar"
+          className="text-[10px] font-medium text-rose-600 hover:underline dark:text-rose-300"
+        >
+          See all →
+        </Link>
       </div>
-      <ul className="min-w-0 space-y-3">
-        {events.map((e) => (
-          <DatebookRow key={e._id} e={e} />
+      <ul className="divide-y divide-ink-200 dark:divide-ink-800">
+        {limited.map((g) => (
+          <li key={g.date.toISOString()} className="py-2 first:pt-0 last:pb-0">
+            <div className="text-[10px] font-semibold uppercase tracking-widest text-rose-600 dark:text-rose-300">
+              {g.date.toLocaleDateString(undefined, {
+                weekday: 'short',
+                month: 'short',
+                day: 'numeric',
+              })}
+            </div>
+            <ul className="mt-1 space-y-1.5">
+              {g.events.map((e) => (
+                <UpcomingEventRow key={e._id} e={e} />
+              ))}
+            </ul>
+          </li>
         ))}
       </ul>
+      {more > 0 && (
+        <Link
+          to="/calendar"
+          className="mt-2 block text-center text-[11px] text-ink-500 hover:text-rose-600 dark:hover:text-rose-300"
+        >
+          +{more} more on the calendar
+        </Link>
+      )}
     </div>
   );
 }
 
-function DatebookRow({ e }: { e: UpcomingEvent }) {
+function UpcomingEventRow({ e }: { e: UpcomingEvent }) {
   const start = new Date(e.start);
   const time = e.allDay
     ? 'All day'
@@ -1341,52 +1348,28 @@ function DatebookRow({ e }: { e: UpcomingEvent }) {
         hour: 'numeric',
         minute: start.getMinutes() === 0 ? undefined : '2-digit',
       });
-  const senderLabel =
-    e.sourceFromName || e.sourceFromAddress || e.sourceSubject || null;
+  // Prefer the wiki page link when one exists — that's where the
+  // user gets the full context. Fall back to the source email so the
+  // row is always actionable.
+  const href = e.pageSlug ? `/p/${e.pageSlug}` : `/e/${e.sourceEmailId}`;
   return (
     <li className="min-w-0">
-      <div className="flex items-baseline gap-2">
-        <span className="rounded bg-rose-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-rose-800 dark:bg-rose-950/40 dark:text-rose-200">
-          {time}
-        </span>
-        <h3 className="min-w-0 flex-1 truncate font-serif text-lg font-semibold leading-snug">
-          {e.title}
-        </h3>
-      </div>
-      {senderLabel && (
-        <div className="mt-0.5 truncate text-[11px] uppercase tracking-widest text-ink-500">
-          via {senderLabel}
-          {e.sourceKind === 'rss' && (
-            <span className="ml-1 text-ink-400">· RSS</span>
-          )}
+      <Link to={href} className="group block">
+        <div className="flex items-start gap-2">
+          <span className="mt-0.5 shrink-0 rounded bg-rose-100 px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-rose-800 dark:bg-rose-950/40 dark:text-rose-200">
+            {time}
+          </span>
+          <span className="min-w-0 flex-1 truncate text-sm leading-snug group-hover:text-rose-700 dark:group-hover:text-rose-300">
+            {e.title}
+          </span>
         </div>
-      )}
-      {e.location && (
-        <div className="mt-1 inline-flex items-center gap-1 text-xs text-ink-500">
-          <MapPin className="h-3 w-3" /> {e.location}
-        </div>
-      )}
-      {e.description && (
-        <p className="mt-1 text-sm text-ink-600 line-clamp-2 dark:text-ink-300">
-          {e.description}
-        </p>
-      )}
-      <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1 text-xs">
-        {e.pageSlug && (
-          <Link
-            to={`/p/${e.pageSlug}`}
-            className="font-medium text-rose-600 hover:underline dark:text-rose-300"
-          >
-            Open wiki page →
-          </Link>
+        {e.location && (
+          <div className="mt-0.5 truncate pl-1 text-[10px] text-ink-500">
+            <MapPin className="mr-0.5 inline h-2.5 w-2.5" />
+            {e.location}
+          </div>
         )}
-        <Link
-          to={`/e/${e.sourceEmailId}`}
-          className="text-ink-500 hover:text-ink-900 dark:hover:text-ink-100"
-        >
-          Source
-        </Link>
-      </div>
+      </Link>
     </li>
   );
 }
