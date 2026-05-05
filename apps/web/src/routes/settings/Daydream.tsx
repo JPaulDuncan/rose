@@ -22,7 +22,7 @@ type RecentNote = {
 export default function DaydreamSettings() {
   const api = useApi();
   const qc = useQueryClient();
-  const { data: settings, isLoading } = useQuery({
+  const { data: settings, isLoading, isError, error } = useQuery({
     queryKey: ['daydream-settings'],
     queryFn: () => api.get<DaydreamSettingsT>('/api/daydream'),
   });
@@ -80,6 +80,18 @@ export default function DaydreamSettings() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['daydream-recent'] }),
   });
 
+  if (isError) {
+    return (
+      <div className="card text-sm">
+        <div className="font-medium text-red-600">
+          Couldn't load Daydream settings.
+        </div>
+        <div className="mt-1 text-xs text-ink-500">
+          {(error as Error)?.message ?? 'Unknown error.'}
+        </div>
+      </div>
+    );
+  }
   if (isLoading || !form) {
     return <div className="card text-sm text-ink-500">Loading…</div>;
   }

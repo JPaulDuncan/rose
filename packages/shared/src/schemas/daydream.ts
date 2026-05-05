@@ -4,7 +4,15 @@ import { z } from 'zod';
 export const DaydreamKind = z.enum(['topic', 'sender', 'tag', 'entity']);
 export type DaydreamKind = z.infer<typeof DaydreamKind>;
 
-/** Public view of the user's daydream config. Subset of User.settings.daydream. */
+/**
+ * Public view of the user's daydream config. Every nested object
+ * carries a `.default({})` so a legacy record that pre-dates the
+ * current schema (e.g. missing `externalSearch`, or missing one of
+ * the source toggles) still parses — the defaults populate. Without
+ * this the GET endpoint would 500 for any user record older than
+ * the most recent migration, and the Settings tab would hang on
+ * "Loading…".
+ */
 export const DaydreamSettings = z.object({
   enabled: z.boolean().default(false),
   schedule: z.enum(['idle', 'daily', 'off']).default('idle'),
@@ -13,62 +21,88 @@ export const DaydreamSettings = z.object({
   dailyCallCap: z.number().int().min(1).max(500).default(50),
   perPageMaxSubjects: z.number().int().min(1).max(20).default(3),
   refreshAfterDays: z.number().int().min(1).max(365).default(30),
-  sources: z.object({
-    wikipedia: z.object({
-      enabled: z.boolean().default(true),
-      lang: z.string().default('en'),
-    }),
-    wiktionary: z.object({
-      enabled: z.boolean().default(false),
-      lang: z.string().default('en'),
-    }),
-    wikidata: z.object({
-      enabled: z.boolean().default(false),
-      lang: z.string().default('en'),
-    }),
-    openalex: z.object({
-      enabled: z.boolean().default(false),
-      mailto: z.string().default(''),
-    }),
-    linkGraph: z.object({
-      enabled: z.boolean().default(false),
-      minHostCount: z.number().int().min(1).max(10).default(2),
-    }),
-    stackexchange: z.object({
-      enabled: z.boolean().default(false),
-      sites: z.array(z.string()).default(['stackoverflow']),
-      apiKey: z.string().default(''),
-    }),
-    arxiv: z.object({ enabled: z.boolean().default(false) }),
-    hackernews: z.object({ enabled: z.boolean().default(false) }),
-    crossref: z.object({
-      enabled: z.boolean().default(false),
-      mailto: z.string().default(''),
-    }),
-    github: z.object({
-      enabled: z.boolean().default(false),
-      token: z.string().default(''),
-    }),
-  }),
+  sources: z
+    .object({
+      wikipedia: z
+        .object({
+          enabled: z.boolean().default(true),
+          lang: z.string().default('en'),
+        })
+        .default({}),
+      wiktionary: z
+        .object({
+          enabled: z.boolean().default(false),
+          lang: z.string().default('en'),
+        })
+        .default({}),
+      wikidata: z
+        .object({
+          enabled: z.boolean().default(false),
+          lang: z.string().default('en'),
+        })
+        .default({}),
+      openalex: z
+        .object({
+          enabled: z.boolean().default(false),
+          mailto: z.string().default(''),
+        })
+        .default({}),
+      linkGraph: z
+        .object({
+          enabled: z.boolean().default(false),
+          minHostCount: z.number().int().min(1).max(10).default(2),
+        })
+        .default({}),
+      stackexchange: z
+        .object({
+          enabled: z.boolean().default(false),
+          sites: z.array(z.string()).default(['stackoverflow']),
+          apiKey: z.string().default(''),
+        })
+        .default({}),
+      arxiv: z.object({ enabled: z.boolean().default(false) }).default({}),
+      hackernews: z.object({ enabled: z.boolean().default(false) }).default({}),
+      crossref: z
+        .object({
+          enabled: z.boolean().default(false),
+          mailto: z.string().default(''),
+        })
+        .default({}),
+      github: z
+        .object({
+          enabled: z.boolean().default(false),
+          token: z.string().default(''),
+        })
+        .default({}),
+    })
+    .default({}),
   /** Tier 4 of plan 10 — federated web-search adapters. */
-  externalSearch: z.object({
-    enabled: z.boolean().default(false),
-    marginalia: z.object({ enabled: z.boolean().default(true) }),
-    duckduckgo: z.object({ enabled: z.boolean().default(true) }),
-    brave: z.object({
+  externalSearch: z
+    .object({
       enabled: z.boolean().default(false),
-      hasApiKey: z.boolean().default(false),
-    }),
-    searxng: z.object({
-      enabled: z.boolean().default(false),
-      instanceUrl: z.string().default(''),
-    }),
-  }),
-  skip: z.object({
-    senderBrandKeys: z.array(z.string()).default([]),
-    tags: z.array(z.string()).default([]),
-    categoryIds: z.array(z.string()).default([]),
-  }),
+      marginalia: z.object({ enabled: z.boolean().default(true) }).default({}),
+      duckduckgo: z.object({ enabled: z.boolean().default(true) }).default({}),
+      brave: z
+        .object({
+          enabled: z.boolean().default(false),
+          hasApiKey: z.boolean().default(false),
+        })
+        .default({}),
+      searxng: z
+        .object({
+          enabled: z.boolean().default(false),
+          instanceUrl: z.string().default(''),
+        })
+        .default({}),
+    })
+    .default({}),
+  skip: z
+    .object({
+      senderBrandKeys: z.array(z.string()).default([]),
+      tags: z.array(z.string()).default([]),
+      categoryIds: z.array(z.string()).default([]),
+    })
+    .default({}),
 });
 export type DaydreamSettings = z.infer<typeof DaydreamSettings>;
 
@@ -79,9 +113,15 @@ export type DaydreamSettings = z.infer<typeof DaydreamSettings>;
  * never echo the key back; the GET shape carries `hasApiKey`
  * instead. Same convention as Anthropic/OpenAI keys in /api/providers.
  */
+// Inner shapes — use `removeDefault()` to peel off the ZodDefault
+// wrapper before .partial(), since that helper isn't valid on the
+// defaulted form. ZodDefault doesn't expose .partial directly.
+const sourcesInner = DaydreamSettings.shape.sources.removeDefault();
+const skipInner = DaydreamSettings.shape.skip.removeDefault();
+
 export const DaydreamSettingsUpdate = DaydreamSettings.partial().extend({
-  sources: DaydreamSettings.shape.sources.partial().optional(),
-  skip: DaydreamSettings.shape.skip.partial().optional(),
+  sources: sourcesInner.partial().optional(),
+  skip: skipInner.partial().optional(),
   externalSearch: z
     .object({
       enabled: z.boolean().optional(),
