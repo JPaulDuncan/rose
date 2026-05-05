@@ -168,7 +168,7 @@ export async function upsertSendersFromPage(
             'summarize',
             { senderId: String(created._id), userId: String(userId) },
             {
-              jobId: `auto:${String(userId)}:${String(created._id)}`,
+              jobId: `auto__${String(userId)}__${String(created._id)}`,
               attempts: 2,
               removeOnComplete: 200,
               removeOnFail: 200,

@@ -301,7 +301,11 @@ export function startTagDigestSweeper(): void {
             'digest',
             { userId: String(u._id), tag },
             {
-              jobId: `digest:${String(u._id)}:${tag}:${dayKey}`,
+              // BullMQ reserves ':' for its internal key namespacing
+              // and rejects custom job IDs containing it. Use '__' as
+              // our delimiter so the (user, tag, day) triple still
+              // collapses duplicate enqueues to a single job.
+              jobId: `digest__${String(u._id)}__${tag}__${dayKey}`,
               attempts: 1,
               removeOnComplete: 200,
               removeOnFail: 200,

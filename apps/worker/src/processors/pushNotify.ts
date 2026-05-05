@@ -121,7 +121,7 @@ export async function evaluatePageNotifications(
         },
       },
       {
-        jobId: `push:${userId}:${page._id}:${ruleId}`,
+        jobId: `push__${userId}__${page._id}__${ruleId}`,
         attempts: 1,
         removeOnComplete: 200,
         removeOnFail: 200,
@@ -173,7 +173,7 @@ export async function eventSoonSweep(): Promise<void> {
           },
         },
         {
-          jobId: `push:event:${r.userId}:${e._id}`,
+          jobId: `push__event__${r.userId}__${e._id}`,
           attempts: 1,
           removeOnComplete: 100,
           removeOnFail: 100,

@@ -38,7 +38,7 @@ featuredTagsRouter.post('/', validateBody(FeatureRequest), async (req, res) => {
       'digest',
       { userId: String(userId), tag },
       {
-        jobId: `digest:${String(userId)}:${tag}:${utcDayKey()}`,
+        jobId: `digest__${String(userId)}__${tag}__${utcDayKey()}`,
         attempts: 1,
         removeOnComplete: 200,
         removeOnFail: 200,

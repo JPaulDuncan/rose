@@ -172,7 +172,10 @@ tagsRouter.post('/:tag/digest/regenerate', async (req, res) => {
     'digest',
     { userId: String(userId), tag },
     {
-      jobId: `digest:${String(userId)}:${tag}:${utcDayKey()}`,
+      // BullMQ rejects ':' in custom job IDs (it reserves it for
+      // internal namespacing). Use '__' so the (user, tag, day)
+      // triple still collapses re-pins to one job.
+      jobId: `digest__${String(userId)}__${tag}__${utcDayKey()}`,
       attempts: 1,
       removeOnComplete: 200,
       removeOnFail: 200,
