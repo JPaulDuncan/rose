@@ -46,6 +46,7 @@ const PRIMARY_NAV: NavItem[] = [
 ];
 
 const SECONDARY_NAV: NavItem[] = [
+  { to: '/library', label: 'Library', icon: BookOpen, key: 'g l' },
   { to: '/streams', label: 'Streams', icon: Activity, key: 'g t' },
   { to: '/quarantine', label: 'Quarantine', icon: ShieldAlert, key: 'g q' },
   { to: '/promotions', label: 'Promotions', icon: Megaphone, key: 'g p' },
@@ -72,6 +73,7 @@ export function Shell({ children }: { children: ReactNode }) {
     'g c': () => navigate('/calendar'),
     'g t': () => navigate('/streams'),
     'g x': () => navigate('/codex'),
+    'g l': () => navigate('/library'),
     'g q': () => navigate('/quarantine'),
     'g p': () => navigate('/promotions'),
     'g s': () => navigate('/settings'),

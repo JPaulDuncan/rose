@@ -14,6 +14,7 @@ import { logger } from '../lib/logger.js';
 import { resolveProviderForUser } from '../lib/providers.js';
 import { webCache } from '../lib/webFetchCache.js';
 import { LinkGraphAdapter } from '../lib/discovery/linkGraph.js';
+import { LibraryAdapter } from '../lib/discovery/libraryAdapter.js';
 import { extractEntitiesFromPage } from '../lib/discovery/entityExtraction.js';
 
 const QUEUE = 'rose.daydream';
@@ -78,6 +79,7 @@ function normaliseSubjectKey(s: string): string {
 function buildAdapters(
   cfg: DaydreamUserSettings,
   userId: Types.ObjectId,
+  libraryEnabled: boolean,
 ): DaydreamAdapter[] {
   const adapters: DaydreamAdapter[] = [];
   if (cfg.sources?.wikipedia?.enabled !== false) {
@@ -91,6 +93,12 @@ function buildAdapters(
   }
   if (cfg.sources?.linkGraph?.enabled) {
     adapters.push(new LinkGraphAdapter(userId));
+  }
+  // The Library adapter participates only when the user has the
+  // Library on AND has explicitly opted in to library-as-Daydream-
+  // source (settings.library.useInDaydream). Plan 10 Tier 2.
+  if (libraryEnabled) {
+    adapters.push(new LibraryAdapter(userId));
   }
   // Wiktionary, Stack Exchange, arXiv, Hacker News, custom adapters
   // ship in subsequent passes per plan 10.
@@ -434,14 +442,20 @@ export function startDaydreamWorker(): void {
     QUEUE,
     async (job: Job<DaydreamJobData>) => {
       const userId = new Types.ObjectId(job.data.userId);
-      const user = await User.findById(userId).select('settings.daydream').lean();
+      const user = await User.findById(userId)
+        .select('settings.daydream settings.library')
+        .lean();
       const cfg = ((user?.settings as { daydream?: DaydreamUserSettings } | undefined)?.daydream ??
         {}) as DaydreamUserSettings;
+      const lib = (user?.settings as {
+        library?: { enabled?: boolean; useInDaydream?: boolean };
+      } | undefined)?.library;
       if (!cfg.enabled) {
         logger.debug({ userId: String(userId) }, 'daydream: disabled for user; skipping job');
         return { skipped: 'disabled' };
       }
-      const adapters = buildAdapters(cfg, userId);
+      const libraryEnabled = !!(lib?.enabled && lib?.useInDaydream !== false);
+      const adapters = buildAdapters(cfg, userId, libraryEnabled);
       if (adapters.length === 0) {
         return { skipped: 'no-adapters' };
       }

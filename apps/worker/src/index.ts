@@ -21,6 +21,11 @@ import {
 } from './processors/pushNotify.js';
 import { startBriefingWorker } from './processors/briefing.js';
 import { startDaydreamWorker } from './processors/daydream.js';
+import {
+  startLibrarySyncWorker,
+  startLibrarySweeper,
+} from './processors/librarySync.js';
+import { startLibraryEmbedWorker } from './processors/libraryEmbed.js';
 import { startReputationDecaySweep } from './services/reputationSweep.js';
 import { startDaydreamSweeper } from './services/daydreamSweeper.js';
 import { getVapidKeys } from './lib/vapid.js';
@@ -45,6 +50,9 @@ async function bootstrap() {
   startBriefingWorker();
   startDaydreamWorker();
   startDaydreamSweeper();
+  startLibrarySyncWorker();
+  startLibraryEmbedWorker();
+  startLibrarySweeper();
   // Initialise VAPID keys at boot (generates on first run, persists
   // to var/vapid.json so the API can read the public half).
   getVapidKeys();

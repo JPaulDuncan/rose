@@ -8,3 +8,4 @@ export * from './provider.js';
 export * from './spam.js';
 export * from './rule.js';
 export * from './daydream.js';
+export * from './library.js';

@@ -30,6 +30,8 @@ import SpamSettings from './routes/settings/Spam';
 import NewsletterSettings from './routes/settings/Newsletter';
 import IngestPage from './routes/settings/Ingest';
 import DaydreamSettingsPage from './routes/settings/Daydream';
+import LibrarySettingsPage from './routes/settings/Library';
+import LibraryPage from './routes/Library';
 
 function ProtectedShell() {
   const { user, ready } = useAuth();
@@ -77,6 +79,7 @@ export default function App() {
         <Route path="/chat/:id" element={<ChatPage />} />
         <Route path="/save" element={<SavePage />} />
         <Route path="/favorites" element={<FavoritesPage />} />
+        <Route path="/library" element={<LibraryPage />} />
         <Route path="/settings" element={<SettingsLayout />}>
           <Route index element={<Navigate to="account" replace />} />
           <Route path="account" element={<AccountSettings />} />
@@ -90,6 +93,7 @@ export default function App() {
           <Route path="newsletter" element={<NewsletterSettings />} />
           <Route path="ingest" element={<IngestPage />} />
           <Route path="daydream" element={<DaydreamSettingsPage />} />
+          <Route path="library" element={<LibrarySettingsPage />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>

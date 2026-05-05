@@ -76,6 +76,19 @@ const userSchema = new Schema(
         dailyCap: { type: Number, default: 30, min: 1, max: 1000 },
       },
       /**
+       * Library — user-curated source corpus crawled, indexed, and
+       * exposed both as a standalone search surface (/library) and
+       * as a Daydream adapter so wiki-page Background notes can pull
+       * from sources the user already trusts.
+       */
+      library: {
+        enabled: { type: Boolean, default: false },
+        /** Hard ceiling on documents fetched per UTC day. */
+        dailyCrawlCap: { type: Number, default: 500, min: 10, max: 10000 },
+        /** Whether the LibraryAdapter participates in Daydream. */
+        useInDaydream: { type: Boolean, default: true },
+      },
+      /**
        * Daydream — opportunistic research enrichment that runs while
        * the rest of the pipeline is idle. Off by default; the user
        * sees a one-time egress explainer on first opt-in.

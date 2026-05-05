@@ -42,3 +42,7 @@ export { UserPageState } from './models/UserPageState.js';
 export type { UserPageStateDoc } from './models/UserPageState.js';
 export { DaydreamNote } from './models/DaydreamNote.js';
 export type { DaydreamNoteDoc } from './models/DaydreamNote.js';
+export { LibrarySource } from './models/LibrarySource.js';
+export type { LibrarySourceDoc } from './models/LibrarySource.js';
+export { LibraryDocument } from './models/LibraryDocument.js';
+export type { LibraryDocumentDoc } from './models/LibraryDocument.js';
