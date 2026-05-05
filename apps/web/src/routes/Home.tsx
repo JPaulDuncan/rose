@@ -143,18 +143,36 @@ export default function HomePage() {
     ].filter(Boolean) as string[],
   );
 
+  // Pool of pages the BreakingNews card scans for today's high-
+  // priority dispatches: TopStories + every bucket's pages, deduped
+  // implicitly by the component itself. This is what already lives
+  // in the digest payload — no extra API call.
+  const breakingPool: DigestPage[] = [
+    ...(data.topStories?.lead ? [data.topStories.lead] : []),
+    ...(data.topStories?.secondaries ?? []),
+    ...populated.flatMap((b) => b.pages),
+  ];
+
   return (
     <BrandIndexContext.Provider value={brandIndex}>
-    <div className="mx-auto w-full max-w-6xl px-6 py-10">
+    <div className="mx-auto w-full max-w-7xl px-6 py-10">
       <Masthead edition={data.edition} stats={data.stats} />
       <WeatherCard />
 
       {data.topStories && data.topStories.lead && (
-        <TopStories topStories={data.topStories} mostRead={data.mostRead ?? []} />
+        <TopStories topStories={data.topStories} />
       )}
 
-      <div className="mt-10 grid gap-8 lg:grid-cols-[1fr_280px]">
-        <div className="min-w-0 space-y-10">
+      {/* 20/60/20 newspaper layout via a 5-column grid with explicit
+          col-spans. Stacks to a single column at <lg so the rails
+          flow naturally below the body on mobile. */}
+      <div className="mt-10 grid gap-6 lg:grid-cols-5">
+        <aside className="space-y-6 lg:col-span-1">
+          <BreakingNews pages={breakingPool} />
+          <MostReadCard pages={data.mostRead ?? []} />
+        </aside>
+
+        <div className="min-w-0 space-y-10 lg:col-span-3">
           {data.featuredSections.length > 0 && (
             <FeaturedSections
               sections={data.featuredSections}
@@ -162,26 +180,9 @@ export default function HomePage() {
             />
           )}
           <MoreNews buckets={populated} suppressIds={suppressIds} />
-          {data.stats.spam > 0 && (
-            <div className="card flex items-center gap-3 text-sm">
-              <ShieldAlert className="h-5 w-5 shrink-0 text-red-500" />
-              <span className="flex-1">
-                <strong>{data.stats.spam}</strong> page
-                {data.stats.spam === 1 ? ' was' : 's were'} flagged as likely spam and
-                hidden from this edition.
-              </span>
-              <Link
-                to="/search?q=spam"
-                className="btn-ghost text-xs"
-                title="Open in search"
-              >
-                review
-              </Link>
-            </div>
-          )}
         </div>
 
-        <aside className="space-y-6">
+        <aside className="space-y-6 lg:col-span-1">
           <UpcomingEvents />
           <FeaturedTagsWidget featuredTags={data.featuredTags} />
           <Sidebar
@@ -191,6 +192,24 @@ export default function HomePage() {
           />
         </aside>
       </div>
+
+      {data.stats.spam > 0 && (
+        <div className="card mt-8 flex items-center gap-3 text-sm">
+          <ShieldAlert className="h-5 w-5 shrink-0 text-red-500" />
+          <span className="flex-1">
+            <strong>{data.stats.spam}</strong> page
+            {data.stats.spam === 1 ? ' was' : 's were'} flagged as likely spam and
+            hidden from this edition.
+          </span>
+          <Link
+            to="/search?q=spam"
+            className="btn-ghost text-xs"
+            title="Open in search"
+          >
+            review
+          </Link>
+        </div>
+      )}
     </div>
     </BrandIndexContext.Provider>
   );
@@ -361,10 +380,8 @@ function Byline({
  */
 function TopStories({
   topStories,
-  mostRead,
 }: {
   topStories: { lead: DigestPage | null; secondaries: DigestPage[] };
-  mostRead: DigestPage[];
 }) {
   const { lead, secondaries } = topStories;
   if (!lead) return null;
@@ -390,20 +407,6 @@ function TopStories({
               </li>
             ))}
           </ul>
-          {mostRead.length > 0 && (
-            <div className="mt-6 border-t-2 border-ink-900 pt-4 dark:border-ink-100">
-              <div className="mb-3 text-[10px] uppercase tracking-[0.25em] text-ink-500">
-                Most Read
-              </div>
-              <ol className="space-y-3">
-                {mostRead.map((p, i) => (
-                  <li key={p._id}>
-                    <MostReadItem page={p} rank={i + 1} />
-                  </li>
-                ))}
-              </ol>
-            </div>
-          )}
         </div>
       </div>
     </section>
@@ -459,6 +462,88 @@ function SecondaryStory({ page }: { page: DigestPage }) {
         <Byline page={page} />
       </div>
     </Link>
+  );
+}
+
+/**
+ * "Breaking News" left-rail card — surfaces high-priority pages
+ * updated within the last 24 hours so the reader sees what's
+ * urgent right now. Drawn from the union of TopStories + every
+ * bucket's pages so the card never misses an important page just
+ * because it landed outside the hero block.
+ *
+ * Hidden when nothing's actually high-priority today — keeps the
+ * left rail visually quiet on slow days instead of showing an
+ * empty "Breaking" box.
+ */
+function BreakingNews({ pages }: { pages: DigestPage[] }) {
+  // 24 hours ago. We use updatedAt because that's what changes when
+  // a page gets a new email; createdAt would miss "ongoing story
+  // hit a new development today" cases.
+  const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+  const seen = new Set<string>();
+  const breaking = pages
+    .filter((p) => {
+      if (p.priority !== 'high') return false;
+      const upd = p.updatedAt ? new Date(p.updatedAt).getTime() : 0;
+      if (upd < cutoff) return false;
+      if (seen.has(p._id)) return false;
+      seen.add(p._id);
+      return true;
+    })
+    .sort((a, b) => {
+      const at = new Date(a.updatedAt ?? 0).getTime();
+      const bt = new Date(b.updatedAt ?? 0).getTime();
+      return bt - at;
+    })
+    .slice(0, 6);
+  if (breaking.length === 0) return null;
+  return (
+    <div className="card border-l-4 border-red-500 dark:border-red-400">
+      <div className="mb-3 flex items-center gap-1.5 text-[10px] uppercase tracking-[0.25em] text-red-600 dark:text-red-400">
+        <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-red-500" />
+        Breaking
+      </div>
+      <ul className="space-y-3">
+        {breaking.map((p) => (
+          <li key={p._id}>
+            <Link to={`/p/${p.slug}`} className="group block">
+              <h4 className="font-serif text-sm font-bold leading-snug group-hover:text-rose-700 dark:group-hover:text-rose-300">
+                {p.title}
+              </h4>
+              {p.summary && (
+                <p className="mt-0.5 line-clamp-2 text-[11px] leading-snug text-ink-600 dark:text-ink-300">
+                  {p.summary}
+                </p>
+              )}
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/**
+ * Most-read card. Same row content as the inline "Most Read" rail
+ * that used to live inside TopStories — now extracted into its own
+ * left-column card so the layout is grid-aligned with Breaking.
+ */
+function MostReadCard({ pages }: { pages: DigestPage[] }) {
+  if (pages.length === 0) return null;
+  return (
+    <div className="card">
+      <div className="mb-3 text-[10px] uppercase tracking-[0.25em] text-ink-500">
+        Most Read
+      </div>
+      <ol className="space-y-3">
+        {pages.slice(0, 8).map((p, i) => (
+          <li key={p._id}>
+            <MostReadItem page={p} rank={i + 1} />
+          </li>
+        ))}
+      </ol>
+    </div>
   );
 }
 
