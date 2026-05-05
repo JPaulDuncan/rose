@@ -11,6 +11,7 @@ const TABS = [
   { to: 'integrations', label: 'Integrations' },
   { to: 'instructions', label: 'Instructions' },
   { to: 'models', label: 'Models' },
+  { to: 'daydream', label: 'Daydream' },
   { to: 'spam', label: 'Spam' },
 ];
 

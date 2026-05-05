@@ -26,6 +26,7 @@ import {
   TagIcon as TagXIcon,
   CheckSquare,
   ChevronDown,
+  Sparkles,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import ReactMarkdown from 'react-markdown';
@@ -319,6 +320,7 @@ export default function PageView() {
           sourceEmailIds={page.sourceEmailIds ?? []}
         />
       )}
+      {mode === 'view' && <BackgroundPanel pageId={page._id} />}
       {mode === 'view' && <Provenance page={page} />}
 
       {showRevisions && revisions && (
@@ -708,6 +710,184 @@ function SourceRow({
         </Link>
       </div>
     </li>
+  );
+}
+
+type DaydreamNoteView = {
+  _id: string;
+  kind: 'topic' | 'sender' | 'tag' | 'entity';
+  subjectKey: string;
+  displayName: string;
+  summary: string;
+  bodyMd: string;
+  sources: { adapter: string; url: string; title: string; fetchedAt: string | null }[];
+  confidence: 'low' | 'medium' | 'high';
+  model: string | null;
+  generatedAt: string | null;
+  failed: boolean;
+  failureReason: string | null;
+};
+
+/**
+ * Daydream-supplied encyclopedic context. Renders a CountedSection with
+ * one card per researched subject, each showing the LLM's short summary,
+ * the source attribution (with click-through), and a refresh / forget
+ * menu. Failed notes are shown too so the user can see why a subject
+ * didn't produce content. Returns null when daydream is off, hasn't yet
+ * produced anything for this page, or the user hasn't opted in.
+ */
+function BackgroundPanel({ pageId }: { pageId: string }) {
+  const api = useApi();
+  const qc = useQueryClient();
+  const { data } = useQuery({
+    queryKey: ['daydream-notes', pageId],
+    queryFn: () =>
+      api.get<{ notes: DaydreamNoteView[] }>(`/api/pages/${pageId}/daydream`),
+  });
+  const force = useMutation({
+    mutationFn: async () =>
+      api.post<{ jobId: string }>(`/api/pages/${pageId}/daydream`),
+    onSuccess: () => {
+      toast.success('Daydream queued — refresh in a moment');
+      void setTimeout(() => {
+        qc.invalidateQueries({ queryKey: ['daydream-notes', pageId] });
+      }, 5000);
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+  const forget = useMutation({
+    mutationFn: async (id: string) =>
+      api.del<{ ok: true }>(`/api/daydream/notes/${id}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['daydream-notes', pageId] });
+    },
+  });
+  const notes = data?.notes ?? [];
+  if (notes.length === 0) {
+    // Nothing yet — render a single tiny "Daydream now" affordance so
+    // the user can opt-in without leaving the page.
+    return (
+      <section className="mt-6 flex items-center justify-between rounded-lg border border-dashed border-ink-200 bg-ink-50 px-4 py-2 text-xs dark:border-ink-800 dark:bg-ink-900">
+        <span className="text-ink-500">
+          ✨ <em>Background</em> — encyclopedic context for this page's
+          topics. Empty so far.
+        </span>
+        <button
+          type="button"
+          className="btn-ghost text-xs"
+          onClick={() => force.mutate()}
+          disabled={force.isPending}
+          title="Force a daydream pass — needs daydream enabled in Settings → Daydream"
+        >
+          Daydream now
+        </button>
+      </section>
+    );
+  }
+
+  return (
+    <CountedSection
+      icon={<Sparkles className="h-4 w-4 text-rose-500" />}
+      title="Background"
+      count={notes.length}
+      collapseAt={4}
+    >
+      <div className="space-y-3">
+        {notes.map((n) => (
+          <DaydreamNoteCard
+            key={n._id}
+            note={n}
+            onForget={() => forget.mutate(n._id)}
+          />
+        ))}
+        <div className="flex justify-end">
+          <button
+            type="button"
+            className="btn-ghost text-xs"
+            onClick={() => force.mutate()}
+            disabled={force.isPending}
+          >
+            Refresh all
+          </button>
+        </div>
+      </div>
+    </CountedSection>
+  );
+}
+
+function DaydreamNoteCard({
+  note,
+  onForget,
+}: {
+  note: DaydreamNoteView;
+  onForget: () => void;
+}) {
+  const conf = note.confidence;
+  const confCls =
+    conf === 'high'
+      ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'
+      : conf === 'medium'
+        ? 'bg-sky-100 text-sky-700 dark:bg-sky-950/40 dark:text-sky-300'
+        : 'bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300';
+  return (
+    <div className="rounded-lg border border-ink-200 bg-white p-3 text-sm dark:border-ink-800 dark:bg-ink-950">
+      <div className="mb-1 flex flex-wrap items-baseline gap-2">
+        <span className="text-xs italic text-ink-500">{note.kind}</span>
+        <h3 className="font-serif text-base font-semibold leading-snug">
+          {note.displayName || note.subjectKey}
+        </h3>
+        {!note.failed && (
+          <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${confCls}`}>
+            {conf}
+          </span>
+        )}
+        <button
+          type="button"
+          onClick={() => {
+            if (confirm(`Forget background note for "${note.displayName || note.subjectKey}"?`))
+              onForget();
+          }}
+          className="ml-auto text-xs text-ink-400 hover:text-red-600"
+          title="Forget — daydream may re-research it later"
+        >
+          Forget
+        </button>
+      </div>
+      {note.failed ? (
+        <p className="text-xs italic text-ink-500">
+          No background found{note.failureReason ? `: ${note.failureReason}` : ''}.
+        </p>
+      ) : (
+        <>
+          {note.summary && <p className="text-ink-700 dark:text-ink-200">{note.summary}</p>}
+          {note.bodyMd && note.bodyMd !== note.summary && (
+            <p className="mt-1 whitespace-pre-wrap text-xs text-ink-600 dark:text-ink-300">
+              {note.bodyMd}
+            </p>
+          )}
+        </>
+      )}
+      {note.sources.length > 0 && (
+        <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-ink-500">
+          {note.sources.map((s) => (
+            <a
+              key={s.url}
+              href={s.url}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1 rounded bg-ink-100 px-1.5 py-0.5 hover:text-rose-600 dark:bg-ink-800"
+              title={s.title || s.url}
+            >
+              via {s.adapter}
+              <ExternalLink className="h-2.5 w-2.5" />
+            </a>
+          ))}
+          {note.generatedAt && (
+            <span>· {new Date(note.generatedAt).toLocaleDateString()}</span>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 

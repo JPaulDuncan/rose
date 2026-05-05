@@ -29,6 +29,7 @@ import ModelsSettings from './routes/settings/Models';
 import SpamSettings from './routes/settings/Spam';
 import NewsletterSettings from './routes/settings/Newsletter';
 import IngestPage from './routes/settings/Ingest';
+import DaydreamSettingsPage from './routes/settings/Daydream';
 
 function ProtectedShell() {
   const { user, ready } = useAuth();
@@ -88,6 +89,7 @@ export default function App() {
           <Route path="spam" element={<SpamSettings />} />
           <Route path="newsletter" element={<NewsletterSettings />} />
           <Route path="ingest" element={<IngestPage />} />
+          <Route path="daydream" element={<DaydreamSettingsPage />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>

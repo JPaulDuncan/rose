@@ -40,3 +40,5 @@ export { NotificationRule } from './models/NotificationRule.js';
 export type { NotificationRuleDoc } from './models/NotificationRule.js';
 export { UserPageState } from './models/UserPageState.js';
 export type { UserPageStateDoc } from './models/UserPageState.js';
+export { DaydreamNote } from './models/DaydreamNote.js';
+export type { DaydreamNoteDoc } from './models/DaydreamNote.js';

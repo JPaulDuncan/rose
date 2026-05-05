@@ -17,6 +17,7 @@ export const QUEUE_NAMES = {
   slackSync: 'rose.slack-sync',
   discordSync: 'rose.discord-sync',
   gcalSync: 'rose.gcal-sync',
+  daydream: 'rose.daydream',
 } as const;
 
 export type QueueName = (typeof QUEUE_NAMES)[keyof typeof QUEUE_NAMES];
@@ -38,5 +39,6 @@ export const briefingQueue = new Queue(QUEUE_NAMES.briefing, connection);
 export const slackSyncQueue = new Queue(QUEUE_NAMES.slackSync, connection);
 export const discordSyncQueue = new Queue(QUEUE_NAMES.discordSync, connection);
 export const gcalSyncQueue = new Queue(QUEUE_NAMES.gcalSync, connection);
+export const daydreamQueue = new Queue(QUEUE_NAMES.daydream, connection);
 
 export const generatePageEvents = new QueueEvents(QUEUE_NAMES.generatePage, connection);

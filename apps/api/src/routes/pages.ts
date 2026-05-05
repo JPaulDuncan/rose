@@ -3,7 +3,7 @@ import { Types } from 'mongoose';
 import { PageUpdateRequest } from '@rose/shared';
 import { userIdOf } from '../middleware/auth.js';
 import { validateBody } from '../middleware/validate.js';
-import { Page, Sender } from '@rose/db';
+import { Page, Sender, DaydreamNote } from '@rose/db';
 import { PageRevision } from '@rose/db';
 
 /**
@@ -29,7 +29,7 @@ async function senderBrandsForPage(
   }
   return out;
 }
-import { embedPageQueue } from '../lib/queues.js';
+import { embedPageQueue, daydreamQueue } from '../lib/queues.js';
 import { recordRevision, uniqueSlug } from '../services/wiki.js';
 
 export const pagesRouter: Router = Router();
@@ -168,4 +168,88 @@ pagesRouter.post('/:id/revisions/:version/restore', async (req, res) => {
     { removeOnComplete: 200, removeOnFail: 200, attempts: 3 },
   );
   res.json(page);
+});
+
+/**
+ * Daydream notes attached to a page. Joined via Page.daydreamSubjects[]
+ * — each entry is a (kind, subjectKey) pair the worker has decided
+ * this page wants context for. Returns notes regardless of whether
+ * they're failed or fresh; the UI distinguishes via the `failed` flag.
+ */
+pagesRouter.get('/:id/daydream', async (req, res) => {
+  const userId = new Types.ObjectId(userIdOf(req));
+  const page = await Page.findOne({ _id: req.params.id, userId })
+    .select('daydreamSubjects')
+    .lean();
+  if (!page) {
+    res.status(404).json({ error: 'not_found', message: 'Page not found' });
+    return;
+  }
+  const subjects = (page.daydreamSubjects ?? []) as { kind: string; subjectKey: string }[];
+  if (subjects.length === 0) {
+    res.json({ notes: [] });
+    return;
+  }
+  // One $or branch per (kind, key) — keeps the index on
+  // (userId, kind, subjectKey) usable.
+  const notes = await DaydreamNote.find({
+    userId,
+    $or: subjects.map((s) => ({ kind: s.kind, subjectKey: s.subjectKey })),
+  }).lean();
+  res.json({
+    notes: notes.map((n) => ({
+      _id: String(n._id),
+      kind: n.kind,
+      subjectKey: n.subjectKey,
+      displayName: n.displayName,
+      summary: n.summary,
+      bodyMd: n.bodyMd,
+      sources: (n.sources ?? []).map((s) => ({
+        adapter: s.adapter,
+        url: s.url,
+        title: s.title ?? '',
+        fetchedAt: s.fetchedAt ? new Date(s.fetchedAt).toISOString() : null,
+      })),
+      confidence: n.confidence,
+      model: n.model ?? null,
+      generatedAt: n.generatedAt ? new Date(n.generatedAt).toISOString() : null,
+      failed: !!n.failed,
+      failureReason: n.failureReason ?? null,
+    })),
+  });
+});
+
+/**
+ * Force a daydream pass on this page now — bypass the idle sweeper.
+ * Cap at 5/min/user (in-memory) so a clicky user can't burn their
+ * daily LLM budget by mashing the button.
+ */
+const forceDaydreamCalls = new Map<string, number[]>();
+pagesRouter.post('/:id/daydream', async (req, res) => {
+  const userIdStr = String(userIdOf(req));
+  const now = Date.now();
+  const calls = (forceDaydreamCalls.get(userIdStr) ?? []).filter(
+    (t) => now - t < 60_000,
+  );
+  if (calls.length >= 5) {
+    res.status(429).json({
+      error: 'rate_limited',
+      message: 'Daydream-now is capped at 5 per minute. Try again shortly.',
+    });
+    return;
+  }
+  calls.push(now);
+  forceDaydreamCalls.set(userIdStr, calls);
+  const userId = new Types.ObjectId(userIdStr);
+  const page = await Page.findOne({ _id: req.params.id, userId }).select('_id').lean();
+  if (!page) {
+    res.status(404).json({ error: 'not_found', message: 'Page not found' });
+    return;
+  }
+  const job = await daydreamQueue.add(
+    'page',
+    { kind: 'page', userId: userIdStr, pageId: String(page._id) },
+    { attempts: 1, removeOnComplete: 200, removeOnFail: 200, priority: 0 },
+  );
+  res.status(202).json({ jobId: job.id });
 });

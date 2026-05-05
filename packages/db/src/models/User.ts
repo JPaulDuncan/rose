@@ -75,6 +75,46 @@ const userSchema = new Schema(
         model: { type: String, default: '' },
         dailyCap: { type: Number, default: 30, min: 1, max: 1000 },
       },
+      /**
+       * Daydream — opportunistic research enrichment that runs while
+       * the rest of the pipeline is idle. Off by default; the user
+       * sees a one-time egress explainer on first opt-in.
+       */
+      daydream: {
+        enabled: { type: Boolean, default: false },
+        /** 'idle' (when queues empty), 'daily' (cron), or 'off'. */
+        schedule: { type: String, enum: ['idle', 'daily', 'off'], default: 'idle' },
+        /** HH:MM local time for the daily cron. */
+        dailyAtLocal: { type: String, default: '03:00' },
+        timezone: { type: String, default: 'UTC' },
+        /** Hard ceiling on synthesis LLM calls per UTC day. */
+        dailyCallCap: { type: Number, default: 50, min: 1, max: 500 },
+        /** Max subjects researched per page in one pass. */
+        perPageMaxSubjects: { type: Number, default: 3, min: 1, max: 20 },
+        /** Re-research a subject after this many days. */
+        refreshAfterDays: { type: Number, default: 30, min: 1, max: 365 },
+        sources: {
+          wikipedia: {
+            enabled: { type: Boolean, default: true },
+            lang: { type: String, default: 'en' },
+          },
+          wiktionary: {
+            enabled: { type: Boolean, default: false },
+            lang: { type: String, default: 'en' },
+          },
+          stackexchange: {
+            enabled: { type: Boolean, default: false },
+            sites: { type: [String], default: ['stackoverflow.com'] },
+          },
+          arxiv: { enabled: { type: Boolean, default: false } },
+          hackernews: { enabled: { type: Boolean, default: false } },
+        },
+        skip: {
+          senderBrandKeys: { type: [String], default: [] },
+          tags: { type: [String], default: [] },
+          categoryIds: { type: [Schema.Types.ObjectId], default: [] },
+        },
+      },
     },
     /**
      * Per-user provider configuration. API keys are stored encrypted via

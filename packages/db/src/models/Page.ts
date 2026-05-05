@@ -162,6 +162,29 @@ const pageSchema = new Schema(
       enum: ['llm', 'synth', 'briefing', 'human', null],
       default: null,
     },
+    /**
+     * Subjects (topics / entities / sender brands / tags) the daydream
+     * worker has decided this page wants encyclopedic context for.
+     * Notes themselves live in the DaydreamNote collection — this is
+     * just the back-reference so the page view can fetch them in a
+     * single $in query and the worker knows what to refresh.
+     */
+    daydreamSubjects: {
+      type: [
+        new Schema(
+          {
+            kind: {
+              type: String,
+              enum: ['topic', 'sender', 'tag', 'entity'],
+              required: true,
+            },
+            subjectKey: { type: String, required: true },
+          },
+          { _id: false },
+        ),
+      ],
+      default: [],
+    },
   },
   { timestamps: true },
 );
