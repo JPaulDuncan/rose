@@ -18,12 +18,10 @@ export type AdapterContext = {
   timeoutMs: number;
   /** ISO language tag for sources that support it ('en', 'es', …). */
   lang?: string;
-  /** Stack Exchange site list, etc. — adapter-specific config. */
+  /** Adapter-specific knobs. The webFetch cache is passed here under
+   *  the well-known key `cache` so adapters route through the
+   *  shared Redis-backed memoiser. */
   options?: Record<string, unknown>;
-  /** Optional fetch override so the worker can route through its
-   *  cache. Adapters use this instead of bare `fetch` so the test
-   *  harness + Redis cache can intercept transparently. */
-  fetch?: (input: string, init?: RequestInit) => Promise<Response>;
 };
 
 export interface DaydreamAdapter {

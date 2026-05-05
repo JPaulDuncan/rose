@@ -10,7 +10,7 @@ import { DaydreamSynthesisOutput } from '@rose/shared';
 import { redis } from '../lib/redis.js';
 import { logger } from '../lib/logger.js';
 import { resolveProviderForUser } from '../lib/providers.js';
-import { cachedFetch } from '../lib/httpCache.js';
+import { webCache } from '../lib/webFetchCache.js';
 
 const QUEUE = 'rose.daydream';
 const FETCH_TIMEOUT_MS = 8000;
@@ -253,7 +253,7 @@ async function researchSubject(
         const got = await a.fetch(display, {
           timeoutMs: FETCH_TIMEOUT_MS,
           lang,
-          fetch: cachedFetch,
+          options: { cache: webCache },
         });
         // Take the top snippet from each adapter — bounded prompt size.
         const top = got.sort((x, y) => y.confidence - x.confidence)[0];

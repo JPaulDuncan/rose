@@ -1,12 +1,12 @@
 import { Router } from 'express';
 import { Types } from 'mongoose';
 import { z } from 'zod';
-import { User, Instruction } from '@rose/db';
-import { renderTemplate } from '@rose/llm';
+import { User } from '@rose/db';
+import { webFetchJson } from '@rose/llm';
 import { userIdOf } from '../middleware/auth.js';
 import { validateBody } from '../middleware/validate.js';
-import { resolveProviderForUser } from '../lib/providers.js';
 import { logger } from '../lib/logger.js';
+import { webCache } from '../lib/webFetchCache.js';
 
 export const weatherRouter: Router = Router();
 
@@ -27,10 +27,14 @@ type ForecastPeriod = {
   temperature: number;
   temperatureUnit: string;
   windSpeed: string;
-  windDirection: string;
+  // windDirection / icon are present on every NOAA response in
+  // practice, but the wire schema marks them with `.default('')` so
+  // a missing field becomes empty string rather than throwing — keep
+  // the type signature in sync with that fallback.
+  windDirection?: string;
   shortForecast: string;
   detailedForecast: string;
-  icon: string;
+  icon?: string;
 };
 
 type WeatherCacheEntry = {
@@ -53,87 +57,159 @@ const SetByLatLon = z.object({
 });
 const SetLocationRequest = z.union([SetByQuery, SetByLatLon]);
 
+// Zod-validated wire shapes. NOAA + Nominatim drift occasionally;
+// keeping these strict means a breaking change shows up as a parse
+// failure in logs instead of an undefined-y crash later.
+const NominatimResult = z.array(
+  z.object({
+    lat: z.string(),
+    lon: z.string(),
+    display_name: z.string(),
+  }),
+);
+const NoaaPointsResponse = z.object({
+  properties: z.object({
+    forecast: z.string().url().optional(),
+  }),
+});
+const NoaaForecastResponse = z.object({
+  properties: z.object({
+    periods: z.array(
+      z.object({
+        number: z.number(),
+        name: z.string(),
+        startTime: z.string(),
+        endTime: z.string(),
+        isDaytime: z.boolean(),
+        temperature: z.number(),
+        temperatureUnit: z.string(),
+        windSpeed: z.string(),
+        windDirection: z.string().default(''),
+        shortForecast: z.string(),
+        detailedForecast: z.string(),
+        icon: z.string().default(''),
+      }),
+    ),
+  }),
+});
+
 async function geocode(query: string): Promise<WeatherLocation | null> {
-  // Free, no-key — Nominatim. Honor their UA + rate-limit policy.
+  // Free, no-key — Nominatim. UA + 30-day cache for repeated queries
+  // (same city looked up many times across users) helps stay under
+  // their fair-use limit.
   const url = `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&q=${encodeURIComponent(query)}`;
-  const res = await fetch(url, {
-    headers: { 'User-Agent': NOAA_USER_AGENT, Accept: 'application/json' },
+  const json = await webFetchJson(url, {
+    userAgent: NOAA_USER_AGENT,
+    cache: webCache,
+    cacheTtlSec: 30 * 24 * 60 * 60,
+    caller: 'weather.geocode',
+    timeoutMs: 6000,
+    schema: NominatimResult,
   });
-  if (!res.ok) return null;
-  const json = (await res.json()) as { lat: string; lon: string; display_name: string }[];
-  if (!json[0]) return null;
-  const { lat, lon, display_name } = json[0];
+  if (!json || json.length === 0) return null;
+  const top = json[0]!;
   return {
-    lat: Number(lat),
-    lon: Number(lon),
-    label: display_name.split(',').slice(0, 3).join(',').trim(),
+    lat: Number(top.lat),
+    lon: Number(top.lon),
+    label: top.display_name.split(',').slice(0, 3).join(',').trim(),
   };
 }
 
 async function fetchNoaaForecast(lat: number, lon: number): Promise<ForecastPeriod[] | null> {
-  const lookup = await fetch(
+  // Step 1: /points → discover the office-specific forecast URL.
+  // This is stable per (lat, lon) so cache it for a day.
+  const points = await webFetchJson(
     `https://api.weather.gov/points/${lat.toFixed(4)},${lon.toFixed(4)}`,
-    { headers: { 'User-Agent': NOAA_USER_AGENT, Accept: 'application/geo+json' } },
+    {
+      userAgent: NOAA_USER_AGENT,
+      headers: { accept: 'application/geo+json' },
+      cache: webCache,
+      cacheTtlSec: 24 * 60 * 60,
+      caller: 'weather.noaa.points',
+      timeoutMs: 8000,
+      schema: NoaaPointsResponse,
+    },
   );
-  if (!lookup.ok) {
-    logger.warn({ status: lookup.status }, 'NOAA points lookup failed');
+  if (!points?.properties.forecast) {
+    logger.warn({ lat, lon }, 'NOAA points lookup returned no forecast URL');
     return null;
   }
-  const lookupJson = (await lookup.json()) as {
-    properties?: { forecast?: string };
-  };
-  const forecastUrl = lookupJson.properties?.forecast;
-  if (!forecastUrl) return null;
-  const fc = await fetch(forecastUrl, {
-    headers: { 'User-Agent': NOAA_USER_AGENT, Accept: 'application/geo+json' },
+  // Step 2: forecast itself. Don't cache — NOAA updates the forecast
+  // multiple times a day and we already cache the response in the
+  // in-memory briefCache for 30 min upstream.
+  const fc = await webFetchJson(points.properties.forecast, {
+    userAgent: NOAA_USER_AGENT,
+    headers: { accept: 'application/geo+json' },
+    caller: 'weather.noaa.forecast',
+    timeoutMs: 8000,
+    schema: NoaaForecastResponse,
   });
-  if (!fc.ok) {
-    logger.warn({ status: fc.status }, 'NOAA forecast fetch failed');
-    return null;
-  }
-  const fcJson = (await fc.json()) as {
-    properties?: { periods?: ForecastPeriod[] };
-  };
-  return fcJson.properties?.periods ?? null;
+  if (!fc) return null;
+  return fc.properties.periods;
 }
 
-async function renderBrief(
-  userId: Types.ObjectId,
+/**
+ * Deterministic NOAA brief — assembled from the periods array, no LLM.
+ * The previous version asked the generation provider to summarise the
+ * JSON, which is the wrong shape: it lets a small/weak local model
+ * hallucinate temperatures, drift on conditions, or invent timing.
+ * Building it by hand from the structured data means the brief always
+ * matches the numbers shown alongside it. Falls back to an empty
+ * string when the periods are too sparse to summarise meaningfully.
+ */
+function buildDeterministicBrief(
   location: WeatherLocation,
   periods: ForecastPeriod[],
-): Promise<string> {
-  // Pull the user's `weather` instruction (their default → system fallback).
-  const tpl =
-    (await Instruction.findOne({ userId, scope: 'weather', isDefault: true })) ??
-    (await Instruction.findOne({ userId, scope: 'weather', isSystem: true }));
-  if (!tpl) return '';
-  const promptText = renderTemplate(tpl.template, {
-    location: location.label,
-    now: new Date().toISOString(),
-    forecast_data: JSON.stringify(periods.slice(0, 4), null, 2),
-  });
-  try {
-    const { provider, model } = await resolveProviderForUser(userId, 'generation');
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 12_000);
-    let out = '';
-    try {
-      for await (const chunk of provider.generateStream({
-        model,
-        prompt: promptText,
-        temperature: 0.4,
-        signal: ctrl.signal,
-      })) {
-        out += chunk.response;
-      }
-    } finally {
-      clearTimeout(timer);
+): string {
+  if (!periods.length) return '';
+  const cur = periods[0]!;
+  const next = periods[1];
+  const upcoming = periods.slice(0, 4);
+
+  // High/low across the next ~24 hours of daytime + nighttime periods.
+  const day = upcoming.find((p) => p.isDaytime);
+  const night = upcoming.find((p) => !p.isDaytime);
+  const high = day?.temperature;
+  const low = night?.temperature;
+  const unit = cur.temperatureUnit ?? 'F';
+
+  const parts: string[] = [];
+  parts.push(
+    `${cur.name}: ${cur.shortForecast.toLowerCase()}, ${cur.temperature}°${unit}`,
+  );
+  if (high != null && low != null && day && night) {
+    if (cur.isDaytime) {
+      parts.push(`tonight ~${low}°${unit}`);
+    } else {
+      parts.push(`tomorrow ~${high}°${unit}`);
     }
-    return out.trim();
-  } catch (err) {
-    logger.warn({ err }, 'weather brief LLM call failed; returning empty brief');
-    return '';
   }
+
+  // Next-period delta — only mention if the short-forecast text
+  // changes meaningfully (different first noun) or the temp moves
+  // by more than 10 degrees.
+  if (next) {
+    const curHead = cur.shortForecast.split(/[ ,]/, 1)[0]?.toLowerCase() ?? '';
+    const nextHead = next.shortForecast.split(/[ ,]/, 1)[0]?.toLowerCase() ?? '';
+    const tempDelta = Math.abs(next.temperature - cur.temperature);
+    if (curHead && nextHead && curHead !== nextHead) {
+      parts.push(
+        `${next.name.toLowerCase()} turns ${next.shortForecast.toLowerCase()}`,
+      );
+    } else if (tempDelta >= 10) {
+      parts.push(
+        `${next.name.toLowerCase()} ${next.temperature}°${unit}`,
+      );
+    }
+  }
+
+  if (cur.windSpeed) parts.push(`wind ${cur.windSpeed.toLowerCase()}`);
+
+  // Capitalise the first letter, end with a period.
+  const joined = parts.join(' · ');
+  const out = joined.charAt(0).toUpperCase() + joined.slice(1);
+  return out.endsWith('.') ? out : out + '.';
+  void location; // location is in the surrounding UI label; unused here
 }
 
 weatherRouter.get('/location', async (req, res) => {
@@ -223,8 +299,7 @@ weatherRouter.get('/', async (req, res, next) => {
       return;
     }
     const current = periods[0] ?? null;
-    const brief = await renderBrief(
-      userId,
+    const brief = buildDeterministicBrief(
       { lat: loc.lat, lon: loc.lon, label: loc.label },
       periods,
     );

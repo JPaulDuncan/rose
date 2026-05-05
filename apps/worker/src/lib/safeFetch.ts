@@ -1,59 +1,10 @@
-import dns from 'node:dns/promises';
-import net from 'node:net';
-
-/**
- * Reject hostnames that resolve to private / loopback / link-local /
- * cloud-metadata IPs. Resolves at fetch time to defeat DNS rebinding
- * (the cached IP at fetch time is what fetch will actually connect to,
- * but we validate every resolved address upfront).
- */
-const PRIVATE_RANGES = [
-  /^10\./,
-  /^127\./,
-  /^169\.254\./,
-  /^172\.(1[6-9]|2\d|3[0-1])\./,
-  /^192\.168\./,
-  /^0\./,
-  /^::1$/,
-  /^fc[0-9a-f]{2}:/i,
-  /^fe80:/i,
-];
-
-export class UnsafeUrlError extends Error {}
-
-export async function assertSafeHttpUrl(raw: string): Promise<URL> {
-  let url: URL;
-  try {
-    url = new URL(raw);
-  } catch {
-    throw new UnsafeUrlError('Invalid URL');
-  }
-  if (url.protocol !== 'https:' && url.protocol !== 'http:') {
-    throw new UnsafeUrlError(`Unsupported scheme: ${url.protocol}`);
-  }
-  const host = url.hostname;
-  if (!host || host === 'localhost') throw new UnsafeUrlError('Loopback host blocked');
-  if (host.startsWith('[') || net.isIP(host)) {
-    if (PRIVATE_RANGES.some((re) => re.test(host))) {
-      throw new UnsafeUrlError('Private IP blocked');
-    }
-    return url;
-  }
-  // Resolve and check every result.
-  let addrs: string[];
-  try {
-    const r = await dns.lookup(host, { all: true });
-    addrs = r.map((a) => a.address);
-  } catch {
-    throw new UnsafeUrlError(`DNS lookup failed for ${host}`);
-  }
-  for (const a of addrs) {
-    if (PRIVATE_RANGES.some((re) => re.test(a))) {
-      throw new UnsafeUrlError(`${host} resolves to a blocked address`);
-    }
-  }
-  return url;
-}
+// Re-export the canonical SSRF guard from @rose/llm so cross-package
+// `instanceof UnsafeUrlError` works (one shared class). The redirect-
+// following safeFetch below stays here because URL ingestion needs
+// the by-hand redirect loop with per-hop revalidation, which is more
+// than the simpler webFetch tool exposes.
+export { assertSafeHttpUrl, UnsafeUrlError } from '@rose/llm';
+import { assertSafeHttpUrl, UnsafeUrlError } from '@rose/llm';
 
 export type SafeFetchResult = {
   buffer: Buffer;
