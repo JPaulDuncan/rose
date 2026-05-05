@@ -1,9 +1,41 @@
 import { Router } from 'express';
 import { Types } from 'mongoose';
-import { Page } from '@rose/db';
+import { Page, TagDigest } from '@rose/db';
 import { userIdOf } from '../middleware/auth.js';
+import { tagDigestQueue } from '../lib/queues.js';
 
 export const tagsRouter: Router = Router();
+
+function utcDayKey(d: Date = new Date()): string {
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * Pick the most recent non-failed digest for the tag — usually
+ * today's, but if today's hasn't been generated yet we fall back to
+ * yesterday's so the home edition always has a lede when there's
+ * been any prior activity. Failed digests are intentionally
+ * skipped so a transient blip doesn't dominate the section header.
+ */
+async function latestDigest(userId: Types.ObjectId, tag: string) {
+  return TagDigest.findOne({ userId, tag, failed: false })
+    .sort({ generatedAt: -1 })
+    .lean();
+}
+
+function shapeDigest(d: NonNullable<Awaited<ReturnType<typeof latestDigest>>> | null) {
+  if (!d) return null;
+  return {
+    headline: d.headline ?? '',
+    dek: d.dek ?? '',
+    bodyMd: d.bodyMd ?? '',
+    topPageIds: (d.topPageIds ?? []).map(String),
+    pageCount: d.pageCount ?? 0,
+    model: d.model ?? null,
+    dayKey: d.dayKey,
+    generatedAt: d.generatedAt ? new Date(d.generatedAt).toISOString() : null,
+  };
+}
 
 /**
  * Lightweight directory of every tag / topic the user has, sorted by usage.
@@ -91,6 +123,7 @@ tagsRouter.get('/:tag', async (req, res) => {
   for (const [t, n] of tagCounts) related.set(t, (related.get(t) ?? 0) + n);
   for (const [t, n] of topicCounts) related.set(t, (related.get(t) ?? 0) + n);
 
+  const digest = shapeDigest(await latestDigest(userId, tag));
   res.json({
     tag,
     pageCount: pages.length,
@@ -105,6 +138,45 @@ tagsRouter.get('/:tag', async (req, res) => {
       .sort((a, b) => b[1] - a[1])
       .slice(0, 20)
       .map(([t, count]) => ({ tag: t, count })),
+    digest,
     pages,
   });
+});
+
+/**
+ * Latest digest for a tag — same shape served alongside /api/tags/:tag,
+ * but pre-resolved so a UI that just wants the lede can pull it
+ * without the page list.
+ */
+tagsRouter.get('/:tag/digest', async (req, res) => {
+  const userId = new Types.ObjectId(userIdOf(req));
+  const tag = decodeURIComponent(req.params.tag ?? '').trim().toLowerCase();
+  if (!tag) {
+    res.status(400).json({ error: 'invalid_request', message: 'Empty tag' });
+    return;
+  }
+  const digest = shapeDigest(await latestDigest(userId, tag));
+  res.json({ digest });
+});
+
+/** Force-regenerate today's digest. Capped via job-id collapsing —
+ *  same (user, tag, day) triple wins. */
+tagsRouter.post('/:tag/digest/regenerate', async (req, res) => {
+  const userId = new Types.ObjectId(userIdOf(req));
+  const tag = decodeURIComponent(req.params.tag ?? '').trim().toLowerCase();
+  if (!tag) {
+    res.status(400).json({ error: 'invalid_request', message: 'Empty tag' });
+    return;
+  }
+  const job = await tagDigestQueue.add(
+    'digest',
+    { userId: String(userId), tag },
+    {
+      jobId: `digest:${String(userId)}:${tag}:${utcDayKey()}`,
+      attempts: 1,
+      removeOnComplete: 200,
+      removeOnFail: 200,
+    },
+  );
+  res.status(202).json({ jobId: job.id });
 });

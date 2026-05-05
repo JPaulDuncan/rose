@@ -294,4 +294,39 @@ OPTIONAL FOCUS
 
 Output the meta-entry only.`,
   },
+  {
+    name: 'tag-digest.daily',
+    scope: 'tag-digest',
+    description:
+      "Section editor's brief for one tag — newspaper-style headline + dek + body paragraph that anchors the day's featured-tag section on the home edition.",
+    variables: ['tag', 'day_label', 'page_count', 'entries'],
+    isDefault: true,
+    template: `You are the section editor for the "#{{tag}}" beat in a daily newspaper. Write the day's section brief — what a reader skimming the front page should know about this beat today. {{page_count}} wiki entries are in scope; each is labeled [p1], [p2], … Newest entries are listed first.
+
+VOICE
+- Newspaper section editor, third person, neutral. Active verbs. Specific over generic. No "in summary", no "this section".
+- Inverted-pyramid: lead with the day's most consequential development; older context follows.
+
+OUTPUT — JSON only, three fields:
+
+  {
+    "headline": "<= 90 chars — a real newspaper-style section headline. Title-case-ish. No "Re:" / "Fwd:". Don't start with the tag. The headline names the day's most important development on this beat.",
+    "dek": "<= 200 chars — the secondary headline / standfirst. One sentence that frames the day's developments in one breath.",
+    "bodyMd": "<= 800 chars markdown — a single paragraph (or at most two) of inverted-pyramid prose covering the day. Cite each contributing page inline as [pN] using the exact labels in ENTRIES. Don't list / bullet — write a section editor's brief that flows."
+  }
+
+GROUND RULES
+- Don't invent facts that aren't in the entries.
+- If only one entry is in scope, the dek can be a single noun-phrase and the body can be one sentence — don't pad.
+- If the entries are sparse / metadata-only, say so plainly in the dek and produce a bodyMd that names the senders involved.
+- Never write "no content" or "this section is empty" — if there's nothing to report, the headline becomes "Quiet day on #{{tag}}" and the body says what the most recent entries were even when sparse.
+- Citations must use the [pN] tokens; never invent labels.
+
+DATE: {{day_label}}
+
+ENTRIES (newest first):
+{{entries}}
+
+Output the JSON object only.`,
+  },
 ];

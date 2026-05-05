@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { Types } from 'mongoose';
-import { Page, Email, User, Sender } from '@rose/db';
+import { Page, Email, User, Sender, TagDigest } from '@rose/db';
 import { userIdOf } from '../middleware/auth.js';
 
 export const digestRouter: Router = Router();
@@ -244,7 +244,29 @@ digestRouter.get('/', async (req, res) => {
   // with that tag's most-recently-updated pages (across either `tags` or
   // `topics`, capped at 8 per section). Spam + promotions still excluded.
   const featuredTags = (userPrefs?.featuredTags ?? []).map((t) => t.toLowerCase());
-  const featuredSections: { tag: string; pageCount: number; pages: DigestPage[] }[] = [];
+  const featuredSections: {
+    tag: string;
+    pageCount: number;
+    pages: DigestPage[];
+    digest: {
+      headline: string;
+      dek: string;
+      bodyMd: string;
+      generatedAt: string | null;
+      dayKey: string;
+    } | null;
+  }[] = [];
+  // Bulk-fetch the latest non-failed digests so this stays one
+  // round-trip regardless of how many tags the user has featured.
+  const digests = featuredTags.length
+    ? await TagDigest.find({ userId, tag: { $in: featuredTags }, failed: false })
+        .sort({ generatedAt: -1 })
+        .lean()
+    : [];
+  const latestByTag = new Map<string, (typeof digests)[number]>();
+  for (const d of digests) {
+    if (!latestByTag.has(d.tag)) latestByTag.set(d.tag, d);
+  }
   for (const tag of featuredTags) {
     const tagFilter = {
       ...filter,
@@ -256,11 +278,22 @@ digestRouter.get('/', async (req, res) => {
       .select('-contentMd -embedding -topicCentroid')
       .lean()) as unknown as DigestPage[];
     const total = await Page.countDocuments(tagFilter);
-    if (matching.length > 0) {
-      featuredSections.push({ tag, pageCount: total, pages: matching });
-    } else {
-      featuredSections.push({ tag, pageCount: 0, pages: [] });
-    }
+    const d = latestByTag.get(tag) ?? null;
+    const digest = d
+      ? {
+          headline: d.headline ?? '',
+          dek: d.dek ?? '',
+          bodyMd: d.bodyMd ?? '',
+          generatedAt: d.generatedAt ? new Date(d.generatedAt).toISOString() : null,
+          dayKey: d.dayKey,
+        }
+      : null;
+    featuredSections.push({
+      tag,
+      pageCount: matching.length > 0 ? total : 0,
+      pages: matching,
+      digest,
+    });
   }
 
   res.json({

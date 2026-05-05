@@ -13,6 +13,7 @@ export const InstructionScope = z.enum([
   'reply',
   'briefing',
   'synthesis',
+  'tag-digest',
 ]);
 export type InstructionScope = z.infer<typeof InstructionScope>;
 

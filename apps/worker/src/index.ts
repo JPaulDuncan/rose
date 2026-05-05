@@ -26,6 +26,7 @@ import {
   startLibrarySweeper,
 } from './processors/librarySync.js';
 import { startLibraryEmbedWorker } from './processors/libraryEmbed.js';
+import { startTagDigestWorker, startTagDigestSweeper } from './processors/tagDigest.js';
 import { startReputationDecaySweep } from './services/reputationSweep.js';
 import { startDaydreamSweeper } from './services/daydreamSweeper.js';
 import { getVapidKeys } from './lib/vapid.js';
@@ -53,6 +54,8 @@ async function bootstrap() {
   startLibrarySyncWorker();
   startLibraryEmbedWorker();
   startLibrarySweeper();
+  startTagDigestWorker();
+  startTagDigestSweeper();
   // Initialise VAPID keys at boot (generates on first run, persists
   // to var/vapid.json so the API can read the public half).
   getVapidKeys();

@@ -46,3 +46,5 @@ export { LibrarySource } from './models/LibrarySource.js';
 export type { LibrarySourceDoc } from './models/LibrarySource.js';
 export { LibraryDocument } from './models/LibraryDocument.js';
 export type { LibraryDocumentDoc } from './models/LibraryDocument.js';
+export { TagDigest } from './models/TagDigest.js';
+export type { TagDigestDoc } from './models/TagDigest.js';

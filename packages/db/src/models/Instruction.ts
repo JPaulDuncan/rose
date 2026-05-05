@@ -19,6 +19,7 @@ const instructionSchema = new Schema(
         'reply',
         'briefing',
         'synthesis',
+        'tag-digest',
       ],
       required: true,
     },

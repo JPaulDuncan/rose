@@ -84,7 +84,18 @@ type Digest = {
   topSenders: { address: string; pageCount: number }[];
   topTopics: { topic: string; count: number }[];
   featuredTags: string[];
-  featuredSections: { tag: string; pageCount: number; pages: DigestPage[] }[];
+  featuredSections: {
+    tag: string;
+    pageCount: number;
+    pages: DigestPage[];
+    digest: {
+      headline: string;
+      dek: string;
+      bodyMd: string;
+      generatedAt: string | null;
+      dayKey: string;
+    } | null;
+  }[];
   senderBrands: Record<string, SenderBrand>;
 };
 
@@ -824,60 +835,109 @@ function slugifyAnchor(label: string): string {
   return label.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
 }
 
+type FeaturedSectionDigest = {
+  headline: string;
+  dek: string;
+  bodyMd: string;
+  generatedAt: string | null;
+  dayKey: string;
+};
+
 function FeaturedSections({
   sections,
   suppressIds,
 }: {
-  sections: { tag: string; pageCount: number; pages: DigestPage[] }[];
+  sections: {
+    tag: string;
+    pageCount: number;
+    pages: DigestPage[];
+    digest?: FeaturedSectionDigest | null;
+  }[];
   suppressIds: Set<string>;
 }) {
   return (
     <div className="space-y-12 border-t-4 border-double border-ink-900 pt-8 dark:border-ink-100">
       {sections.map((s) => {
         const pages = s.pages.filter((p) => !suppressIds.has(p._id));
+        // When a tag-digest exists, it becomes the section's lede —
+        // a newspaper section editor's brief, headline + dek + body
+        // — and the wiki pages live under it as a carousel of
+        // related entries. When there's no digest yet, fall back to
+        // the prior lead-page card so the section never empties.
+        const digest = s.digest ?? null;
         const lead = pages[0];
-        const rest = pages.slice(1);
+        const rest = digest ? pages : pages.slice(1);
+        const dayLabel = digest?.generatedAt
+          ? new Date(digest.generatedAt).toLocaleDateString(undefined, {
+              weekday: 'short',
+              month: 'short',
+              day: 'numeric',
+            })
+          : null;
         return (
           <section
             key={s.tag}
             id={`featured-${slugifyAnchor(s.tag)}`}
             className="space-y-5"
           >
-            {/* Newspaper-style section nameplate */}
+            {/* Newspaper-style section nameplate — eyebrow, masthead-style
+                heading, "see all" affordance. The digest-driven lede
+                replaces the previous "first matching page wins" lead. */}
             <div className="border-b-2 border-ink-900 pb-2 dark:border-ink-100">
-              <div className="text-[10px] uppercase tracking-[0.25em] text-ink-500">
-                Section
-              </div>
-              <div className="mt-0.5 flex items-baseline justify-between gap-4">
-                <Link
-                  to={`/t/${encodeURIComponent(s.tag)}`}
-                  className="font-serif text-4xl font-black leading-none tracking-tight hover:text-rose-700 dark:hover:text-rose-300"
-                >
-                  #{s.tag}
-                </Link>
+              <div className="flex items-baseline justify-between gap-4">
+                <div>
+                  <div className="text-[10px] uppercase tracking-[0.25em] text-ink-500">
+                    The #{s.tag} Brief
+                  </div>
+                  <Link
+                    to={`/t/${encodeURIComponent(s.tag)}`}
+                    className="mt-0.5 block font-serif text-3xl font-black leading-tight tracking-tight hover:text-rose-700 dark:hover:text-rose-300"
+                  >
+                    {digest?.headline || `#${s.tag}`}
+                  </Link>
+                </div>
                 <Link
                   to={`/t/${encodeURIComponent(s.tag)}`}
                   className="shrink-0 text-[11px] uppercase tracking-widest text-ink-500 hover:text-ink-900 dark:hover:text-ink-100"
+                  title={dayLabel ? `Section brief for ${dayLabel}` : 'Open the section'}
                 >
-                  {s.pageCount} {s.pageCount === 1 ? 'story' : 'stories'} ·{' '}
+                  {s.pageCount} {s.pageCount === 1 ? 'story' : 'stories'}
+                  {dayLabel && (
+                    <>
+                      {' '}· <span className="text-ink-400">{dayLabel}</span>
+                    </>
+                  )}
+                  {' '}·{' '}
                   <span className="font-medium text-rose-600 dark:text-rose-300">
                     See all →
                   </span>
                 </Link>
               </div>
+              {digest?.dek && (
+                <p className="mt-2 font-serif text-base italic leading-snug text-ink-700 dark:text-ink-200">
+                  {digest.dek}
+                </p>
+              )}
             </div>
 
-            {pages.length === 0 ? (
-              <p className="text-xs italic text-ink-500">No recent dispatches in this section.</p>
+            {digest?.bodyMd ? (
+              <div className="md:columns-2 md:gap-8">
+                <p className="whitespace-pre-wrap text-sm leading-relaxed text-ink-700 first-letter:font-serif first-letter:text-3xl first-letter:font-bold first-letter:leading-none first-letter:mr-1 first-letter:float-left first-letter:mt-1 dark:text-ink-200">
+                  {digest.bodyMd}
+                </p>
+              </div>
+            ) : pages.length === 0 ? (
+              <p className="text-xs italic text-ink-500">
+                No recent dispatches in this section.
+              </p>
             ) : (
+              lead && <FeatureLead page={lead} />
+            )}
+
+            {rest.length > 0 && (
               <>
-                {lead && <FeatureLead page={lead} />}
-                {rest.length > 0 && (
-                  <>
-                    <div className="border-t border-ink-200 dark:border-ink-800" />
-                    <SectionCarousel pages={rest.slice(0, 12)} />
-                  </>
-                )}
+                <div className="border-t border-ink-200 dark:border-ink-800" />
+                <SectionCarousel pages={rest.slice(0, 12)} />
               </>
             )}
           </section>

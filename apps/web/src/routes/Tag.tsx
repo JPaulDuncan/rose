@@ -10,6 +10,7 @@ import {
   Megaphone,
   ChevronLeft,
   Star,
+  Sparkles,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useApi } from '../lib/api';
@@ -29,13 +30,25 @@ type TagPage = {
   updatedAt: string;
 };
 
-type TagDigest = {
+type TagDigestSummary = {
+  headline: string;
+  dek: string;
+  bodyMd: string;
+  topPageIds: string[];
+  pageCount: number;
+  model: string | null;
+  dayKey: string;
+  generatedAt: string | null;
+};
+
+type TagPageResponse = {
   tag: string;
   pageCount: number;
   totalEmails: number;
   dateRange: { from: string; to: string } | null;
   topSenders: { address: string; pageCount: number }[];
   relatedTags: { tag: string; count: number }[];
+  digest: TagDigestSummary | null;
   pages: TagPage[];
 };
 
@@ -46,8 +59,19 @@ export default function TagPage() {
   const qc = useQueryClient();
   const { data, isLoading } = useQuery({
     queryKey: ['tag', tag],
-    queryFn: () => api.get<TagDigest>(`/api/tags/${encodeURIComponent(tag)}`),
+    queryFn: () => api.get<TagPageResponse>(`/api/tags/${encodeURIComponent(tag)}`),
     enabled: !!tag,
+  });
+  const regenDigest = useMutation({
+    mutationFn: async () =>
+      api.post<{ jobId: string }>(
+        `/api/tags/${encodeURIComponent(tag)}/digest/regenerate`,
+      ),
+    onSuccess: () => {
+      toast.success("Today's brief queued — refresh in a few seconds.");
+      void setTimeout(() => qc.invalidateQueries({ queryKey: ['tag', tag] }), 4000);
+    },
+    onError: (e: Error) => toast.error(e.message),
   });
   const { data: featured } = useQuery({
     queryKey: ['featured-tags'],
@@ -138,10 +162,18 @@ export default function TagPage() {
         <div className="card text-center text-ink-500">No pages match this tag.</div>
       ) : (
         <div className="grid gap-8 lg:grid-cols-[1fr_260px]">
-          <div className="min-w-0 space-y-3">
-            {data.pages.map((p) => (
-              <PageRow key={p._id} page={p} />
-            ))}
+          <div className="min-w-0 space-y-6">
+            <DigestNameplate
+              tag={tag}
+              digest={data.digest}
+              onRegen={() => regenDigest.mutate()}
+              regenPending={regenDigest.isPending}
+            />
+            <div className="space-y-3">
+              {data.pages.map((p) => (
+                <PageRow key={p._id} page={p} />
+              ))}
+            </div>
           </div>
 
           <aside className="space-y-4">
@@ -218,6 +250,89 @@ export default function TagPage() {
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * Newspaper-style daily section nameplate. Sits at the top of the
+ * tag page above the list of contributing wiki entries. Shows the
+ * day's section editor's brief from TagDigest — headline, dek, body
+ * paragraph — with a "Regenerate today's brief" affordance for
+ * pulling a fresh brief on demand.
+ *
+ * Falls back to a quiet placeholder when no digest exists yet (a
+ * fresh user, or a tag the sweeper hasn't reached). Failed digests
+ * are filtered out at the API layer so the UI never sees them.
+ */
+function DigestNameplate({
+  tag,
+  digest,
+  onRegen,
+  regenPending,
+}: {
+  tag: string;
+  digest: TagDigestSummary | null;
+  onRegen: () => void;
+  regenPending: boolean;
+}) {
+  const dayLabel = digest?.generatedAt
+    ? new Date(digest.generatedAt).toLocaleDateString(undefined, {
+        weekday: 'long',
+        month: 'long',
+        day: 'numeric',
+        year: 'numeric',
+      })
+    : null;
+
+  return (
+    <section className="border-t-4 border-double border-ink-900 pt-4 dark:border-ink-100">
+      {/* Section nameplate — tiny eyebrow + serif headline + dek. */}
+      <div className="border-b-2 border-ink-900 pb-3 dark:border-ink-100">
+        <div className="flex items-baseline justify-between gap-3">
+          <div className="text-[10px] uppercase tracking-[0.25em] text-ink-500">
+            The #{tag} Brief
+          </div>
+          {dayLabel && (
+            <div className="text-[10px] uppercase tracking-widest text-ink-400">
+              {dayLabel}
+            </div>
+          )}
+        </div>
+        <h2 className="mt-1 font-serif text-3xl font-black leading-tight tracking-tight">
+          {digest?.headline || `Quiet day on #${tag}`}
+        </h2>
+        {digest?.dek && (
+          <p className="mt-2 font-serif text-base italic leading-snug text-ink-700 dark:text-ink-200">
+            {digest.dek}
+          </p>
+        )}
+      </div>
+
+      {digest?.bodyMd && (
+        <p className="mt-3 whitespace-pre-wrap text-sm leading-relaxed text-ink-700 first-letter:font-serif first-letter:text-3xl first-letter:font-bold first-letter:leading-none first-letter:mr-1 first-letter:float-left first-letter:mt-1 dark:text-ink-200">
+          {digest.bodyMd}
+        </p>
+      )}
+
+      {!digest && (
+        <p className="mt-3 text-xs italic text-ink-500">
+          No section brief written yet today.
+        </p>
+      )}
+
+      <div className="mt-3 flex items-center justify-end gap-2 text-xs">
+        <button
+          type="button"
+          onClick={onRegen}
+          disabled={regenPending}
+          className="inline-flex items-center gap-1 text-ink-500 hover:text-rose-700 dark:hover:text-rose-300"
+          title="Regenerate today's section brief"
+        >
+          <Sparkles className={`h-3.5 w-3.5 ${regenPending ? 'animate-pulse' : ''}`} />
+          {regenPending ? 'Regenerating…' : "Regenerate today's brief"}
+        </button>
+      </div>
+    </section>
   );
 }
 

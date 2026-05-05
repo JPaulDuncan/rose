@@ -20,6 +20,7 @@ export const QUEUE_NAMES = {
   daydream: 'rose.daydream',
   librarySync: 'rose.library-sync',
   libraryEmbed: 'rose.library-embed',
+  tagDigest: 'rose.tag-digest',
 } as const;
 
 export type QueueName = (typeof QUEUE_NAMES)[keyof typeof QUEUE_NAMES];
@@ -44,5 +45,6 @@ export const gcalSyncQueue = new Queue(QUEUE_NAMES.gcalSync, connection);
 export const daydreamQueue = new Queue(QUEUE_NAMES.daydream, connection);
 export const librarySyncQueue = new Queue(QUEUE_NAMES.librarySync, connection);
 export const libraryEmbedQueue = new Queue(QUEUE_NAMES.libraryEmbed, connection);
+export const tagDigestQueue = new Queue(QUEUE_NAMES.tagDigest, connection);
 
 export const generatePageEvents = new QueueEvents(QUEUE_NAMES.generatePage, connection);
