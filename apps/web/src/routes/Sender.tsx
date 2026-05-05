@@ -83,10 +83,11 @@ export default function SenderPage() {
     onError: (e: Error) => toast.error(e.message),
   });
 
-  if (isLoading) {
-    return <div className="px-6 py-10 text-ink-500">Loading sender…</div>;
-  }
-  // Mutation lives at this scope so the toggle button below can hit it.
+  // Hooks must be declared at the top level — the previous version
+  // stuck this useMutation *between* the isLoading early-return and
+  // the isError early-return, so the hook count changed between
+  // renders (loading → loaded) and React white-screened the page
+  // with "Rendered more hooks than during the previous render".
   const toggleStripAds = useMutation({
     mutationFn: async (next: boolean) =>
       api.patch<{ sender: Sender }>(
@@ -99,6 +100,10 @@ export default function SenderPage() {
     },
     onError: (e: Error) => toast.error(e.message),
   });
+
+  if (isLoading) {
+    return <div className="px-6 py-10 text-ink-500">Loading sender…</div>;
+  }
 
   if (isError || !data) {
     return (
