@@ -1,37 +1,60 @@
-import { useEffect } from 'react';
+import { lazy, Suspense, useEffect } from 'react';
 import { Routes, Route, Navigate, Outlet } from 'react-router-dom';
 import { useAuth } from './lib/auth';
 import { Shell } from './components/Shell';
+
+// Login + Register stay eager — they're tiny, on the unauthenticated
+// critical path, and have no shared deps with the protected shell.
 import LoginPage from './routes/Login';
 import RegisterPage from './routes/Register';
-import HomePage from './routes/Home';
-import PageView from './routes/Page';
-import SearchPage from './routes/Search';
-import CalendarPage from './routes/Calendar';
-import StreamsPage from './routes/Streams';
-import TagPage from './routes/Tag';
-import EmailView from './routes/Email';
-import CodexPage from './routes/Codex';
-import SenderPage from './routes/Sender';
-import QuarantinePage from './routes/Quarantine';
-import PromotionsPage from './routes/Promotions';
-import ChatPage from './routes/Chat';
-import SavePage from './routes/Save';
-import FavoritesPage from './routes/Favorites';
-import SettingsLayout from './routes/settings/Layout';
-import AccountSettings from './routes/settings/Account';
-import SourcesSettings from './routes/settings/Sources';
-import SendersSettings from './routes/settings/Senders';
-import RulesSettings from './routes/settings/Rules';
-import IntegrationsSettings from './routes/settings/Integrations';
-import InstructionsSettings from './routes/settings/Instructions';
-import ModelsSettings from './routes/settings/Models';
-import SpamSettings from './routes/settings/Spam';
-import NewsletterSettings from './routes/settings/Newsletter';
-import IngestPage from './routes/settings/Ingest';
-import DaydreamSettingsPage from './routes/settings/Daydream';
-import LibrarySettingsPage from './routes/settings/Library';
-import LibraryPage from './routes/Library';
+
+// Every authenticated route is split into its own chunk via React.lazy
+// so the initial bundle only has to ship the shell + the route the
+// user actually navigates to first. Vite emits one chunk per dynamic
+// import; total network bytes are similar but the cold-load cost on
+// every page drops dramatically.
+const HomePage = lazy(() => import('./routes/Home'));
+const PageView = lazy(() => import('./routes/Page'));
+const SearchPage = lazy(() => import('./routes/Search'));
+const CalendarPage = lazy(() => import('./routes/Calendar'));
+const StreamsPage = lazy(() => import('./routes/Streams'));
+const TagPage = lazy(() => import('./routes/Tag'));
+const EmailView = lazy(() => import('./routes/Email'));
+const CodexPage = lazy(() => import('./routes/Codex'));
+const SenderPage = lazy(() => import('./routes/Sender'));
+const QuarantinePage = lazy(() => import('./routes/Quarantine'));
+const PromotionsPage = lazy(() => import('./routes/Promotions'));
+const ChatPage = lazy(() => import('./routes/Chat'));
+const SavePage = lazy(() => import('./routes/Save'));
+const FavoritesPage = lazy(() => import('./routes/Favorites'));
+const LibraryPage = lazy(() => import('./routes/Library'));
+
+const SettingsLayout = lazy(() => import('./routes/settings/Layout'));
+const AccountSettings = lazy(() => import('./routes/settings/Account'));
+const SourcesSettings = lazy(() => import('./routes/settings/Sources'));
+const SendersSettings = lazy(() => import('./routes/settings/Senders'));
+const RulesSettings = lazy(() => import('./routes/settings/Rules'));
+const IntegrationsSettings = lazy(() => import('./routes/settings/Integrations'));
+const InstructionsSettings = lazy(() => import('./routes/settings/Instructions'));
+const ModelsSettings = lazy(() => import('./routes/settings/Models'));
+const SpamSettings = lazy(() => import('./routes/settings/Spam'));
+const NewsletterSettings = lazy(() => import('./routes/settings/Newsletter'));
+const IngestPage = lazy(() => import('./routes/settings/Ingest'));
+const DaydreamSettingsPage = lazy(() => import('./routes/settings/Daydream'));
+const LibrarySettingsPage = lazy(() => import('./routes/settings/Library'));
+
+/**
+ * Generic chunk-loading fallback. Plain text rather than a spinner so
+ * a fast-loading chunk doesn't briefly flash a busy state — the
+ * fallback only appears when the chunk genuinely takes >100ms or so.
+ */
+function RouteFallback() {
+  return (
+    <div className="flex h-full min-h-[40vh] items-center justify-center text-sm text-ink-500">
+      <span className="animate-pulse">Loading…</span>
+    </div>
+  );
+}
 
 function ProtectedShell() {
   const { user, ready } = useAuth();
@@ -45,7 +68,9 @@ function ProtectedShell() {
   if (!user) return <Navigate to="/login" replace />;
   return (
     <Shell>
-      <Outlet />
+      <Suspense fallback={<RouteFallback />}>
+        <Outlet />
+      </Suspense>
     </Shell>
   );
 }

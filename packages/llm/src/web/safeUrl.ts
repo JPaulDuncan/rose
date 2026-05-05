@@ -43,8 +43,12 @@ export async function assertSafeHttpUrl(raw: string): Promise<URL> {
   }
   const host = url.hostname;
   if (!host || host === 'localhost') throw new UnsafeUrlError('Loopback host blocked');
-  if (host.startsWith('[') || net.isIP(host)) {
-    if (PRIVATE_RANGES.some((re) => re.test(host))) {
+  // URL.hostname keeps the brackets on IPv6 literals (`[::1]`).
+  // Strip them before pattern matching so the IPv6 ranges in
+  // PRIVATE_RANGES match the way they're written.
+  const bare = host.startsWith('[') && host.endsWith(']') ? host.slice(1, -1) : host;
+  if (host.startsWith('[') || net.isIP(host) || net.isIP(bare)) {
+    if (PRIVATE_RANGES.some((re) => re.test(bare))) {
       throw new UnsafeUrlError('Private IP blocked');
     }
     return url;
