@@ -11,9 +11,14 @@ import {
   HackerNewsAdapter,
   StackExchangeAdapter,
   GitHubAdapter,
+  MarginaliaAdapter,
+  DuckDuckGoAdapter,
+  BraveSearchAdapter,
+  SearXNGAdapter,
   type DaydreamAdapter,
   type DaydreamSnippet,
 } from '@rose/llm';
+import { decryptJson } from '../lib/crypto.js';
 import { DaydreamSynthesisOutput } from '@rose/shared';
 import { redis } from '../lib/redis.js';
 import { logger } from '../lib/logger.js';
@@ -48,6 +53,13 @@ type DaydreamUserSettings = {
     hackernews?: { enabled?: boolean };
     crossref?: { enabled?: boolean; mailto?: string };
     github?: { enabled?: boolean; token?: string };
+  };
+  externalSearch?: {
+    enabled?: boolean;
+    marginalia?: { enabled?: boolean };
+    duckduckgo?: { enabled?: boolean };
+    brave?: { enabled?: boolean; encryptedApiKey?: string | null };
+    searxng?: { enabled?: boolean; instanceUrl?: string };
   };
   skip?: {
     senderBrandKeys?: string[];
@@ -126,6 +138,23 @@ function buildAdapters(
   if (libraryEnabled) {
     adapters.push(new LibraryAdapter(userId));
   }
+  // Tier 4 — federated adapters. Master gate: externalSearch.enabled.
+  // When the master is off, none of these run regardless of their
+  // individual flags. Same shape as the Daydream master toggle.
+  if (cfg.externalSearch?.enabled) {
+    if (cfg.externalSearch.marginalia?.enabled !== false) {
+      adapters.push(new MarginaliaAdapter());
+    }
+    if (cfg.externalSearch.duckduckgo?.enabled !== false) {
+      adapters.push(new DuckDuckGoAdapter());
+    }
+    if (cfg.externalSearch.brave?.enabled && cfg.externalSearch.brave.encryptedApiKey) {
+      adapters.push(new BraveSearchAdapter());
+    }
+    if (cfg.externalSearch.searxng?.enabled && cfg.externalSearch.searxng.instanceUrl) {
+      adapters.push(new SearXNGAdapter());
+    }
+  }
   return adapters;
 }
 
@@ -135,6 +164,18 @@ function buildAdapters(
 function adapterOptions(
   cfg: DaydreamUserSettings,
 ): Record<string, unknown> {
+  // Decrypt the Brave key on demand so the plaintext only lives in
+  // memory for the duration of one daydream pass. encryptedApiKey
+  // is the AES-256-GCM blob written by /api/daydream PATCH.
+  let braveApiKey = '';
+  const encrypted = cfg.externalSearch?.brave?.encryptedApiKey;
+  if (encrypted) {
+    try {
+      braveApiKey = decryptJson<{ v: string }>(encrypted).v;
+    } catch (err) {
+      logger.warn({ err }, 'daydream: brave key decrypt failed');
+    }
+  }
   return {
     cache: webCache,
     openalexMailto: cfg.sources?.openalex?.mailto ?? '',
@@ -143,6 +184,8 @@ function adapterOptions(
     stackexchangeSites: cfg.sources?.stackexchange?.sites ?? ['stackoverflow'],
     stackexchangeKey: cfg.sources?.stackexchange?.apiKey ?? '',
     minHostCount: cfg.sources?.linkGraph?.minHostCount ?? 2,
+    braveApiKey,
+    searxngInstanceUrl: cfg.externalSearch?.searxng?.instanceUrl ?? '',
   };
 }
 
@@ -471,7 +514,12 @@ export function startDaydreamWorker(): void {
     async (job: Job<DaydreamJobData>) => {
       const userId = new Types.ObjectId(job.data.userId);
       const user = await User.findById(userId)
-        .select('settings.daydream settings.library')
+        // The Brave subscription key has `select: false` on the
+        // schema; explicitly include it so the worker can decrypt
+        // it when constructing adapter options.
+        .select(
+          'settings.daydream settings.library +settings.daydream.externalSearch.brave.encryptedApiKey',
+        )
         .lean();
       const cfg = ((user?.settings as { daydream?: DaydreamUserSettings } | undefined)?.daydream ??
         {}) as DaydreamUserSettings;

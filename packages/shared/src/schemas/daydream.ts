@@ -50,6 +50,20 @@ export const DaydreamSettings = z.object({
       token: z.string().default(''),
     }),
   }),
+  /** Tier 4 of plan 10 — federated web-search adapters. */
+  externalSearch: z.object({
+    enabled: z.boolean().default(false),
+    marginalia: z.object({ enabled: z.boolean().default(true) }),
+    duckduckgo: z.object({ enabled: z.boolean().default(true) }),
+    brave: z.object({
+      enabled: z.boolean().default(false),
+      hasApiKey: z.boolean().default(false),
+    }),
+    searxng: z.object({
+      enabled: z.boolean().default(false),
+      instanceUrl: z.string().default(''),
+    }),
+  }),
   skip: z.object({
     senderBrandKeys: z.array(z.string()).default([]),
     tags: z.array(z.string()).default([]),
@@ -58,10 +72,35 @@ export const DaydreamSettings = z.object({
 });
 export type DaydreamSettings = z.infer<typeof DaydreamSettings>;
 
-/** Patch payload — every field optional, deep-merged on the API side. */
+/**
+ * Patch payload — every field optional, deep-merged on the API side.
+ * `externalSearch.brave.apiKey` is write-only: pass a non-empty
+ * string to set, `null` to clear, omit to leave untouched. Reads
+ * never echo the key back; the GET shape carries `hasApiKey`
+ * instead. Same convention as Anthropic/OpenAI keys in /api/providers.
+ */
 export const DaydreamSettingsUpdate = DaydreamSettings.partial().extend({
   sources: DaydreamSettings.shape.sources.partial().optional(),
   skip: DaydreamSettings.shape.skip.partial().optional(),
+  externalSearch: z
+    .object({
+      enabled: z.boolean().optional(),
+      marginalia: z.object({ enabled: z.boolean().optional() }).optional(),
+      duckduckgo: z.object({ enabled: z.boolean().optional() }).optional(),
+      brave: z
+        .object({
+          enabled: z.boolean().optional(),
+          apiKey: z.string().min(1).nullable().optional(),
+        })
+        .optional(),
+      searxng: z
+        .object({
+          enabled: z.boolean().optional(),
+          instanceUrl: z.string().optional(),
+        })
+        .optional(),
+    })
+    .optional(),
 });
 export type DaydreamSettingsUpdate = z.infer<typeof DaydreamSettingsUpdate>;
 

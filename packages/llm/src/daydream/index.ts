@@ -8,3 +8,7 @@ export { ArxivAdapter } from './arxiv.js';
 export { HackerNewsAdapter } from './hackernews.js';
 export { StackExchangeAdapter } from './stackexchange.js';
 export { GitHubAdapter } from './github.js';
+export { MarginaliaAdapter } from './marginalia.js';
+export { DuckDuckGoAdapter } from './duckduckgo.js';
+export { BraveSearchAdapter } from './brave.js';
+export { SearXNGAdapter } from './searxng.js';

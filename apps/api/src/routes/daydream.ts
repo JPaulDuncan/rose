@@ -4,6 +4,7 @@ import { User, DaydreamNote } from '@rose/db';
 import { DaydreamSettings, DaydreamSettingsUpdate } from '@rose/shared';
 import { userIdOf } from '../middleware/auth.js';
 import { validateBody } from '../middleware/validate.js';
+import { encryptJson } from '../lib/crypto.js';
 
 export const daydreamRouter: Router = Router();
 
@@ -11,26 +12,52 @@ export const daydreamRouter: Router = Router();
  * Read the user's daydream settings. Defaults the response through
  * the Zod parse so a user that's never opened the page sees the
  * documented defaults instead of `undefined` everywhere.
+ *
+ * The Brave subscription key (when set) is masked: the response
+ * carries `externalSearch.brave.hasApiKey: boolean` instead of the
+ * encrypted blob so the UI can show "key on file" without the value
+ * ever leaving the server. Same convention as Anthropic/OpenAI keys
+ * in /api/providers.
  */
 daydreamRouter.get('/', async (req, res) => {
   const userId = userIdOf(req);
-  const user = await User.findById(userId).select('settings.daydream').lean();
-  const cfg = (user?.settings as { daydream?: unknown } | undefined)?.daydream ?? {};
+  const user = await User.findById(userId)
+    .select(
+      'settings.daydream +settings.daydream.externalSearch.brave.encryptedApiKey',
+    )
+    .lean();
+  const cfg = (user?.settings as { daydream?: Record<string, unknown> } | undefined)
+    ?.daydream ?? {};
+  // Translate `encryptedApiKey` → `hasApiKey` before zod parse.
+  const ext = (cfg as { externalSearch?: Record<string, unknown> }).externalSearch;
+  if (ext) {
+    const brave = (ext as { brave?: { encryptedApiKey?: string | null } }).brave;
+    if (brave) {
+      (ext as { brave: { hasApiKey: boolean } }).brave = {
+        ...(brave as Record<string, unknown>),
+        hasApiKey: !!brave.encryptedApiKey,
+      } as { hasApiKey: boolean };
+      delete (ext as { brave: { encryptedApiKey?: unknown } }).brave.encryptedApiKey;
+    }
+  }
   const safe = DaydreamSettings.parse(cfg);
   res.json(safe);
 });
 
 /**
- * Patch — deep-merges `sources.*` and `skip.*` so a partial save
- * (e.g. just toggling Wikipedia.enabled) doesn't blow away the rest
- * of the config.
+ * Patch — deep-merges `sources.*`, `skip.*`, and `externalSearch.*`
+ * so a partial save (just toggling one knob) doesn't blow away the
+ * rest of the config.
+ *
+ * `externalSearch.brave.apiKey` is write-only: a non-empty string
+ * encrypts and stores; `null` clears; omitting leaves untouched.
  */
 daydreamRouter.patch('/', validateBody(DaydreamSettingsUpdate), async (req, res) => {
   const userId = userIdOf(req);
   const body = req.body as typeof DaydreamSettingsUpdate._type;
   const update: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(body)) {
-    if (k === 'sources' || k === 'skip') continue; // merged below
+    if (k === 'sources' || k === 'skip' || k === 'externalSearch') continue;
     update[`settings.daydream.${k}`] = v;
   }
   if (body.sources) {
@@ -42,6 +69,31 @@ daydreamRouter.patch('/', validateBody(DaydreamSettingsUpdate), async (req, res)
     for (const [k, v] of Object.entries(body.skip)) {
       update[`settings.daydream.skip.${k}`] = v;
     }
+  }
+  if (body.externalSearch) {
+    const ext = body.externalSearch;
+    if (ext.enabled !== undefined) {
+      update['settings.daydream.externalSearch.enabled'] = ext.enabled;
+    }
+    if (ext.marginalia)
+      update['settings.daydream.externalSearch.marginalia'] = ext.marginalia;
+    if (ext.duckduckgo)
+      update['settings.daydream.externalSearch.duckduckgo'] = ext.duckduckgo;
+    if (ext.brave) {
+      const { apiKey, enabled } = ext.brave;
+      if (enabled !== undefined) {
+        update['settings.daydream.externalSearch.brave.enabled'] = enabled;
+      }
+      if (apiKey === null) {
+        update['settings.daydream.externalSearch.brave.encryptedApiKey'] = null;
+      } else if (typeof apiKey === 'string' && apiKey.length > 0) {
+        update['settings.daydream.externalSearch.brave.encryptedApiKey'] = encryptJson({
+          v: apiKey,
+        });
+      }
+    }
+    if (ext.searxng)
+      update['settings.daydream.externalSearch.searxng'] = ext.searxng;
   }
   await User.findByIdAndUpdate(userId, { $set: update });
   res.json({ ok: true });

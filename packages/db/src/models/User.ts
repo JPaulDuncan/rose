@@ -154,6 +154,29 @@ const userSchema = new Schema(
             token: { type: String, default: '' },
           },
         },
+        /**
+         * External search (Tier 4 of plan 10) — federated web-search
+         * adapters that aren't structured-knowledge sources. Gated
+         * behind a master toggle with a one-time egress
+         * acknowledgement; even keyless adapters (Marginalia,
+         * DuckDuckGo) only fire when the master is on. BYO-key
+         * adapters (Brave) never aggregate the key — encrypted at
+         * rest with the same AES-256-GCM helper as Anthropic/OpenAI.
+         */
+        externalSearch: {
+          enabled: { type: Boolean, default: false },
+          marginalia: { enabled: { type: Boolean, default: true } },
+          duckduckgo: { enabled: { type: Boolean, default: true } },
+          brave: {
+            enabled: { type: Boolean, default: false },
+            /** Subscription token, encrypted via crypto.encryptJson. */
+            encryptedApiKey: { type: String, default: null, select: false },
+          },
+          searxng: {
+            enabled: { type: Boolean, default: false },
+            instanceUrl: { type: String, default: '' },
+          },
+        },
         skip: {
           senderBrandKeys: { type: [String], default: [] },
           tags: { type: [String], default: [] },

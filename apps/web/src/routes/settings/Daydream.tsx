@@ -33,6 +33,11 @@ export default function DaydreamSettings() {
   });
   const [form, setForm] = useState<DaydreamSettingsT | null>(null);
   const [acceptedExplainer, setAcceptedExplainer] = useState(false);
+  const [acceptedExternalExplainer, setAcceptedExternalExplainer] = useState(false);
+  // Brave subscription token is stored encrypted server-side and
+  // never echoed back; we track the in-flight plaintext separately
+  // so it can be sent on save then cleared.
+  const [braveKey, setBraveKey] = useState('');
 
   useEffect(() => {
     if (settings) setForm(settings);
@@ -44,9 +49,31 @@ export default function DaydreamSettings() {
     onSuccess: () => {
       toast.success('Daydream settings saved');
       qc.invalidateQueries({ queryKey: ['daydream-settings'] });
+      setBraveKey('');
     },
     onError: (e: Error) => toast.error(e.message),
   });
+
+  // Build the patch payload — most of the form passes through
+  // verbatim, but the Brave key is a write-only field on
+  // DaydreamSettingsUpdate (not on DaydreamSettings, which is the
+  // GET shape with `hasApiKey`). Cast to the broader update shape
+  // so we can splice the plaintext apiKey in when the user has
+  // typed a new value.
+  function buildSavePatch(f: DaydreamSettingsT): Record<string, unknown> {
+    const patch: Record<string, unknown> = { ...f };
+    if (braveKey) {
+      const ext = (patch.externalSearch ?? f.externalSearch) as Record<string, unknown>;
+      patch.externalSearch = {
+        ...ext,
+        brave: {
+          ...((ext.brave as Record<string, unknown>) ?? {}),
+          apiKey: braveKey,
+        },
+      };
+    }
+    return patch;
+  }
   const forget = useMutation({
     mutationFn: async (id: string) =>
       api.del<{ ok: true }>(`/api/daydream/notes/${id}`),
@@ -502,20 +529,24 @@ export default function DaydreamSettings() {
               }
             />
             <p className="text-xs italic text-ink-400">
-              Federated web-search adapters (Marginalia, Brave, Mojeek)
-              and additional Tier 1 sources (PubMed, MusicBrainz,
-              OpenLibrary) are deferred to follow-up passes per plan 10.
-              The Library substrate already lives in{' '}
-              <a
-                href="/settings/library"
-                className="text-rose-600 hover:underline dark:text-rose-300"
-              >
-                Settings → Library
-              </a>
-              .
+              Looking for federated web search? See the External
+              search card below. Tier 1 stragglers (PubMed,
+              MusicBrainz, OpenLibrary) ship as the user's domain
+              dictates.
             </p>
           </div>
         </div>
+
+        <ExternalSearchCard
+          form={form}
+          setForm={setForm}
+          braveKey={braveKey}
+          setBraveKey={setBraveKey}
+          acceptedExternalExplainer={acceptedExternalExplainer}
+          setAcceptedExternalExplainer={setAcceptedExternalExplainer}
+          settingsHadExternalEnabled={!!settings?.externalSearch?.enabled}
+        />
+
 
         <div className="mt-5 flex justify-end">
           <button
@@ -523,12 +554,20 @@ export default function DaydreamSettings() {
             className="btn-primary"
             onClick={() => {
               if (form.enabled && !settings?.enabled && !acceptedExplainer) {
-                toast.error('Acknowledge the egress notice first.');
+                toast.error('Acknowledge the daydream egress notice first.');
                 return;
               }
-              save.mutate(form);
+              if (
+                form.externalSearch.enabled &&
+                !settings?.externalSearch?.enabled &&
+                !acceptedExternalExplainer
+              ) {
+                toast.error('Acknowledge the external-search egress notice first.');
+                return;
+              }
+              save.mutate(buildSavePatch(form));
             }}
-            disabled={save.isPending || !dirty}
+            disabled={save.isPending || (!dirty && !braveKey)}
           >
             Save
           </button>
@@ -608,6 +647,205 @@ export default function DaydreamSettings() {
               </li>
             ))}
           </ul>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Tier 4 federated-search subsection. Lives as its own card so the
+ * egress acknowledgement, BYO-key inputs, and master toggle don't
+ * crowd the structured-knowledge sources above. Mutates the same
+ * `form` state, so the main Save button at the top of the page
+ * persists both card's changes in one PATCH.
+ */
+function ExternalSearchCard({
+  form,
+  setForm,
+  braveKey,
+  setBraveKey,
+  acceptedExternalExplainer,
+  setAcceptedExternalExplainer,
+  settingsHadExternalEnabled,
+}: {
+  form: DaydreamSettingsT;
+  setForm: (f: DaydreamSettingsT) => void;
+  braveKey: string;
+  setBraveKey: (k: string) => void;
+  acceptedExternalExplainer: boolean;
+  setAcceptedExternalExplainer: (v: boolean) => void;
+  settingsHadExternalEnabled: boolean;
+}) {
+  const ext = form.externalSearch;
+  const wantsToEnableExt =
+    ext.enabled && !settingsHadExternalEnabled && !acceptedExternalExplainer;
+
+  return (
+    <div className="card">
+      <div className="mb-2 flex items-center gap-2">
+        <Sparkles className="h-5 w-5 text-rose-500" />
+        <h2 className="font-semibold">External search (opt-in)</h2>
+      </div>
+      <p className="text-sm text-ink-500">
+        Federated web-search adapters. Unlike the structured-knowledge
+        sources in the Daydream card above, these query the open web —
+        your queries leave your network. Off by default; the master
+        switch gates every adapter in this card regardless of its
+        individual flag.
+      </p>
+
+      {wantsToEnableExt && (
+        <div className="mt-3 rounded border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-200">
+          <div className="font-medium">Heads-up before you enable</div>
+          <ul className="mt-1 list-disc pl-4">
+            <li>
+              Your daydream queries (topics + entity names from your
+              wiki pages) will be sent to whichever adapters you tick
+              below.
+            </li>
+            <li>
+              Marginalia and DuckDuckGo Instant Answer don't require a
+              key; Brave and SearXNG are services you supply yourself.
+              Rose never proxies or aggregates keys.
+            </li>
+            <li>
+              Disable the master switch any time — every adapter
+              stops firing immediately.
+            </li>
+          </ul>
+          <button
+            type="button"
+            className="btn-secondary mt-2 text-xs"
+            onClick={() => setAcceptedExternalExplainer(true)}
+          >
+            Got it
+          </button>
+        </div>
+      )}
+
+      <label className="mt-4 flex items-center gap-2 text-sm">
+        <input
+          type="checkbox"
+          checked={ext.enabled}
+          onChange={(e) =>
+            setForm({
+              ...form,
+              externalSearch: { ...ext, enabled: e.target.checked },
+            })
+          }
+        />
+        <span>Enable external search adapters (master switch)</span>
+      </label>
+
+      <div
+        className={`mt-3 space-y-2 text-sm ${ext.enabled ? '' : 'pointer-events-none opacity-60'}`}
+      >
+        <SourceToggle
+          label="Marginalia"
+          hint="Independent crawler focused on the small/independent web. No key, principled, free."
+          enabled={ext.marginalia.enabled}
+          onToggle={(v) =>
+            setForm({
+              ...form,
+              externalSearch: {
+                ...ext,
+                marginalia: { ...ext.marginalia, enabled: v },
+              },
+            })
+          }
+        />
+        <SourceToggle
+          label="DuckDuckGo Instant Answer"
+          hint="Curated 'instant answer' hits — high-quality when present, but covers only a few million topics. No key."
+          enabled={ext.duckduckgo.enabled}
+          onToggle={(v) =>
+            setForm({
+              ...form,
+              externalSearch: {
+                ...ext,
+                duckduckgo: { ...ext.duckduckgo, enabled: v },
+              },
+            })
+          }
+        />
+        <SourceToggle
+          label="Brave Search"
+          hint="Independent web index. Free tier 2K queries/month. Bring your own subscription token."
+          enabled={ext.brave.enabled}
+          onToggle={(v) =>
+            setForm({
+              ...form,
+              externalSearch: { ...ext, brave: { ...ext.brave, enabled: v } },
+            })
+          }
+          extra={
+            <input
+              className="input w-44 text-xs"
+              type="password"
+              autoComplete="new-password"
+              value={braveKey}
+              onChange={(e) => setBraveKey(e.target.value)}
+              placeholder={ext.brave.hasApiKey ? '••••••••' : 'BSA…'}
+              title="Brave Search subscription token. Stored AES-256-GCM encrypted; never echoed back."
+            />
+          }
+        />
+        <SourceToggle
+          label="SearXNG (your instance)"
+          hint="Calls a SearXNG instance you've already deployed. JSON output must be enabled in the instance's settings.yml."
+          enabled={ext.searxng.enabled}
+          onToggle={(v) =>
+            setForm({
+              ...form,
+              externalSearch: {
+                ...ext,
+                searxng: { ...ext.searxng, enabled: v },
+              },
+            })
+          }
+          extra={
+            <input
+              className="input w-56 text-xs"
+              value={ext.searxng.instanceUrl}
+              onChange={(e) =>
+                setForm({
+                  ...form,
+                  externalSearch: {
+                    ...ext,
+                    searxng: { ...ext.searxng, instanceUrl: e.target.value },
+                  },
+                })
+              }
+              placeholder="https://searx.example.com"
+              title="SearXNG instance URL (no trailing /search)."
+            />
+          }
+        />
+        {ext.brave.hasApiKey && (
+          <p className="text-[11px] text-ink-500">
+            Brave key on file.{' '}
+            <button
+              type="button"
+              className="text-rose-600 hover:underline"
+              onClick={() => {
+                if (
+                  confirm('Clear the stored Brave Search subscription token?')
+                ) {
+                  setBraveKey('');
+                  setForm({
+                    ...form,
+                    externalSearch: {
+                      ...ext,
+                      brave: { ...ext.brave, hasApiKey: false },
+                    },
+                  });
+                }
+              }}
+            >
+              Clear
+            </button>
+          </p>
         )}
       </div>
     </div>
