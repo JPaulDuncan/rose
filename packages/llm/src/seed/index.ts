@@ -301,6 +301,31 @@ OPTIONAL FOCUS
 Output the meta-entry only.`,
   },
   {
+    name: 'extract.places',
+    scope: 'places',
+    description:
+      'Extract specific named places (cities, neighbourhoods, venues, landmarks, parks, regions, addresses) from a wiki page body — one name per place, no duplicates.',
+    variables: ['title', 'body'],
+    isDefault: true,
+    template: `Extract up to 6 specific named places from the wiki page below.
+
+A place is: a city, neighbourhood, venue, landmark, park, region, country, or street address. NOT abstract / subjective ("home", "the office") unless qualified by a proper name. NOT senders, brands, products, or people.
+
+Specific over generic: "Boise State University" not "the university". "Albertsons Stadium" not "the stadium".
+
+One entry per distinct place. No duplicates. If the page mentions no real places, return {"places": []}.
+
+TITLE: {{title}}
+
+BODY:
+"""
+{{body}}
+"""
+
+Output JSON only:
+{"places": [{"name": "<exact place name>"}, ...]}`,
+  },
+  {
     name: 'tag-digest.daily',
     scope: 'tag-digest',
     description:

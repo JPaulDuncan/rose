@@ -16,10 +16,11 @@ import {
   Star,
   Plus,
   X,
-  MapPin,
+  MapPin as MapPinIcon,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useApi } from '../lib/api';
+import { MapInset, type MapPin } from '../components/MapInset';
 
 type DigestPage = {
   _id: string;
@@ -1366,6 +1367,16 @@ type UpcomingEvent = {
   sourceFromAddress: string | null;
   sourceSubject: string | null;
   sourceKind: 'email' | 'rss' | null;
+  /** Geocoded coordinates from plan 11 — only present when the
+   *  user has Settings → Maps enabled AND the location string
+   *  resolved to a Nominatim hit. Null lat/lon means we either
+   *  haven't tried or the lookup failed. */
+  geocoded?: {
+    lat: number | null;
+    lon: number | null;
+    displayName: string | null;
+    at: string | null;
+  };
 };
 
 /**
@@ -1412,6 +1423,20 @@ function UpcomingEvents() {
   }
   const more = data.events.length - shown;
 
+  // Geocoded events for the inset map. Plan 11. The map is hidden
+  // when no events have coordinates (Settings → Maps off, or
+  // every location string failed to geocode), so the existing
+  // text-only sidebar renders fine for users without maps.
+  const pins: MapPin[] = data.events
+    .filter((e) => e.geocoded?.lat != null && e.geocoded?.lon != null)
+    .slice(0, 12)
+    .map((e) => ({
+      lat: e.geocoded!.lat as number,
+      lon: e.geocoded!.lon as number,
+      label: e.title,
+      href: e.pageSlug ? `/p/${e.pageSlug}` : `/e/${e.sourceEmailId}`,
+    }));
+
   return (
     <div className="card">
       <div className="mb-3 flex items-center justify-between gap-2 text-xs uppercase tracking-widest text-ink-500">
@@ -1426,6 +1451,13 @@ function UpcomingEvents() {
           See all →
         </Link>
       </div>
+      {pins.length > 0 && (
+        <MapInset
+          pins={pins}
+          height="160px"
+          className="mb-3 overflow-hidden rounded-md border border-ink-200 dark:border-ink-800"
+        />
+      )}
       <ul className="divide-y divide-ink-200 dark:divide-ink-800">
         {limited.map((g) => (
           <li key={g.date.toISOString()} className="py-2 first:pt-0 last:pb-0">
@@ -1481,7 +1513,7 @@ function UpcomingEventRow({ e }: { e: UpcomingEvent }) {
         </div>
         {e.location && (
           <div className="mt-0.5 truncate pl-1 text-[10px] text-ink-500">
-            <MapPin className="mr-0.5 inline h-2.5 w-2.5" />
+            <MapPinIcon className="mr-0.5 inline h-2.5 w-2.5" />
             {e.location}
           </div>
         )}

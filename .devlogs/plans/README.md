@@ -27,6 +27,7 @@ first for the plan to make sense.
 | 06 | [External sources](./06-external-sources.md) | 2 | ingest pipeline (✓) |
 | 09 | [Daydream — idle research enrichment](./09-daydream.md) | 3 | LLM provider (✓), workers (✓), safeFetch (✓) |
 | 10 | [Discovery — search without a search engine](./10-discovery.md) | 4 | Daydream (✓), webFetch (✓), embeddings (✓) |
+| 11 | [Maps — events + wiki places (Tier A)](./11-maps.md) | 3 | webFetch (✓), Nominatim (✓), entity extraction (✓) |
 
 ## Build-order recommendation
 

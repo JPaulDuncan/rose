@@ -1,8 +1,9 @@
 import { Types } from 'mongoose';
-import { CalendarEvent, Email, Instruction, type EmailDoc, type PageDoc } from '@rose/db';
+import { CalendarEvent, Email, Instruction, User, type EmailDoc, type PageDoc } from '@rose/db';
 import { extractJson, renderTemplate } from '@rose/llm';
 import { resolveProviderForUser } from '../lib/providers.js';
 import { logger } from '../lib/logger.js';
+import { geocode } from '../lib/geocode.js';
 
 type ExtractedEvent = {
   title: string;
@@ -97,12 +98,41 @@ export async function extractEventsForEmail(
   // date (model occasionally surfaces references to historical dates).
   const minStart = new Date(emailDate.getTime() - 7 * 24 * 3600 * 1000);
 
+  // Maps opt-in: when on, we geocode each new event's location
+  // string via Nominatim. Cached 30d in Redis so repeated venues
+  // (recurring meetings, popular conferences) cost one upstream
+  // call across all users. Plan 11.
+  const userDoc = await User.findById(userId).select('settings.maps').lean();
+  const mapsEnabled = !!(
+    (userDoc?.settings as { maps?: { enabled?: boolean } } | undefined)?.maps?.enabled
+  );
+
   for (const e of events) {
     if (!e?.title || !e?.start) continue;
     const allDay = !!e.allDay;
     const start = parseExtractedDate(e.start, allDay);
     if (!start || start < minStart) continue;
     const end = e.end ? parseExtractedDate(e.end, allDay) : null;
+    const location = e.location ? String(e.location).slice(0, 200) : null;
+
+    let geocoded:
+      | { lat: number; lon: number; displayName: string; at: Date }
+      | null = null;
+    let geocodeFailed = false;
+    if (mapsEnabled && location) {
+      try {
+        const r = await geocode(location);
+        if (r) {
+          geocoded = { ...r, at: new Date() };
+        } else {
+          geocodeFailed = true;
+        }
+      } catch (err) {
+        logger.warn({ err, location }, 'event geocode failed (continuing)');
+        geocodeFailed = true;
+      }
+    }
+
     await CalendarEvent.create({
       userId,
       sourceEmailId: email._id,
@@ -112,7 +142,15 @@ export async function extractEventsForEmail(
       start,
       end: end && end > start ? end : null,
       allDay,
-      location: e.location ? String(e.location).slice(0, 200) : null,
+      location,
+      geocoded: geocoded ?? {
+        lat: null,
+        lon: null,
+        displayName: null,
+        at: null,
+      },
+      geocodeFailed,
+      geocodeFailedAt: geocodeFailed ? new Date() : null,
       description: e.description ? String(e.description).slice(0, 500) : '',
     });
     inserted += 1;

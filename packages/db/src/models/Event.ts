@@ -17,6 +17,22 @@ const eventSchema = new Schema(
     end: { type: Date, default: null },
     allDay: { type: Boolean, default: false },
     location: { type: String, default: null },
+    /**
+     * Geocoded location, populated when the user has Settings → Maps
+     * enabled. Lat/lon stay null when geocoding fails — the
+     * geocodeFailed flag below distinguishes "not tried" from
+     * "Nominatim returned nothing for this string". See plan 11.
+     */
+    geocoded: {
+      lat: { type: Number, default: null, min: -90, max: 90 },
+      lon: { type: Number, default: null, min: -180, max: 180 },
+      displayName: { type: String, default: null },
+      at: { type: Date, default: null },
+    },
+    /** Sticky failure flag — Nominatim found nothing. Avoids retry
+     *  storms; a sweeper can clear after 7d to retry. */
+    geocodeFailed: { type: Boolean, default: false },
+    geocodeFailedAt: { type: Date, default: null },
     description: { type: String, default: '' },
     /** User-toggled hide flag. Dismissed events stay in the DB but are
      *  excluded from default calendar queries. */

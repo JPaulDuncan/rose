@@ -34,6 +34,8 @@ import { evaluateRules, type RuleVerdict, emptyVerdict } from '../services/rules
 import { dispatchWebhookEvent } from './webhookDeliver.js';
 import { evaluatePageNotifications } from './pushNotify.js';
 import { describePageImages } from '../services/describeImages.js';
+import { extractPlacesFromPage, hashContent } from '../services/extractPlaces.js';
+import { geocode, normalizePlaceKey } from '../lib/geocode.js';
 import {
   extractEventsForPage,
   syncEventsToPage,
@@ -215,6 +217,83 @@ function dateRangeOf(emails: EmailDoc[]): string {
   const hi = new Date(Math.max(...ds.map((d) => d.getTime())));
   const fmt = (d: Date) => d.toISOString().slice(0, 10);
   return fmt(lo) === fmt(hi) ? fmt(lo) : `${fmt(lo)} → ${fmt(hi)}`;
+}
+
+/**
+ * Pull place entities out of the page body, geocode each, and
+ * persist to Page.places. Only runs when the user has Settings →
+ * Maps enabled. Idempotent — bails out fast if the content hash
+ * matches the one stored on the last successful run, so a
+ * regenerate that doesn't change the body doesn't burn an LLM
+ * call. Plan 11.
+ */
+async function runPlacesExtraction(
+  userId: Types.ObjectId,
+  page: PageDoc,
+): Promise<void> {
+  const user = await User.findById(userId).select('settings.maps').lean();
+  const enabled = !!(
+    (user?.settings as { maps?: { enabled?: boolean } } | undefined)?.maps?.enabled
+  );
+  if (!enabled) return;
+  const hash = hashContent(page.contentMd ?? '');
+  if (hash && page.placesExtractedFromHash === hash) return;
+
+  const extracted = await extractPlacesFromPage(userId, page);
+  // Build a key→entry map so re-extracting drops places that no
+  // longer appear AND keeps existing geocoded entries (we
+  // shouldn't re-geocode an already-resolved place).
+  const existing = new Map<string, (typeof page.places)[number]>();
+  for (const p of (page.places ?? []) as (typeof page.places)[number][]) {
+    existing.set(p.normKey, p);
+  }
+  const next: (typeof page.places)[number][] = [];
+  for (const e of extracted) {
+    const normKey = normalizePlaceKey(e.name);
+    if (!normKey) continue;
+    const prior = existing.get(normKey);
+    if (prior?.lat != null && prior.lon != null) {
+      // Already geocoded — keep as-is.
+      next.push(prior);
+      continue;
+    }
+    if (prior?.failed) {
+      // Failed in a prior run — keep the failure flag rather than
+      // grinding Nominatim again on the same dead string.
+      next.push(prior);
+      continue;
+    }
+    let lat: number | null = null;
+    let lon: number | null = null;
+    let displayName: string | null = null;
+    let failed = false;
+    try {
+      const r = await geocode(e.name);
+      if (r) {
+        lat = r.lat;
+        lon = r.lon;
+        displayName = r.displayName;
+      } else {
+        failed = true;
+      }
+    } catch (err) {
+      logger.warn({ err, name: e.name }, 'page place geocode failed');
+      failed = true;
+    }
+    next.push({
+      name: e.name.slice(0, 200),
+      normKey,
+      lat,
+      lon,
+      displayName,
+      geocodedAt: lat != null ? new Date() : null,
+      failed,
+    } as (typeof page.places)[number]);
+  }
+  page.places = next as typeof page.places;
+  page.placesExtractedFromHash = hash;
+  page.markModified('places');
+  await page.save();
 }
 
 export function startGeneratePageWorker() {
@@ -921,6 +1000,18 @@ export function startGeneratePageWorker() {
             logger.warn(
               { err: (err as Error).message, pageId: String(pageId) },
               'vision describe step failed',
+            );
+          }
+          // Maps — extract place entities from the body and geocode
+          // each (Nominatim, 30d cached). Only runs when the user
+          // has Settings → Maps enabled. Idempotent: skips when the
+          // contentMd hash hasn't changed since the last run. Plan 11.
+          try {
+            await runPlacesExtraction(userId, pageObj);
+          } catch (err) {
+            logger.warn(
+              { err: (err as Error).message, pageId: String(pageId) },
+              'places extraction step failed',
             );
           }
         }

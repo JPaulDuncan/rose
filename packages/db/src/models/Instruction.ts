@@ -20,6 +20,7 @@ const instructionSchema = new Schema(
         'briefing',
         'synthesis',
         'tag-digest',
+        'places',
       ],
       required: true,
     },

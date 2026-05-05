@@ -27,6 +27,7 @@ import {
   CheckSquare,
   ChevronDown,
   Sparkles,
+  MapPin as MapPinIcon,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import ReactMarkdown from 'react-markdown';
@@ -34,6 +35,7 @@ import remarkGfm from 'remark-gfm';
 import { useApi } from '../lib/api';
 import { ShareButton } from '../components/ShareButton';
 import { FavoriteButton } from '../components/FavoriteButton';
+import { MapInset, type MapPin } from '../components/MapInset';
 
 type Citation = {
   emailId: string;
@@ -74,6 +76,18 @@ type PageDoc = {
   }[];
   heroImageUrl?: string | null;
   pageAttachments?: { filename: string; contentType: string; size: number; fromEmailId: string }[];
+  /** Plan 11 — extracted + geocoded place entities. Renders as a
+   *  small map inset in the right rail when at least one entry
+   *  has lat/lon. */
+  places?: {
+    name: string;
+    normKey: string;
+    lat: number | null;
+    lon: number | null;
+    displayName: string | null;
+    geocodedAt: string | null;
+    failed: boolean;
+  }[];
   spamScore?: number;
   flags?: {
     hasLikelySpam?: boolean;
@@ -315,6 +329,7 @@ export default function PageView() {
               attachments. Sticky at top so they stay in view when the
               body scrolls past them. */}
           <aside className="space-y-4 lg:sticky lg:top-4 lg:self-start">
+            <PlacesCard places={page.places ?? []} />
             <TopicsBlock topics={page.topics ?? []} />
             <ImagesBlock
               images={page.pageImages ?? []}
@@ -1183,6 +1198,52 @@ function PageBanners({ page }: { page: PageDoc }) {
         </span>
       )}
     </div>
+  );
+}
+
+/**
+ * Right-rail card showing the page's geocoded places. Plan 11.
+ *
+ * Renders a small Leaflet inset with one pin per place that has
+ * lat/lon coordinates, and a list of place names underneath. Returns
+ * null when no place has coordinates so the card never appears as an
+ * empty rectangle. Failed-geocode entries are omitted from both map
+ * and list — they stay only as audit data on the page document.
+ */
+function PlacesCard({ places }: { places: NonNullable<PageDoc['places']> }) {
+  const located = places.filter(
+    (p): p is typeof p & { lat: number; lon: number } =>
+      typeof p.lat === 'number' && typeof p.lon === 'number',
+  );
+  if (located.length === 0) return null;
+
+  const pins: MapPin[] = located.map((p) => ({
+    lat: p.lat,
+    lon: p.lon,
+    label: p.name,
+  }));
+
+  return (
+    <section className="card mt-6">
+      <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold">
+        <MapPinIcon className="h-4 w-4 text-rose-500" />
+        Places ({located.length})
+      </h2>
+      <MapInset pins={pins} height="180px" className="overflow-hidden rounded-lg" />
+      <ul className="mt-3 space-y-1 text-xs">
+        {located.map((p) => (
+          <li key={p.normKey} className="flex items-start gap-1.5">
+            <MapPinIcon className="mt-0.5 h-3 w-3 shrink-0 text-ink-400" />
+            <span className="min-w-0 flex-1">
+              <span className="font-medium">{p.name}</span>
+              {p.displayName && p.displayName !== p.name && (
+                <span className="ml-1 text-ink-500">— {p.displayName}</span>
+              )}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 

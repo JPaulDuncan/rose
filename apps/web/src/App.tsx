@@ -41,6 +41,7 @@ const SpamSettings = lazy(() => import('./routes/settings/Spam'));
 const NewsletterSettings = lazy(() => import('./routes/settings/Newsletter'));
 const IngestPage = lazy(() => import('./routes/settings/Ingest'));
 const DaydreamSettingsPage = lazy(() => import('./routes/settings/Daydream'));
+const MapsSettingsPage = lazy(() => import('./routes/settings/Maps'));
 const LibrarySettingsPage = lazy(() => import('./routes/settings/Library'));
 
 /**
@@ -118,6 +119,7 @@ export default function App() {
           <Route path="newsletter" element={<NewsletterSettings />} />
           <Route path="ingest" element={<IngestPage />} />
           <Route path="daydream" element={<DaydreamSettingsPage />} />
+          <Route path="maps" element={<MapsSettingsPage />} />
           <Route path="library" element={<LibrarySettingsPage />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />

@@ -6,7 +6,7 @@ import {
   ChevronLeft,
   ChevronRight,
   ExternalLink,
-  MapPin,
+  MapPin as MapPinIcon,
   EyeOff,
   X,
   Rss,
@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useApi } from '../lib/api';
+import { MapInset, type MapPin } from '../components/MapInset';
 
 type CalendarEventDoc = {
   _id: string;
@@ -31,6 +32,13 @@ type CalendarEventDoc = {
   sourceFromAddress: string | null;
   sourceSubject: string | null;
   sourceKind: 'email' | 'rss' | null;
+  /** Plan 11 — geocoded location for the map inset. */
+  geocoded?: {
+    lat: number | null;
+    lon: number | null;
+    displayName: string | null;
+    at: string | null;
+  };
 };
 
 type ViewMode = 'day' | 'week' | 'month';
@@ -213,6 +221,35 @@ export default function CalendarPage() {
         </div>
 
         <aside className="space-y-3">
+          {/* Plan 11 — geocoded events on a small inset map. Shows
+              up to 12 next pins; hidden when none of the upcoming
+              events have coordinates (Settings → Maps off, or
+              every location string failed to geocode). */}
+          {(() => {
+            const pins: MapPin[] = (upcoming?.events ?? [])
+              .filter(
+                (e) => e.geocoded?.lat != null && e.geocoded?.lon != null,
+              )
+              .slice(0, 12)
+              .map((e) => ({
+                lat: e.geocoded!.lat as number,
+                lon: e.geocoded!.lon as number,
+                label: e.title,
+                href: e.pageSlug ? `/p/${e.pageSlug}` : `/e/${e.sourceEmailId}`,
+              }));
+            return pins.length > 0 ? (
+              <div className="card">
+                <h3 className="mb-3 text-xs font-semibold uppercase tracking-widest text-ink-500">
+                  Where
+                </h3>
+                <MapInset
+                  pins={pins}
+                  height="200px"
+                  className="overflow-hidden rounded-md border border-ink-200 dark:border-ink-800"
+                />
+              </div>
+            ) : null;
+          })()}
           <div className="card">
             <h3 className="mb-3 text-xs font-semibold uppercase tracking-widest text-ink-500">
               Upcoming
@@ -532,7 +569,7 @@ function EventBody({ e, compact }: { e: CalendarEventDoc; compact?: boolean }) {
       )}
       {e.location && (
         <div className="mt-0.5 inline-flex items-center gap-1 text-xs text-ink-500">
-          <MapPin className="h-3 w-3" />
+          <MapPinIcon className="h-3 w-3" />
           {e.location}
         </div>
       )}

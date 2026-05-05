@@ -76,6 +76,18 @@ const userSchema = new Schema(
         dailyCap: { type: Number, default: 30, min: 1, max: 1000 },
       },
       /**
+       * Maps (plan 11) — show OpenStreetMap pins for calendar
+       * events and place entities mentioned on wiki pages. Off by
+       * default so geocoding doesn't happen until the user opts
+       * in, since each call sends a place-name string to Nominatim.
+       */
+      maps: {
+        enabled: { type: Boolean, default: false },
+        /** Set the first time the user accepts the egress note so
+         *  the UI stops re-showing it. */
+        lastAcknowledgedAt: { type: Date, default: null },
+      },
+      /**
        * Library — user-curated source corpus crawled, indexed, and
        * exposed both as a standalone search surface (/library) and
        * as a Daydream adapter so wiki-page Background notes can pull

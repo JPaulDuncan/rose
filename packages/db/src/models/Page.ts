@@ -169,6 +169,36 @@ const pageSchema = new Schema(
      * just the back-reference so the page view can fetch them in a
      * single $in query and the worker knows what to refresh.
      */
+    /**
+     * Place entities extracted from the page body, with optional
+     * geocoded coordinates. Populated when the user has Settings →
+     * Maps enabled (plan 11). Pre-geocoding entries have name +
+     * normKey but null lat/lon; failed geocodes set `failed: true`
+     * to avoid retry storms.
+     */
+    places: {
+      type: [
+        new Schema(
+          {
+            name: { type: String, required: true, maxlength: 200 },
+            /** Lowercased + collapsed key for dedup. */
+            normKey: { type: String, required: true, maxlength: 200 },
+            lat: { type: Number, default: null, min: -90, max: 90 },
+            lon: { type: Number, default: null, min: -180, max: 180 },
+            displayName: { type: String, default: null },
+            geocodedAt: { type: Date, default: null },
+            failed: { type: Boolean, default: false },
+          },
+          { _id: false },
+        ),
+      ],
+      default: [],
+    },
+    /**
+     * Hash of the contentMd at the time we last ran place extraction,
+     * so we can skip the LLM call when the page body hasn't moved.
+     */
+    placesExtractedFromHash: { type: String, default: null },
     daydreamSubjects: {
       type: [
         new Schema(

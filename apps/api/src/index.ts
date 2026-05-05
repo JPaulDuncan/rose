@@ -43,6 +43,7 @@ import { dataIoRouter } from './routes/dataIo.js';
 import { systemRouter } from './routes/system.js';
 import { daydreamRouter } from './routes/daydream.js';
 import { libraryRouter } from './routes/library.js';
+import { mapsRouter } from './routes/maps.js';
 import { errorHandler } from './middleware/error.js';
 import { requireAuth } from './middleware/auth.js';
 import { apiLimiter } from './middleware/rateLimit.js';
@@ -103,6 +104,7 @@ export async function createServer(): Promise<Express> {
   app.use('/api/system', requireAuth, systemRouter);
   app.use('/api/daydream', requireAuth, daydreamRouter);
   app.use('/api/library', requireAuth, libraryRouter);
+  app.use('/api/maps', requireAuth, mapsRouter);
   // Streaming pull auth via query param; mount before the protected models router.
   app.use('/api/models', modelsStreamRouter);
   app.use('/api/models', requireAuth, modelsRouter);
