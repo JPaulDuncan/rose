@@ -1,7 +1,33 @@
 import { Types } from 'mongoose';
+import { Queue } from 'bullmq';
 import { Sender, type EmailDoc, type PageDoc } from '@rose/db';
 import { senderDomainTag } from '@rose/email-parser';
+import { redis } from '../lib/redis.js';
 import { logger } from '../lib/logger.js';
+
+// One queue handle per process. The summarize-sender worker that
+// consumes these is started by the worker bootstrap.
+const summarizeQueue = new Queue('rose.summarize-sender', { connection: redis });
+
+/**
+ * Build a default logo URL for a brand-domain sender from
+ * DuckDuckGo's public favicon service. Free, no key, returns a
+ * usable image for ~all known brands; 404s harmlessly when the
+ * domain has no favicon (the UI's <img onError> falls back to the
+ * initial-letter avatar). We deliberately don't fetch the image —
+ * the URL alone is enough; the user's browser pulls it on render.
+ *
+ * Skipped for personal-mail senders (brandKey contains '@'), since
+ * we don't want to use Gmail/Yahoo's logo for an individual contact.
+ */
+function defaultLogoUrlForDomain(
+  brandKey: string,
+  domain: string | null,
+): string | null {
+  if (!domain) return null;
+  if (brandKey.includes('@')) return null; // personal-mail address
+  return `https://icons.duckduckgo.com/ip3/${encodeURIComponent(domain)}.ico`;
+}
 
 /**
  * Brand key derivation. For brand domains we use the lowercase
@@ -110,7 +136,17 @@ export async function upsertSendersFromPage(
       const existing = await Sender.findOne({ userId, brandKey: b.brandKey });
       const now = new Date();
       if (!existing) {
-        await Sender.create({
+        // New sender — pick the strongest logo we can: prefer one
+        // extracted from email content; otherwise fall back to the
+        // domain's favicon via DuckDuckGo's icon service. The
+        // fallback gets a low confidence so a future email-derived
+        // logo can override it.
+        const fallbackLogoUrl = b.logo?.url
+          ? null
+          : defaultLogoUrlForDomain(b.brandKey, b.domain);
+        const logoUrl = b.logo?.url ?? fallbackLogoUrl ?? null;
+        const logoConfidence = b.logo?.confidence ?? (fallbackLogoUrl ? 0.1 : 0);
+        const created = await Sender.create({
           userId,
           brandKey: b.brandKey,
           name: b.name,
@@ -118,13 +154,32 @@ export async function upsertSendersFromPage(
           addresses: [...b.addresses],
           websites: [...b.websites].slice(0, 30),
           unsubscribeUrls: [...b.unsubscribeUrls].slice(0, 4),
-          logoUrl: b.logo?.url ?? null,
-          logoConfidence: b.logo?.confidence ?? 0,
+          logoUrl,
+          logoConfidence,
           emailCount: b.emails.length,
           pageCount: pageWasNew ? 1 : 0,
           firstSeenAt: now,
           lastSeenAt: now,
         });
+        // Auto-generate the brief on first sight. Idempotent —
+        // jobId scoped to (user, sender) so re-creates collapse.
+        try {
+          await summarizeQueue.add(
+            'summarize',
+            { senderId: String(created._id), userId: String(userId) },
+            {
+              jobId: `auto:${String(userId)}:${String(created._id)}`,
+              attempts: 2,
+              removeOnComplete: 200,
+              removeOnFail: 200,
+            },
+          );
+        } catch (err) {
+          logger.warn(
+            { err, brandKey: b.brandKey },
+            'auto-summarize enqueue failed (continuing)',
+          );
+        }
         continue;
       }
       // Merge addresses + websites + unsubscribe URLs without duplicates.
@@ -149,6 +204,18 @@ export async function upsertSendersFromPage(
         existing.logoConfidence = b.logo.confidence;
       }
 
+      // Backfill: existing senders predating this code path may have
+      // no logoUrl at all. Plug in the favicon fallback so they pick
+      // up a default on the next regeneration without needing a
+      // dedicated migration.
+      if (!existing.logoLocked && !existing.logoUrl) {
+        const fallback = defaultLogoUrlForDomain(b.brandKey, b.domain);
+        if (fallback) {
+          existing.logoUrl = fallback;
+          existing.logoConfidence = 0.1;
+        }
+      }
+
       // Always keep `name` as the user-edited value if they set one,
       // otherwise prefer the brand-cased default we computed above.
       if (!existing.name || existing.name === existing.brandKey) {
@@ -159,6 +226,29 @@ export async function upsertSendersFromPage(
       if (pageWasNew) existing.pageCount = (existing.pageCount ?? 0) + 1;
       existing.lastSeenAt = now;
       await existing.save();
+
+      // Auto-summarise existing senders that have never been
+      // briefed yet — covers users who upgrade past this commit
+      // with a sender table that pre-dates auto-brief.
+      if (!existing.summary && !existing.summaryLocked) {
+        try {
+          await summarizeQueue.add(
+            'summarize',
+            { senderId: String(existing._id), userId: String(userId) },
+            {
+              jobId: `auto:${String(userId)}:${String(existing._id)}`,
+              attempts: 2,
+              removeOnComplete: 200,
+              removeOnFail: 200,
+            },
+          );
+        } catch (err) {
+          logger.warn(
+            { err, brandKey: b.brandKey },
+            'auto-summarize enqueue failed (continuing)',
+          );
+        }
+      }
     } catch (err) {
       logger.warn(
         { err, brandKey: b.brandKey, userId: String(userId) },
