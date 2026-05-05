@@ -133,22 +133,24 @@ export default function HomePage() {
 
   const populated = data.buckets.filter((b) => b.pages.length > 0);
   const brandIndex = data.senderBrands ?? {};
-  // Pages already shown in the hero or "Most Read" rail get suppressed
-  // from downstream sections so we don't repeat the same headline.
+  // Pages already shown as the Top Story or in the "Most Read" rail
+  // get suppressed from downstream sections so we don't repeat the
+  // same headline. Secondaries are no longer rendered as part of Top
+  // Stories — they flow naturally into Breaking News / Most Read /
+  // More News, so we don't pre-suppress them.
   const suppressIds = new Set<string>(
     [
       data.topStories?.lead?._id,
-      ...(data.topStories?.secondaries ?? []).map((s) => s._id),
       ...(data.mostRead ?? []).map((p) => p._id),
     ].filter(Boolean) as string[],
   );
 
   // Pool of pages the BreakingNews card scans for today's high-
-  // priority dispatches: TopStories + every bucket's pages, deduped
-  // implicitly by the component itself. This is what already lives
-  // in the digest payload — no extra API call.
+  // priority dispatches. The lead is excluded so the lead headline
+  // doesn't also appear under Breaking — it's already prominent in
+  // the middle column. Secondaries DO flow in: they're prime
+  // breaking-news candidates.
   const breakingPool: DigestPage[] = [
-    ...(data.topStories?.lead ? [data.topStories.lead] : []),
     ...(data.topStories?.secondaries ?? []),
     ...populated.flatMap((b) => b.pages),
   ];
@@ -158,10 +160,6 @@ export default function HomePage() {
     <div className="mx-auto w-full max-w-7xl px-6 py-10">
       <Masthead edition={data.edition} stats={data.stats} />
       <WeatherCard />
-
-      {data.topStories && data.topStories.lead && (
-        <TopStories topStories={data.topStories} />
-      )}
 
       {/* 20/60/20 newspaper layout via a 5-column grid with explicit
           col-spans. Stacks to a single column at <lg so the rails
@@ -173,6 +171,9 @@ export default function HomePage() {
         </aside>
 
         <div className="min-w-0 space-y-10 lg:col-span-3">
+          {data.topStories && data.topStories.lead && (
+            <TopStories lead={data.topStories.lead} />
+          )}
           {data.featuredSections.length > 0 && (
             <FeaturedSections
               sections={data.featuredSections}
@@ -378,37 +379,26 @@ function Byline({
  * stacked column of ranked secondary stories (right, ~40%) and a small
  * "Most Read" rail beneath. Mirrors NYT/WaPo/Atlantic above-the-fold.
  */
-function TopStories({
-  topStories,
-}: {
-  topStories: { lead: DigestPage | null; secondaries: DigestPage[] };
-}) {
-  const { lead, secondaries } = topStories;
-  if (!lead) return null;
+/**
+ * Single Top Story at the top of the middle column. Replaces the
+ * previous full-width hero block; secondaries are gone since the
+ * other "breaking" stories surface naturally in the Breaking News
+ * card (col 1), Most Read (col 1), and the latest-stories rivers
+ * (MoreNews, col 2). Newspaper-style nameplate above the lede so it
+ * still reads as the day's marquee story.
+ */
+function TopStories({ lead }: { lead: DigestPage }) {
   return (
-    <section className="mt-6 border-t-4 border-double border-ink-900 pt-6 dark:border-ink-100">
+    <section className="border-t-4 border-double border-ink-900 pt-6 dark:border-ink-100">
       <div className="mb-4 flex items-baseline justify-between gap-4 border-b border-ink-300 pb-2 dark:border-ink-700">
         <h2 className="font-serif text-xl font-black uppercase tracking-[0.2em]">
-          Top Stories
+          Top Story
         </h2>
         <span className="text-[10px] uppercase tracking-widest text-ink-500">
           The Edition
         </span>
       </div>
-      <div className="grid gap-8 lg:grid-cols-12">
-        <div className="lg:col-span-7">
-          <HeroLead page={lead} />
-        </div>
-        <div className="lg:col-span-5">
-          <ul className="divide-y divide-ink-200 dark:divide-ink-800">
-            {secondaries.map((p) => (
-              <li key={p._id} className="py-4 first:pt-0 last:pb-0">
-                <SecondaryStory page={p} />
-              </li>
-            ))}
-          </ul>
-        </div>
-      </div>
+      <HeroLead page={lead} />
     </section>
   );
 }
@@ -446,31 +436,12 @@ function HeroLead({ page }: { page: DigestPage }) {
   );
 }
 
-function SecondaryStory({ page }: { page: DigestPage }) {
-  return (
-    <Link to={`/p/${page.slug}`} className="group block">
-      <Eyebrow page={page} />
-      <h3 className="mt-1.5 font-serif text-xl font-bold leading-tight tracking-tight group-hover:text-rose-700 dark:group-hover:text-rose-300">
-        {page.title}
-      </h3>
-      {page.summary && (
-        <p className="mt-1.5 line-clamp-2 text-sm leading-relaxed text-ink-600 dark:text-ink-300">
-          {page.summary}
-        </p>
-      )}
-      <div className="mt-1.5">
-        <Byline page={page} />
-      </div>
-    </Link>
-  );
-}
-
 /**
  * "Breaking News" left-rail card — surfaces high-priority pages
  * updated within the last 24 hours so the reader sees what's
- * urgent right now. Drawn from the union of TopStories + every
- * bucket's pages so the card never misses an important page just
- * because it landed outside the hero block.
+ * urgent right now. Drawn from the union of TopStories' secondaries
+ * + every bucket's pages so the card never misses an important
+ * page just because it landed outside the lead.
  *
  * Hidden when nothing's actually high-priority today — keeps the
  * left rail visually quiet on slow days instead of showing an
