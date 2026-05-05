@@ -39,27 +39,38 @@ At most 5 tags. Tags are short, lowercase, hyphenated.`,
     name: 'generate.wiki-page',
     scope: 'generate',
     description:
-      'Generates a wiki page that consolidates one or more conversation threads from related emails, with inline citations.',
+      'Generates a wiki page that reads like a news story, consolidating one or more conversation threads about the same topic — newest developments first, with inline citations.',
     variables: ['labeled_threads', 'thread_count', 'email_count', 'sender_summary', 'extra_instructions'],
     isDefault: true,
-    template: `You are producing a single wiki entry that consolidates {{email_count}} email message(s) across {{thread_count}} conversation thread(s) on the same topic. Each message is labeled with an opaque token (e1, e2, …). Treat threads as separate sub-conversations; treat the page as a long-lived knowledge entry.
+    template: `You are a beat reporter writing the running story for a single subject. {{email_count}} email message(s) across {{thread_count}} thread(s) form your source material. Each message is labeled with an opaque token (e1, e2, …). Treat the page as a long-lived news article that gets updated as new dispatches arrive.
 
 CONTEXT
 {{sender_summary}}
 
-REQUIREMENTS
+WRITING STYLE — read like a news story, not a wiki breakdown
+- Inverted-pyramid news prose. The newest, most consequential information leads. Background, history, and earlier developments come AFTER the lede.
+- Coherent paragraphs of flowing prose. NO H2 sections like "Overview / Participants / Timeline / Decisions / Action Items" by default. NO bulleted breakdowns of who said what. Bullets are allowed only for genuinely list-shaped content (e.g. multiple action items the reader needs to act on).
+- Voice: third-person, neutral, plain-English. Active verbs. Specific over generic.
+- Length: scale to the substance. A single short email is one or two paragraphs; a months-long thread with many turns can be 6–10 paragraphs. Don't pad.
+
+STRUCTURE
 - Title: a stable noun phrase that names the *topic* of the page — not the subject of any one email. < 80 chars. No "Re:" / "Fwd:" prefixes, no dates.
-- Summary: ≤ 280 characters, neutral tone, written so it stays accurate as new emails arrive.
-- Body: markdown. Pick H2 sections that fit the source, drawn from this set: "Overview", "Participants", "Timeline", "Decisions", "Action Items", "Open Questions", "Key Points", "References". When more than one thread is present, include a "Threads" section with one short paragraph per thread (subject, date range, what was decided), each citing the messages in that thread. Use bullet lists for action items.
-- Citations: every factual claim, decision, action item, quote, or attributed statement MUST be followed by an inline citation referencing the source email using the exact label provided — e.g. \`The deploy is on Friday [e2]\` or \`Costs were debated [e1, e3]\`. Multiple labels comma-separated inside one bracket. Only use labels that appear below; never invent labels.
-- Do NOT invent participants, dates, numbers, or decisions that aren't in the source. If messages contradict each other, note the disagreement and cite both.
-- NEVER write filler or meta-commentary about the source — phrases like "the email is empty", "no content provided", "this thread has no information", "the message contains only a subject" are forbidden. If body text is sparse, work from the available metadata (subject, sender, date) instead. If there is genuinely nothing to say, output an "Overview" with one sentence using only that metadata.
+- Summary: ≤ 280 characters, written like a news lede — the most important fact in the most recent development, in one sentence. Stays accurate as new emails arrive.
+- Body (markdown): begins with a one-line **"Updated <human date> — <one-sentence latest development>"** in italics, derived from the most recent message. Then the lede paragraph (the latest news in 2–3 sentences). Then context paragraphs (what's been happening, who's involved, what was decided earlier) in roughly reverse-chronological order. End with a brief "Background" paragraph for the original starting point if the story spans more than a few exchanges.
+
+CITATIONS
+- Every factual claim, decision, action item, quoted statement, or attributed fact MUST be followed by an inline citation referencing the source email using the exact label provided — e.g. \`The deploy is set for Friday [e2]\` or \`Costs were debated at length [e1, e3]\`. Multiple labels comma-separated inside one bracket. Only use labels that appear below; never invent labels.
+- Weave citations naturally into the prose. Don't dump a row of bracketed numbers at the end of a paragraph.
+
+GROUND RULES
+- Do NOT invent participants, dates, numbers, decisions, or developments that aren't in the source. If messages contradict each other, lead with the latest position and mention the prior view as context.
+- NEVER write filler or meta-commentary about the source — phrases like "the email is empty", "no content provided", "this thread has no information", "the message contains only a subject" are forbidden. If body text is sparse, work from the available metadata (subject, sender, date) instead. If there is genuinely nothing to say, output one short paragraph using only that metadata.
 - Tags: 3–7 short lowercase tags, hyphenated.
 
 ADDITIONAL INSTRUCTIONS FROM USER:
 {{extra_instructions}}
 
-EMAIL THREADS (each thread oldest-first):
+EMAIL THREADS (each thread is presented oldest-first; the LAST message in each thread is the most recent and should anchor your lede):
 {{labeled_threads}}
 
 Respond with JSON only, matching exactly:
