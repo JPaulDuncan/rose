@@ -102,6 +102,26 @@ const userSchema = new Schema(
             enabled: { type: Boolean, default: false },
             lang: { type: String, default: 'en' },
           },
+          /** Wikidata covers entities Wikipedia doesn't have articles
+           *  for (companies, niche works, abstract concepts) — biggest
+           *  single coverage gain in Tier 1 of plan 10. */
+          wikidata: {
+            enabled: { type: Boolean, default: false },
+            lang: { type: String, default: 'en' },
+          },
+          /** OpenAlex — 250M+ scholarly works. The polite-pool mailto
+           *  bumps the rate limit; falsy = anonymous tier. */
+          openalex: {
+            enabled: { type: Boolean, default: false },
+            mailto: { type: String, default: '' },
+          },
+          /** Link-graph adapter walks the user's own pageLinks to
+           *  surface URLs their corpus has already vouched for. No
+           *  external fetch — pure Mongo aggregation. */
+          linkGraph: {
+            enabled: { type: Boolean, default: false },
+            minHostCount: { type: Number, default: 2, min: 1, max: 10 },
+          },
           stackexchange: {
             enabled: { type: Boolean, default: false },
             sites: { type: [String], default: ['stackoverflow.com'] },

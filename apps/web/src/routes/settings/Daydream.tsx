@@ -204,7 +204,7 @@ export default function DaydreamSettings() {
           <div className="space-y-2 text-sm">
             <SourceToggle
               label="Wikipedia"
-              hint="Free, open, no API key."
+              hint="Free, open, no API key. Encyclopedic articles."
               enabled={form.sources.wikipedia.enabled}
               onToggle={(v) =>
                 setForm({
@@ -236,10 +236,115 @@ export default function DaydreamSettings() {
                 />
               }
             />
+            <SourceToggle
+              label="Wikidata"
+              hint="Every entity Wikipedia covers + ~100M more (orgs, niche works, abstract concepts). Better coverage for things WP has no article on."
+              enabled={form.sources.wikidata.enabled}
+              onToggle={(v) =>
+                setForm({
+                  ...form,
+                  sources: {
+                    ...form.sources,
+                    wikidata: { ...form.sources.wikidata, enabled: v },
+                  },
+                })
+              }
+              extra={
+                <input
+                  className="input w-20 text-xs"
+                  value={form.sources.wikidata.lang}
+                  onChange={(e) =>
+                    setForm({
+                      ...form,
+                      sources: {
+                        ...form.sources,
+                        wikidata: {
+                          ...form.sources.wikidata,
+                          lang: e.target.value,
+                        },
+                      },
+                    })
+                  }
+                  placeholder="en"
+                  title="ISO language code"
+                />
+              }
+            />
+            <SourceToggle
+              label="OpenAlex"
+              hint="250M+ scholarly works, abstracts, authors, citations. Best for research-leaning subjects."
+              enabled={form.sources.openalex.enabled}
+              onToggle={(v) =>
+                setForm({
+                  ...form,
+                  sources: {
+                    ...form.sources,
+                    openalex: { ...form.sources.openalex, enabled: v },
+                  },
+                })
+              }
+              extra={
+                <input
+                  className="input w-44 text-xs"
+                  value={form.sources.openalex.mailto}
+                  onChange={(e) =>
+                    setForm({
+                      ...form,
+                      sources: {
+                        ...form.sources,
+                        openalex: {
+                          ...form.sources.openalex,
+                          mailto: e.target.value,
+                        },
+                      },
+                    })
+                  }
+                  placeholder="you@example.com"
+                  title="Polite-pool email — bumps the rate limit. Optional."
+                />
+              }
+            />
+            <SourceToggle
+              label="Your link graph"
+              hint="Walks the URLs your own emails have linked to find pages your corpus already vouched for. No external fetch."
+              enabled={form.sources.linkGraph.enabled}
+              onToggle={(v) =>
+                setForm({
+                  ...form,
+                  sources: {
+                    ...form.sources,
+                    linkGraph: { ...form.sources.linkGraph, enabled: v },
+                  },
+                })
+              }
+              extra={
+                <input
+                  className="input w-20 text-xs"
+                  type="number"
+                  min={1}
+                  max={10}
+                  value={form.sources.linkGraph.minHostCount}
+                  onChange={(e) =>
+                    setForm({
+                      ...form,
+                      sources: {
+                        ...form.sources,
+                        linkGraph: {
+                          ...form.sources.linkGraph,
+                          minHostCount: Number(e.target.value),
+                        },
+                      },
+                    })
+                  }
+                  placeholder="2"
+                  title="Minimum number of distinct pages a host must appear on before it's surfaced. Higher = stricter."
+                />
+              }
+            />
             <p className="text-xs italic text-ink-400">
-              Wiktionary, Stack Exchange, arXiv, Hacker News, and custom
-              sources are coming in a follow-up. Wikipedia covers the
-              encyclopedic case for v1.
+              Wiktionary, Stack Exchange, arXiv, Hacker News, and a
+              user-curated Library are coming in subsequent passes per
+              plan 10.
             </p>
           </div>
         </div>

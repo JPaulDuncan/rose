@@ -3,6 +3,8 @@ import { Types } from 'mongoose';
 import { User, Page, DaydreamNote, type PageDoc } from '@rose/db';
 import {
   WikipediaAdapter,
+  WikidataAdapter,
+  OpenAlexAdapter,
   type DaydreamAdapter,
   type DaydreamSnippet,
 } from '@rose/llm';
@@ -11,6 +13,8 @@ import { redis } from '../lib/redis.js';
 import { logger } from '../lib/logger.js';
 import { resolveProviderForUser } from '../lib/providers.js';
 import { webCache } from '../lib/webFetchCache.js';
+import { LinkGraphAdapter } from '../lib/discovery/linkGraph.js';
+import { extractEntitiesFromPage } from '../lib/discovery/entityExtraction.js';
 
 const QUEUE = 'rose.daydream';
 const FETCH_TIMEOUT_MS = 8000;
@@ -29,6 +33,9 @@ type DaydreamUserSettings = {
   sources?: {
     wikipedia?: { enabled?: boolean; lang?: string };
     wiktionary?: { enabled?: boolean; lang?: string };
+    wikidata?: { enabled?: boolean; lang?: string };
+    openalex?: { enabled?: boolean; mailto?: string };
+    linkGraph?: { enabled?: boolean; minHostCount?: number };
     stackexchange?: { enabled?: boolean; sites?: string[] };
     arxiv?: { enabled?: boolean };
     hackernews?: { enabled?: boolean };
@@ -63,15 +70,44 @@ function normaliseSubjectKey(s: string): string {
   return s.trim().toLowerCase().replace(/\s+/g, ' ');
 }
 
-/** Build the enabled adapter list from a user's daydream settings. */
-function buildAdapters(cfg: DaydreamUserSettings): DaydreamAdapter[] {
+/**
+ * Build the enabled adapter list from a user's daydream settings.
+ * Some adapters (LinkGraph) need per-user state, so this takes the
+ * userId — adapters that don't care just ignore it.
+ */
+function buildAdapters(
+  cfg: DaydreamUserSettings,
+  userId: Types.ObjectId,
+): DaydreamAdapter[] {
   const adapters: DaydreamAdapter[] = [];
   if (cfg.sources?.wikipedia?.enabled !== false) {
     adapters.push(new WikipediaAdapter());
   }
-  // Other adapters wired here in follow-ups (Wiktionary, Stack Exchange,
-  // arXiv, Hacker News, custom). v1 ships Wikipedia only.
+  if (cfg.sources?.wikidata?.enabled) {
+    adapters.push(new WikidataAdapter());
+  }
+  if (cfg.sources?.openalex?.enabled) {
+    adapters.push(new OpenAlexAdapter());
+  }
+  if (cfg.sources?.linkGraph?.enabled) {
+    adapters.push(new LinkGraphAdapter(userId));
+  }
+  // Wiktionary, Stack Exchange, arXiv, Hacker News, custom adapters
+  // ship in subsequent passes per plan 10.
   return adapters;
+}
+
+/** Per-adapter options threaded through ctx.options. Each adapter
+ *  documents its own keys; we keep the shape Mongoose-Mixed-friendly
+ *  and don't validate here — the adapter validates what it consumes. */
+function adapterOptions(
+  cfg: DaydreamUserSettings,
+): Record<string, unknown> {
+  return {
+    cache: webCache,
+    openalexMailto: cfg.sources?.openalex?.mailto ?? '',
+    minHostCount: cfg.sources?.linkGraph?.minHostCount ?? 2,
+  };
 }
 
 /**
@@ -117,29 +153,88 @@ function buildSubjectPrompt(
   return lines.join('\n');
 }
 
+type PageSubject = {
+  kind: 'topic' | 'tag' | 'entity';
+  key: string;
+  display: string;
+};
+
 /**
- * Extract candidate subjects from a page. v1 takes the existing
- * Page.topics + dominant tags; entity extraction (extra LLM call) is
- * deferred until usage shows topics are too sparse.
+ * Subjects already cached on the page from a previous daydream pass —
+ * the back-reference written to `Page.daydreamSubjects[]`. Used as the
+ * fast path so extraction only runs once per page.
  */
-function pageSubjects(page: PageDoc, max: number): { kind: 'topic' | 'tag'; key: string; display: string }[] {
-  const out: { kind: 'topic' | 'tag'; key: string; display: string }[] = [];
+function cachedPageSubjects(page: PageDoc): PageSubject[] {
+  const subs = (page.daydreamSubjects ?? []) as { kind: string; subjectKey: string }[];
+  return subs
+    .filter((s) => s.kind === 'topic' || s.kind === 'tag' || s.kind === 'entity')
+    .map((s) => ({
+      kind: s.kind as PageSubject['kind'],
+      key: s.subjectKey,
+      display: s.subjectKey,
+    }));
+}
+
+/**
+ * Build the subject set for a page from `Page.topics` + `Page.tags` +
+ * (optionally) entities extracted via an LLM call. The first
+ * daydream pass on a page runs extraction once; subsequent passes
+ * reuse the cached `daydreamSubjects` back-reference.
+ *
+ * Entity extraction costs one synthesis call from the daily cap, so
+ * this also bumps the cap meter. If the cap is hit, extraction is
+ * skipped and we fall back to topics + tags.
+ */
+async function ensurePageSubjects(
+  page: PageDoc,
+  userId: Types.ObjectId,
+  cfg: DaydreamUserSettings,
+  max: number,
+): Promise<PageSubject[]> {
+  const out: PageSubject[] = [];
   const seen = new Set<string>();
+  const push = (s: PageSubject) => {
+    if (!s.key || seen.has(`${s.kind}:${s.key}`)) return;
+    seen.add(`${s.kind}:${s.key}`);
+    out.push(s);
+  };
+
   for (const t of (page.topics ?? []) as string[]) {
-    const key = normaliseSubjectKey(t);
-    if (!key || seen.has(key)) continue;
-    seen.add(key);
-    out.push({ kind: 'topic', key, display: t });
-    if (out.length >= max) return out;
+    push({ kind: 'topic', key: normaliseSubjectKey(t), display: t });
   }
   for (const t of (page.tags ?? []) as string[]) {
-    const key = normaliseSubjectKey(t);
-    if (!key || seen.has(key)) continue;
-    seen.add(key);
-    out.push({ kind: 'tag', key, display: t });
-    if (out.length >= max) return out;
+    push({ kind: 'tag', key: normaliseSubjectKey(t), display: t });
   }
-  return out;
+
+  // Already-extracted entities from a prior pass — cheap to merge.
+  for (const s of cachedPageSubjects(page)) {
+    if (s.kind === 'entity') push(s);
+  }
+
+  // First-pass extraction: only when daydreamSubjects has no entity
+  // entries yet AND the page body has substance. We bump the cap for
+  // this LLM call too — it's a real call against the user's provider.
+  const hasExtractedEntities = (page.daydreamSubjects ?? []).some(
+    (s: { kind?: string }) => s.kind === 'entity',
+  );
+  const cap = cfg.dailyCallCap ?? 50;
+  if (!hasExtractedEntities && bumpAndCheckCap(String(userId), cap)) {
+    const extracted = await extractEntitiesFromPage(userId, page);
+    for (const e of extracted) {
+      push({
+        kind: 'entity',
+        key: normaliseSubjectKey(e.name),
+        display: e.name,
+      });
+    }
+  }
+
+  // Cap the final subject list so we don't blow through the daily
+  // budget on a 30-tag promotional page. Entities first (most likely
+  // to have rich Wikidata/OpenAlex hits), then topics, then tags.
+  const order = (s: PageSubject) =>
+    s.kind === 'entity' ? 0 : s.kind === 'topic' ? 1 : 2;
+  return out.sort((a, b) => order(a) - order(b)).slice(0, max);
 }
 
 /** Convert a DaydreamSynthesisOutput into the persisted note shape. */
@@ -246,6 +341,7 @@ async function researchSubject(
     return false;
   }
   const lang = cfg.sources?.wikipedia?.lang ?? 'en';
+  const opts = adapterOptions(cfg);
   const snippets: DaydreamSnippet[] = [];
   await Promise.all(
     adapters.map(async (a) => {
@@ -253,9 +349,11 @@ async function researchSubject(
         const got = await a.fetch(display, {
           timeoutMs: FETCH_TIMEOUT_MS,
           lang,
-          options: { cache: webCache },
+          options: opts,
         });
-        // Take the top snippet from each adapter — bounded prompt size.
+        // Take the top snippet from each adapter — bounded prompt
+        // size. Synthesis prompt sees up to N adapters' top hits, not
+        // top-K from one source.
         const top = got.sort((x, y) => y.confidence - x.confidence)[0];
         if (top) snippets.push(top);
       } catch (err) {
@@ -343,7 +441,7 @@ export function startDaydreamWorker(): void {
         logger.debug({ userId: String(userId) }, 'daydream: disabled for user; skipping job');
         return { skipped: 'disabled' };
       }
-      const adapters = buildAdapters(cfg);
+      const adapters = buildAdapters(cfg, userId);
       if (adapters.length === 0) {
         return { skipped: 'no-adapters' };
       }
@@ -362,18 +460,25 @@ export function startDaydreamWorker(): void {
         // path enforces it directly.
         void skipSenders;
 
-        const subjects = pageSubjects(page, cfg.perPageMaxSubjects ?? 3);
+        const subjects = await ensurePageSubjects(
+          page,
+          userId,
+          cfg,
+          cfg.perPageMaxSubjects ?? 3,
+        );
         if (subjects.length === 0) return { skipped: 'no-subjects' };
 
         let researched = 0;
-        const subjectsRef: { kind: 'topic' | 'tag'; subjectKey: string }[] = [];
+        const subjectsRef: { kind: PageSubject['kind']; subjectKey: string }[] = [];
         for (const s of subjects) {
           subjectsRef.push({ kind: s.kind, subjectKey: s.key });
           if (await isFresh(userId, s.kind, s.key)) continue;
           const ok = await researchSubject(userId, cfg, adapters, s.kind, s.key, s.display);
           if (ok) researched += 1;
         }
-        // Update the page back-reference (idempotent).
+        // Update the page back-reference (idempotent). This caches
+        // the entity-extraction result so the next pass on this page
+        // skips the extra LLM call.
         page.daydreamSubjects = subjectsRef as unknown as typeof page.daydreamSubjects;
         await page.save();
         return { researched, subjects: subjectsRef.length };

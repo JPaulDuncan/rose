@@ -22,6 +22,18 @@ export const DaydreamSettings = z.object({
       enabled: z.boolean().default(false),
       lang: z.string().default('en'),
     }),
+    wikidata: z.object({
+      enabled: z.boolean().default(false),
+      lang: z.string().default('en'),
+    }),
+    openalex: z.object({
+      enabled: z.boolean().default(false),
+      mailto: z.string().default(''),
+    }),
+    linkGraph: z.object({
+      enabled: z.boolean().default(false),
+      minHostCount: z.number().int().min(1).max(10).default(2),
+    }),
     stackexchange: z.object({
       enabled: z.boolean().default(false),
       sites: z.array(z.string()).default(['stackoverflow.com']),
