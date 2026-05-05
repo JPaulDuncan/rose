@@ -21,10 +21,14 @@ export const daydreamRouter: Router = Router();
  */
 daydreamRouter.get('/', async (req, res) => {
   const userId = userIdOf(req);
+  // `+<hidden>` includes a `select: false` field on top of every
+  // default-selected field, so the full doc (including
+  // settings.daydream as a whole) comes back without us having to
+  // also list the parent path. Listing both the parent AND the
+  // child trips MongoDB's "Path collision" projection guard
+  // (server error 31249).
   const user = await User.findById(userId)
-    .select(
-      'settings.daydream +settings.daydream.externalSearch.brave.encryptedApiKey',
-    )
+    .select('+settings.daydream.externalSearch.brave.encryptedApiKey')
     .lean();
   const cfg = (user?.settings as { daydream?: Record<string, unknown> } | undefined)
     ?.daydream ?? {};

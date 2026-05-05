@@ -515,11 +515,12 @@ export function startDaydreamWorker(): void {
       const userId = new Types.ObjectId(job.data.userId);
       const user = await User.findById(userId)
         // The Brave subscription key has `select: false` on the
-        // schema; explicitly include it so the worker can decrypt
-        // it when constructing adapter options.
-        .select(
-          'settings.daydream settings.library +settings.daydream.externalSearch.brave.encryptedApiKey',
-        )
+        // schema; explicitly include it. `+<hidden>` includes the
+        // hidden field on top of every default-selected field, so
+        // settings.daydream and settings.library come back via the
+        // default selection without us having to list the parent
+        // paths (which would trip MongoDB's path-collision guard).
+        .select('+settings.daydream.externalSearch.brave.encryptedApiKey')
         .lean();
       const cfg = ((user?.settings as { daydream?: DaydreamUserSettings } | undefined)?.daydream ??
         {}) as DaydreamUserSettings;
