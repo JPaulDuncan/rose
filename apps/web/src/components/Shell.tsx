@@ -3,7 +3,6 @@ import { NavLink, useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Search,
-  Inbox as InboxIcon,
   Home as HomeIcon,
   Calendar as CalendarIcon,
   Activity,
@@ -28,7 +27,6 @@ import { useHotkeys } from '../hooks/useHotkeys';
 
 const NAV = [
   { to: '/', label: 'Home', icon: HomeIcon, key: 'g h' },
-  { to: '/inbox', label: 'Inbox', icon: InboxIcon, key: 'g i' },
   { to: '/chat', label: 'Ask', icon: Sparkles, key: 'g a' },
   { to: '/search', label: 'Search', icon: Search, key: '/' },
   { to: '/calendar', label: 'Calendar', icon: CalendarIcon, key: 'g c' },
@@ -54,7 +52,7 @@ export function Shell({ children }: { children: ReactNode }) {
       navigate('/search');
     },
     'g h': () => navigate('/'),
-    'g i': () => navigate('/inbox'),
+    'g i': () => navigate('/settings/ingest'),
     'g a': () => navigate('/chat'),
     'g c': () => navigate('/calendar'),
     'g t': () => navigate('/streams'),
@@ -65,7 +63,7 @@ export function Shell({ children }: { children: ReactNode }) {
     n: (e) => {
       const tag = (e.target as HTMLElement)?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA') return;
-      navigate('/inbox');
+      navigate('/settings/ingest');
     },
   });
 

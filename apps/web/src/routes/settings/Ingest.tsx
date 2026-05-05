@@ -13,9 +13,9 @@ import {
   X,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { useApi } from '../lib/api';
-import { useAuth } from '../lib/auth';
-import { IngestionDrawer } from '../components/IngestionDrawer';
+import { useApi } from '../../lib/api';
+import { useAuth } from '../../lib/auth';
+import { IngestionDrawer } from '../../components/IngestionDrawer';
 
 type EmailRow = {
   _id: string;
@@ -55,7 +55,7 @@ type Health = {
   ollama: { installedModels: string[]; missingModels: string[] };
 };
 
-export default function InboxPage() {
+export default function IngestPage() {
   const api = useApi();
   const { token } = useAuth();
   const qc = useQueryClient();
@@ -99,9 +99,16 @@ export default function InboxPage() {
   const stuckCount = data?.emails.filter((e) => e.ingestStatus === 'parsed').length ?? 0;
 
   return (
-    <div className="mx-auto w-full max-w-6xl px-6 py-10">
-      <div className="mb-6 flex items-center justify-between">
-        <h1 className="text-2xl font-semibold tracking-tight">Inbox</h1>
+    <div>
+      <div className="mb-4 flex items-center justify-between">
+        <div>
+          <h2 className="text-lg font-semibold">Ingest queue</h2>
+          <p className="text-xs text-ink-500">
+            Live view of every email pulled in by your sources, with the
+            generation status for each. Use this when something didn't
+            land on a wiki page and you need to see why.
+          </p>
+        </div>
         <span className="text-sm text-ink-500">{data?.emails.length ?? 0} emails</span>
       </div>
 
@@ -110,7 +117,7 @@ export default function InboxPage() {
       {isLoading ? (
         <div className="text-ink-500">Loading…</div>
       ) : (data?.emails.length ?? 0) === 0 ? (
-        <EmptyInbox />
+        <EmptyIngest />
       ) : (
         <ul className="space-y-2">
           {data!.emails.map((e) => (
@@ -500,7 +507,7 @@ function statusClass(s: string): string {
   return base;
 }
 
-function EmptyInbox() {
+function EmptyIngest() {
   return (
     <div className="card flex flex-col items-center gap-3 py-16 text-center">
       <FileText className="h-10 w-10 text-rose-500" />

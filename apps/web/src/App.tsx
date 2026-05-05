@@ -5,7 +5,6 @@ import { Shell } from './components/Shell';
 import LoginPage from './routes/Login';
 import RegisterPage from './routes/Register';
 import HomePage from './routes/Home';
-import InboxPage from './routes/Inbox';
 import PageView from './routes/Page';
 import SearchPage from './routes/Search';
 import CalendarPage from './routes/Calendar';
@@ -29,6 +28,7 @@ import InstructionsSettings from './routes/settings/Instructions';
 import ModelsSettings from './routes/settings/Models';
 import SpamSettings from './routes/settings/Spam';
 import NewsletterSettings from './routes/settings/Newsletter';
+import IngestPage from './routes/settings/Ingest';
 
 function ProtectedShell() {
   const { user, ready } = useAuth();
@@ -59,7 +59,9 @@ export default function App() {
       <Route path="/register" element={<RegisterPage />} />
       <Route element={<ProtectedShell />}>
         <Route index element={<HomePage />} />
-        <Route path="/inbox" element={<InboxPage />} />
+        {/* /inbox lived as a top-level page; preserve old bookmarks
+            by redirecting to the new home under Settings → Ingest. */}
+        <Route path="/inbox" element={<Navigate to="/settings/ingest" replace />} />
         <Route path="/p/:slug" element={<PageView />} />
         <Route path="/e/:id" element={<EmailView />} />
         <Route path="/t/:tag" element={<TagPage />} />
@@ -85,6 +87,7 @@ export default function App() {
           <Route path="models" element={<ModelsSettings />} />
           <Route path="spam" element={<SpamSettings />} />
           <Route path="newsletter" element={<NewsletterSettings />} />
+          <Route path="ingest" element={<IngestPage />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>

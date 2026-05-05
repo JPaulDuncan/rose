@@ -62,8 +62,8 @@ export function CommandPalette({
               <Command.Item onSelect={() => go('/')}>
                 <Home className="h-4 w-4" /> Home
               </Command.Item>
-              <Command.Item onSelect={() => go('/inbox')}>
-                <Inbox className="h-4 w-4" /> Inbox
+              <Command.Item onSelect={() => go('/settings/ingest')}>
+                <Inbox className="h-4 w-4" /> Ingest queue
               </Command.Item>
               <Command.Item onSelect={() => go('/chat')}>
                 <Sparkles className="h-4 w-4" /> Ask the wiki

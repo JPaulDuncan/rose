@@ -98,10 +98,10 @@ export default function EmailView() {
   return (
     <div className="mx-auto w-full max-w-6xl px-6 py-10">
       <Link
-        to={pageInfo ? `/p/${pageInfo.slug}` : '/inbox'}
+        to={pageInfo ? `/p/${pageInfo.slug}` : '/settings/ingest'}
         className="mb-4 inline-flex items-center gap-1 text-xs text-ink-500 hover:text-ink-900 dark:hover:text-ink-100"
       >
-        <ArrowLeft className="h-3 w-3" /> {pageInfo ? `Back to “${pageInfo.title}”` : 'Back to Inbox'}
+        <ArrowLeft className="h-3 w-3" /> {pageInfo ? `Back to “${pageInfo.title}”` : 'Back to ingest queue'}
       </Link>
 
       <header className="mb-6 border-b border-ink-200 pb-4 dark:border-ink-800">

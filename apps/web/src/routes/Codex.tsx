@@ -86,8 +86,8 @@ export default function CodexPage() {
             a structured book of every wiki entry, organised by chapter
             (category), with a cast of senders and a full alphabetical index.
           </p>
-          <Link to="/inbox" className="btn-primary">
-            Open inbox
+          <Link to="/settings/ingest" className="btn-primary">
+            Open ingest queue
           </Link>
         </div>
       </div>
