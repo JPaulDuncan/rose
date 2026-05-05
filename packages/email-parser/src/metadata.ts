@@ -220,15 +220,144 @@ export function isNominalTag(raw: string): boolean {
 }
 
 /**
+ * Words that look like English plurals at the surface but aren't —
+ * removing the "s" produces a non-word ("news" → "new", "series"
+ * → "serie"). Keep them as-is.
+ */
+const NON_PLURALS = new Set([
+  'news',
+  'series',
+  'species',
+  'analysis',
+  'crisis',
+  'thesis',
+  'basis',
+  'axis',
+  'physics',
+  'mathematics',
+  'economics',
+  'politics',
+  'ethics',
+  'statistics',
+  'gymnastics',
+  'logistics',
+  'aerobics',
+  'overseas',
+  'lens',
+  'bus',
+  'gas',
+  'plus',
+  'campus',
+  'bonus',
+  'class',
+  'glass',
+  'pass',
+  'mass',
+  'kiss',
+  'press',
+  'access',
+  'process',
+  'success',
+  'address',
+  'progress',
+  'congress',
+  'business',
+  'fitness',
+  'awareness',
+  'happiness',
+  'illness',
+  'wilderness',
+]);
+
+/** Irregular plurals — small set of the ones that matter for tags. */
+const IRREGULAR_PLURALS: Record<string, string> = {
+  children: 'child',
+  people: 'person',
+  men: 'man',
+  women: 'woman',
+  feet: 'foot',
+  teeth: 'tooth',
+  geese: 'goose',
+  mice: 'mouse',
+  oxen: 'ox',
+  data: 'data', // keep as-is — both forms are common
+  media: 'media',
+};
+
+/**
+ * Lightweight English singularizer for tag/topic deduplication.
+ * Goal: "promotions" and "promotion" produce the same key without
+ * needing a real morphology library. Conservative — when in doubt,
+ * leave the word alone.
+ *
+ * Order of rules matters: the most-specific suffix wins. We use
+ * lowercased input; multi-word phrases singularize the last word
+ * only (so "marketing campaigns" becomes "marketing campaign", not
+ * "marketing campaign" with "marketing" mangled).
+ */
+export function singularize(raw: string): string {
+  const s = raw.trim().toLowerCase();
+  if (!s) return s;
+
+  // Multi-word: singularize the last word only.
+  const space = s.lastIndexOf(' ');
+  if (space !== -1) {
+    const head = s.slice(0, space);
+    const tail = s.slice(space + 1);
+    return `${head} ${singularize(tail)}`;
+  }
+  // Hyphenated: singularize the last hyphen-segment only.
+  const hyphen = s.lastIndexOf('-');
+  if (hyphen !== -1) {
+    const head = s.slice(0, hyphen);
+    const tail = s.slice(hyphen + 1);
+    return `${head}-${singularize(tail)}`;
+  }
+
+  if (IRREGULAR_PLURALS[s]) return IRREGULAR_PLURALS[s]!;
+  if (NON_PLURALS.has(s)) return s;
+  // Words too short to safely strip a suffix from.
+  if (s.length <= 3) return s;
+
+  // -ies → -y  (e.g. "queries" → "query", "categories" → "category")
+  if (s.endsWith('ies') && s.length > 4) return `${s.slice(0, -3)}y`;
+  // -ves → -f / -fe  (e.g. "knives" → "knife", "wolves" → "wolf").
+  // We don't always know which, so rule of thumb: prefer -fe when the
+  // base ends in a single consonant + 'i' before 'ves'; otherwise -f.
+  if (s.endsWith('ves') && s.length > 4) {
+    const base = s.slice(0, -3);
+    return /[lr]i$/.test(base) ? `${base}fe` : `${base}f`;
+  }
+  // -ses / -xes / -zes / -ches / -shes → drop "es"
+  if (
+    s.length > 4 &&
+    (s.endsWith('ses') ||
+      s.endsWith('xes') ||
+      s.endsWith('zes') ||
+      s.endsWith('ches') ||
+      s.endsWith('shes'))
+  ) {
+    return s.slice(0, -2);
+  }
+  // -us / -is / -ss endings — already singular, leave alone.
+  if (s.endsWith('us') || s.endsWith('is') || s.endsWith('ss')) return s;
+  // Generic -s drop, but only when it doesn't produce a too-short stem
+  // and the second-last char is a consonant or vowel that's plausible.
+  if (s.endsWith('s') && s.length > 4) return s.slice(0, -1);
+  return s;
+}
+
+/**
  * Filter + dedupe a list of candidate tags down to those that look
- * like nominal topics. Lowercases on the way in so callers don't
- * have to. Stable order preserves the input ranking.
+ * like nominal topics. Lowercases AND singularizes on the way in
+ * so callers don't have to and so "promotions"/"promotion" collapse
+ * onto one key. Stable order preserves the input ranking.
  */
 export function filterNominalTags(raw: readonly string[]): string[] {
   const out: string[] = [];
   const seen = new Set<string>();
   for (const t of raw) {
-    const s = t.trim().toLowerCase();
+    const s = singularize(t.trim().toLowerCase());
     if (!s || seen.has(s)) continue;
     if (!isNominalTag(s)) continue;
     seen.add(s);

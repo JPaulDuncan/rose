@@ -8,6 +8,7 @@ export {
   stripAdSections,
   isNominalTag,
   filterNominalTags,
+  singularize,
   type EmailMetadata,
   type EmailPriority,
   type EmailLink,

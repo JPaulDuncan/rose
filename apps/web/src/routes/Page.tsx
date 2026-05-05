@@ -289,39 +289,46 @@ export default function PageView() {
         </div>
       </div>
 
-      {mode === 'view' && page.heroImageUrl && (
-        <HeroImage url={page.heroImageUrl} alt={page.title} />
-      )}
-
-      <article className="card prose prose-rose max-w-none dark:prose-invert">
-        {mode === 'view' ? (
-          <MarkdownWithCitations
-            md={page.contentMd}
-            citations={page.citations ?? {}}
-          />
-        ) : (
+      {mode === 'view' ? (
+        <div className="mt-2 grid gap-6 lg:grid-cols-[7fr_3fr]">
+          {/* Left column (~70%) — hero, body, sources, background, provenance.
+              The hero floats inside the article so text wraps newspaper-
+              style around its native dimensions. */}
+          <div className="min-w-0 space-y-6">
+            <article className="card prose prose-rose max-w-none dark:prose-invert">
+              {page.heroImageUrl && <FloatedHero url={page.heroImageUrl} alt={page.title} />}
+              <MarkdownWithCitations
+                md={page.contentMd}
+                citations={page.citations ?? {}}
+                tags={page.tags ?? []}
+                topics={page.topics ?? []}
+              />
+            </article>
+            <SourcesSection
+              citations={page.citations ?? {}}
+              sourceEmailIds={page.sourceEmailIds ?? []}
+            />
+            <BackgroundPanel pageId={page._id} />
+            <Provenance page={page} />
+          </div>
+          {/* Right column (~30%) — reference cards: topics, images, links,
+              attachments. Sticky at top so they stay in view when the
+              body scrolls past them. */}
+          <aside className="space-y-4 lg:sticky lg:top-4 lg:self-start">
+            <TopicsBlock topics={page.topics ?? []} />
+            <ImagesBlock
+              images={page.pageImages ?? []}
+              heroUrl={page.heroImageUrl ?? null}
+            />
+            <LinksBlock links={page.pageLinks ?? []} />
+            <AttachmentsBlock attachments={page.pageAttachments ?? []} />
+          </aside>
+        </div>
+      ) : (
+        <article className="card prose prose-rose mt-2 max-w-none dark:prose-invert">
           <EditorContent editor={editor} />
-        )}
-      </article>
-
-      {mode === 'view' && <TopicsBlock topics={page.topics ?? []} />}
-      {mode === 'view' && (
-        <ImagesBlock images={page.pageImages ?? []} heroUrl={page.heroImageUrl ?? null} />
+        </article>
       )}
-      {mode === 'view' && (
-        <LinksBlock links={page.pageLinks ?? []} />
-      )}
-      {mode === 'view' && (
-        <AttachmentsBlock attachments={page.pageAttachments ?? []} />
-      )}
-      {mode === 'view' && (
-        <SourcesSection
-          citations={page.citations ?? {}}
-          sourceEmailIds={page.sourceEmailIds ?? []}
-        />
-      )}
-      {mode === 'view' && <BackgroundPanel pageId={page._id} />}
-      {mode === 'view' && <Provenance page={page} />}
 
       {showRevisions && revisions && (
         <div className="card mt-6">
@@ -418,18 +425,44 @@ const CITATION_RE = /\[((?:e\d+\s*,\s*)*e\d+)\]/g;
 function MarkdownWithCitations({
   md,
   citations,
+  tags,
+  topics,
 }: {
   md: string;
   citations: Record<string, Citation>;
+  tags?: string[];
+  topics?: string[];
 }) {
+  // Pre-build a single regex from the page's own tags + topics for
+  // auto-linking. Sorted longest-first so "machine learning" beats
+  // "machine" when both are present. Each entry is escaped for
+  // regex use; word boundaries enforce whole-word matches so
+  // "promotional" doesn't trigger a link to "promotion".
+  const linkable = (() => {
+    const merged = [...new Set([...(tags ?? []), ...(topics ?? [])])]
+      .map((t) => t.trim().toLowerCase())
+      .filter((t) => t.length >= 3)
+      .sort((a, b) => b.length - a.length);
+    if (merged.length === 0) return null;
+    const escaped = merged.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+    // \b at word boundaries; allow plural form ("promotion" matches
+    // "promotions" too) since the persisted tag is singular and the
+    // body prose still says the natural plural.
+    return new RegExp(`\\b(${escaped.join('|')})s?\\b`, 'gi');
+  })();
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
       components={{
         // ReactMarkdown passes raw text strings to this hook. We split on the
-        // citation regex and emit a mix of plain text + JSX chips.
-        p: ({ children }) => <p>{transformChildren(children, citations)}</p>,
-        li: ({ children }) => <li>{transformChildren(children, citations)}</li>,
+        // citation regex AND on tag mentions, emitting a mix of plain text +
+        // citation chips + tag-link <Link>s.
+        p: ({ children }) => (
+          <p>{transformChildren(children, citations, linkable)}</p>
+        ),
+        li: ({ children }) => (
+          <li>{transformChildren(children, citations, linkable)}</li>
+        ),
       }}
     >
       {md}
@@ -437,9 +470,42 @@ function MarkdownWithCitations({
   );
 }
 
+/**
+ * Walk a text segment, splitting on the linkable-tags regex, and
+ * convert whole-word mentions into <Link to="/t/<tag>">. The
+ * persisted tag is the singular form; we accept the plural form in
+ * the body and link both to the same tag page.
+ */
+function autoLinkTagMentions(text: string, re: RegExp | null): React.ReactNode[] {
+  if (!re || !text) return [text];
+  const out: React.ReactNode[] = [];
+  let lastIdx = 0;
+  // matchAll with a /g regex; reset lastIndex isn't required here.
+  for (const match of text.matchAll(re)) {
+    const start = match.index ?? 0;
+    if (start > lastIdx) out.push(text.slice(lastIdx, start));
+    const word = match[0];
+    const tag = match[1]!.toLowerCase();
+    out.push(
+      <Link
+        key={`tl-${start}`}
+        to={`/t/${encodeURIComponent(tag)}`}
+        className="text-rose-700 underline-offset-2 hover:underline dark:text-rose-300"
+        title={`See all #${tag}`}
+      >
+        {word}
+      </Link>,
+    );
+    lastIdx = start + match[0].length;
+  }
+  if (lastIdx < text.length) out.push(text.slice(lastIdx));
+  return out;
+}
+
 function transformChildren(
   children: React.ReactNode,
   citations: Record<string, Citation>,
+  linkable: RegExp | null,
 ): React.ReactNode {
   return Array.from(toArray(children)).flatMap((child, idx) => {
     if (typeof child !== 'string') return [child];
@@ -447,15 +513,22 @@ function transformChildren(
     let lastIdx = 0;
     for (const match of child.matchAll(CITATION_RE)) {
       const start = match.index ?? 0;
-      if (start > lastIdx) parts.push(child.slice(lastIdx, start));
+      if (start > lastIdx) {
+        // The text segment between the previous citation and this
+        // one gets passed through the tag-auto-linker before being
+        // flushed; the citation chip itself is opaque.
+        parts.push(...autoLinkTagMentions(child.slice(lastIdx, start), linkable));
+      }
       const labels = match[1]!.split(',').map((s) => s.trim()).filter((s) => /^e\d+$/.test(s));
       parts.push(
         <CitationChip key={`${idx}-${start}`} labels={labels} citations={citations} />,
       );
       lastIdx = start + match[0].length;
     }
-    if (lastIdx < child.length) parts.push(child.slice(lastIdx));
-    return parts.length ? parts : [child];
+    if (lastIdx < child.length) {
+      parts.push(...autoLinkTagMentions(child.slice(lastIdx), linkable));
+    }
+    return parts.length ? parts : autoLinkTagMentions(child, linkable);
   });
 }
 
@@ -1551,20 +1624,37 @@ function SpamMenu({ page }: { page: PageDoc }) {
   );
 }
 
-function HeroImage({ url, alt }: { url: string; alt: string }) {
+/**
+ * Newspaper-style floated hero. Renders at its intrinsic size so a
+ * portrait photo stays portrait and a landscape banner stays
+ * landscape — no fixed crop. `max-width: min(45%, 360px)` caps how
+ * much of the article column the image can claim, but
+ * `width: auto / height: auto` (the browser default) lets the
+ * intrinsic aspect ratio drive layout. Body text wraps around it
+ * with the standard `float-right` flow.
+ *
+ * Rendered inside `<article className="prose">` so prose's own
+ * margin rules apply to the surrounding paragraphs, but the image
+ * sits in float context, not in the prose flow.
+ */
+function FloatedHero({ url, alt }: { url: string; alt: string }) {
   const [failed, setFailed] = useState(false);
   if (failed) return null;
   return (
-    <div className="-mt-2 mb-6 overflow-hidden rounded-2xl border border-ink-200 bg-ink-50 dark:border-ink-800 dark:bg-ink-900">
-      <img
-        src={url}
-        alt={alt}
-        className="block max-h-80 w-full object-cover"
-        loading="eager"
-        referrerPolicy="no-referrer"
-        onError={() => setFailed(true)}
-      />
-    </div>
+    <img
+      src={url}
+      alt={alt}
+      // Float-right is the more familiar newspaper position; the
+      // `[max-width:min(45%,360px)]` keeps unusually large images
+      // from dominating the column. Margins create breathing room
+      // between the photo and wrapped text. `not-prose` opts the
+      // image out of typography's image-styling reset so we keep
+      // our exact margin/border rules.
+      className="not-prose float-right my-1 ml-5 mb-3 rounded-lg border border-ink-200 [max-width:min(45%,360px)] dark:border-ink-800"
+      loading="eager"
+      referrerPolicy="no-referrer"
+      onError={() => setFailed(true)}
+    />
   );
 }
 

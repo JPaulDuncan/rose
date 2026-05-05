@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isNominalTag, filterNominalTags } from '@rose/email-parser';
+import { isNominalTag, filterNominalTags, singularize } from '@rose/email-parser';
 
 /**
  * Tag/topic emission has historically been noisy: the LLM lifts
@@ -75,6 +75,55 @@ describe('isNominalTag', () => {
   });
 });
 
+describe('singularize', () => {
+  it('strips simple plurals', () => {
+    expect(singularize('promotions')).toBe('promotion');
+    expect(singularize('emails')).toBe('email');
+    expect(singularize('articles')).toBe('article');
+  });
+
+  it('handles -ies → -y', () => {
+    expect(singularize('queries')).toBe('query');
+    expect(singularize('categories')).toBe('category');
+    expect(singularize('industries')).toBe('industry');
+  });
+
+  it('handles -es endings', () => {
+    expect(singularize('boxes')).toBe('box');
+    expect(singularize('classes')).toBe('class'); // class is a NON_PLURAL, stays
+    expect(singularize('beaches')).toBe('beach');
+    expect(singularize('dishes')).toBe('dish');
+  });
+
+  it('preserves words that look plural but are singular', () => {
+    expect(singularize('news')).toBe('news');
+    expect(singularize('series')).toBe('series');
+    expect(singularize('analysis')).toBe('analysis');
+    expect(singularize('business')).toBe('business');
+  });
+
+  it('handles common irregulars', () => {
+    expect(singularize('children')).toBe('child');
+    expect(singularize('people')).toBe('person');
+  });
+
+  it('singularizes the last word in multi-word phrases', () => {
+    expect(singularize('marketing campaigns')).toBe('marketing campaign');
+    expect(singularize('product-launches')).toBe('product-launch');
+  });
+
+  it('leaves already-singular words alone', () => {
+    expect(singularize('promotion')).toBe('promotion');
+    expect(singularize('marketing')).toBe('marketing');
+    expect(singularize('user')).toBe('user');
+  });
+
+  it('does not over-strip very short words', () => {
+    expect(singularize('cat')).toBe('cat');
+    expect(singularize('bus')).toBe('bus'); // ends -us
+  });
+});
+
 describe('filterNominalTags', () => {
   it('drops the bad and dedupes the good', () => {
     const got = filterNominalTags([
@@ -91,10 +140,20 @@ describe('filterNominalTags', () => {
     expect(got).toEqual(['marketing', 'q3 budget', 'product-launch']);
   });
 
-  it('preserves stable order of the survivors', () => {
+  it('preserves stable order of the survivors and singularizes', () => {
+    // "sales" → "sale" via the singularizer; the short single
+    // letters and pure stopwords get dropped.
     expect(filterNominalTags(['c', 'b', 'a', 'marketing', 'sales'])).toEqual([
       'marketing',
-      'sales',
+      'sale',
+    ]);
+  });
+
+  it('collapses plural + singular onto one tag', () => {
+    expect(filterNominalTags(['promotions', 'promotion'])).toEqual(['promotion']);
+    expect(filterNominalTags(['categories', 'category', 'queries'])).toEqual([
+      'category',
+      'query',
     ]);
   });
 });
