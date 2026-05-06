@@ -16,6 +16,7 @@ export const InstructionScope = z.enum([
   'tag-digest',
   'places',
   'consolidate',
+  'tag-canon',
 ]);
 export type InstructionScope = z.infer<typeof InstructionScope>;
 

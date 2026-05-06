@@ -36,6 +36,8 @@ import { evaluatePageNotifications } from './pushNotify.js';
 import { describePageImages } from '../services/describeImages.js';
 import { extractPlacesFromPage, hashContent } from '../services/extractPlaces.js';
 import { geocode, normalizePlaceKey } from '../lib/geocode.js';
+import { canonicalizeTags } from '../services/tagCanonicalize.js';
+import { findMergeSuggestions } from '../services/mergeDetect.js';
 import {
   extractEventsForPage,
   syncEventsToPage,
@@ -903,7 +905,12 @@ export function startGeneratePageWorker() {
         const merged = new Set<string>(draftTags);
         for (const t of verdict.addTags) merged.add(t);
         for (const t of verdict.removeTags) merged.delete(t);
-        page.tags = [...merged];
+        // Canonicalise — folds synonyms ("job-postings", "remote-work",
+        // "fully-remote") onto the user's existing canonical taxonomy.
+        // Falls back to passthrough on any failure so this step never
+        // blocks page persistence.
+        const canonicalised = await canonicalizeTags(userId, [...merged]);
+        page.tags = canonicalised;
         page.categoryId = categoryId;
         page.sourceEmailIds = sourceEmailIds;
         page.threadKeys = threadKeys;
@@ -997,13 +1004,16 @@ export function startGeneratePageWorker() {
         const mergedTagsCreate = new Set<string>(draftTagsCreate);
         for (const t of verdict.addTags) mergedTagsCreate.add(t);
         for (const t of verdict.removeTags) mergedTagsCreate.delete(t);
+        const canonicalisedCreate = await canonicalizeTags(userId, [
+          ...mergedTagsCreate,
+        ]);
         const created = await Page.create({
           userId,
           slug,
           title: draft.title,
           summary: draft.summary,
           contentMd: draft.contentMd,
-          tags: [...mergedTagsCreate],
+          tags: canonicalisedCreate,
           categoryId,
           sourceEmailIds,
           threadKeys,
@@ -1068,6 +1078,18 @@ export function startGeneratePageWorker() {
             logger.warn(
               { err, pageId: String(pageId) },
               'sender upsert step failed',
+            );
+          }
+          // Merge-detection pass — runs after the centroid is fresh,
+          // best-effort. Surfaces suggestions in the UI as a
+          // "Potential duplicate of …" banner; never blocks page
+          // persistence on its own failures.
+          try {
+            await findMergeSuggestions(pageObj);
+          } catch (err) {
+            logger.warn(
+              { err, pageId: String(pageId) },
+              'merge-detection step failed',
             );
           }
           // Fan out webhook events to subscribers — best-effort.

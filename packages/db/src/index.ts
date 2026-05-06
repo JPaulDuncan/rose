@@ -48,3 +48,9 @@ export { LibraryDocument } from './models/LibraryDocument.js';
 export type { LibraryDocumentDoc } from './models/LibraryDocument.js';
 export { TagDigest } from './models/TagDigest.js';
 export type { TagDigestDoc } from './models/TagDigest.js';
+export {
+  TagCanonical,
+  normalizeTagKey,
+  titleCaseTag,
+} from './models/TagCanonical.js';
+export type { TagCanonicalDoc } from './models/TagCanonical.js';

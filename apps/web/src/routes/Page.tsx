@@ -28,6 +28,8 @@ import {
   ChevronDown,
   Sparkles,
   MapPin as MapPinIcon,
+  GitMerge,
+  X as XIcon,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import ReactMarkdown from 'react-markdown';
@@ -105,6 +107,21 @@ type PageDoc = {
     string,
     { brandKey: string; name: string; logoUrl: string | null }
   >;
+  /** Map of canonical kebab tag → human display name; populated by
+   *  the API for every tag on the page. UI substitutes this for the
+   *  raw kebab form on every pill that renders a tag. */
+  tagDisplayNames?: Record<string, string>;
+  /** Live (non-dismissed) merge suggestions surfaced to the user as a
+   *  "Potential duplicate of …" banner above the page body. */
+  mergeSuggestions?: {
+    pageId: string;
+    score: number;
+    reason: string;
+    suggestedAt: string | null;
+    title: string;
+    slug: string;
+    summary: string;
+  }[];
 };
 
 type Revision = {
@@ -247,8 +264,9 @@ export default function PageView() {
                     key={t}
                     to={`/t/${encodeURIComponent(t)}`}
                     className="pill hover:bg-rose-100 hover:text-rose-800 dark:hover:bg-rose-950/40 dark:hover:text-rose-300"
+                    title={`See all #${t}`}
                   >
-                    #{t}
+                    {displayTag(t, page.tagDisplayNames)}
                   </Link>
                 ),
             )}
@@ -257,6 +275,7 @@ export default function PageView() {
             </span>
           </div>
           {mode === 'view' && <Attribution page={page} />}
+          {mode === 'view' && <MergeBanner page={page} />}
           {mode === 'view' && <PageBanners page={page} />}
           {mode === 'edit' && (
             <input
@@ -1057,6 +1076,134 @@ function Provenance({ page }: { page: PageDoc }) {
   );
 }
 
+/**
+ * Convert a stored kebab-case tag (the canonical, what's in
+ * `page.tags`) into the human-readable label the UI should render.
+ * The API attaches `tagDisplayNames` to every page payload —
+ * exhaustive over `page.tags`, with title-cased fallbacks for tags
+ * the user hasn't customised yet. Falls back to `#<canonical>` when
+ * the map is missing entirely.
+ */
+function displayTag(canonical: string, map?: Record<string, string>): string {
+  if (!canonical) return canonical;
+  const dn = map?.[canonical];
+  return dn && dn.trim() ? dn : `#${canonical}`;
+}
+
+/**
+ * "Potential duplicate of …" banner. Surfaced when the merge-detect
+ * worker step has confirmed (via embedding pre-filter + LLM dedupe
+ * check) that this page looks like a near-duplicate of one or more
+ * existing pages. Each suggestion gets a Merge / Dismiss action.
+ *
+ * Merge is destructive — it folds this page's source emails into
+ * the target, switches the target to topic+incremental mode,
+ * enqueues a regeneration, and deletes this page. The confirm
+ * dialog spells that out before firing.
+ *
+ * Dismiss is durable — the suggestion never reappears for the same
+ * pair after a regeneration.
+ */
+function MergeBanner({ page }: { page: PageDoc }) {
+  const api = useApi();
+  const qc = useQueryClient();
+  const suggestions = page.mergeSuggestions ?? [];
+  const merge = useMutation({
+    mutationFn: async (intoPageId: string) =>
+      api.post<{ ok: true; targetSlug: string }>(`/api/pages/${page._id}/merge`, {
+        intoPageId,
+      }),
+    onSuccess: (resp) => {
+      toast.success('Merged — opening the consolidated page');
+      qc.invalidateQueries({ queryKey: ['pages-recent'] });
+      window.location.href = `/p/${resp.targetSlug}`;
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+  const dismiss = useMutation({
+    mutationFn: async (targetId: string) =>
+      api.del<{ ok: true }>(`/api/pages/${page._id}/merge-suggestions/${targetId}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['page'] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+  if (suggestions.length === 0) return null;
+  return (
+    <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs dark:border-amber-900/40 dark:bg-amber-950/30">
+      <div className="mb-1 flex items-center gap-2 font-medium text-amber-900 dark:text-amber-200">
+        <GitMerge className="h-3.5 w-3.5" />
+        {suggestions.length === 1
+          ? 'Potential duplicate detected'
+          : `${suggestions.length} potential duplicates detected`}
+      </div>
+      <ul className="space-y-1.5">
+        {suggestions.map((s) => (
+          <li
+            key={s.pageId}
+            className="flex items-start gap-2 rounded border border-amber-200/70 bg-white/60 px-2 py-1.5 dark:border-amber-900/30 dark:bg-amber-950/20"
+          >
+            <div className="min-w-0 flex-1">
+              <Link
+                to={`/p/${s.slug}`}
+                className="font-medium text-amber-900 hover:underline dark:text-amber-200"
+                title="Open the candidate page"
+              >
+                {s.title}
+              </Link>
+              {s.summary && (
+                <div className="truncate text-amber-800/80 dark:text-amber-200/70">
+                  {s.summary}
+                </div>
+              )}
+              {s.reason && (
+                <div className="italic text-amber-700/80 dark:text-amber-300/70">
+                  {s.reason}
+                </div>
+              )}
+            </div>
+            <div className="flex shrink-0 items-center gap-1">
+              <span
+                className="text-[10px] text-amber-700/70 dark:text-amber-300/60"
+                title="Confidence (cosine + LLM verdict)"
+              >
+                {Math.round(s.score * 100)}%
+              </span>
+              <button
+                type="button"
+                className="rounded bg-amber-200 px-1.5 py-0.5 font-medium text-amber-900 hover:bg-amber-300 disabled:opacity-50 dark:bg-amber-900/60 dark:text-amber-100 dark:hover:bg-amber-900"
+                onClick={() => {
+                  if (
+                    confirm(
+                      `Merge "${page.title}" into "${s.title}"?\n\nThis page's source emails roll into "${s.title}" and the target is regenerated to fold them in. This page is then deleted. The action cannot be undone.`,
+                    )
+                  ) {
+                    merge.mutate(s.pageId);
+                  }
+                }}
+                disabled={merge.isPending}
+                title="Merge this page into the candidate"
+              >
+                Merge
+              </button>
+              <button
+                type="button"
+                className="rounded p-1 text-amber-700 hover:bg-amber-100 dark:text-amber-300 dark:hover:bg-amber-900/50"
+                onClick={() => dismiss.mutate(s.pageId)}
+                disabled={dismiss.isPending}
+                title="Dismiss — won't suggest this pair again"
+                aria-label="Dismiss"
+              >
+                <XIcon className="h-3 w-3" />
+              </button>
+            </div>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 /** Header strip that explains why this page exists: senders, threads, mode. */
 function Attribution({ page }: { page: PageDoc }) {
   const senders = page.senderAddresses ?? [];
@@ -1693,7 +1840,7 @@ function SpamMenu({ page }: { page: PageDoc }) {
                     onClick={() => blockTag.mutate(t)}
                   >
                     <TagXIcon className="h-4 w-4 shrink-0 text-red-600" />
-                    <span>#{t}</span>
+                    <span>{displayTag(t, page.tagDisplayNames)}</span>
                   </button>
                 ))}
               </>

@@ -81,3 +81,24 @@ export const PageMergeDraft = PageGenerationDraft.extend({
   topicAliases: z.array(z.string().trim().toLowerCase().min(2).max(80)).max(10).default([]),
 });
 export type PageMergeDraft = z.infer<typeof PageMergeDraft>;
+
+/**
+ * Output shape for the `tag.canonicalize` instruction. The LLM
+ * receives a batch of newly-emitted tags plus the existing
+ * canonical list and emits one mapping per tag — either onto an
+ * existing canonical or as a brand-new one with a title-cased
+ * displayName.
+ */
+export const TagCanonicalization = z.object({
+  mappings: z
+    .array(
+      z.object({
+        tag: z.string().trim().min(1).max(80),
+        canonical: z.string().trim().min(1).max(80),
+        displayName: z.string().trim().max(80).default(''),
+        isNew: z.boolean().default(false),
+      }),
+    )
+    .max(40),
+});
+export type TagCanonicalization = z.infer<typeof TagCanonicalization>;

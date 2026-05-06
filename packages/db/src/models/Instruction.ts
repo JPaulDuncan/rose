@@ -22,6 +22,7 @@ const instructionSchema = new Schema(
         'tag-digest',
         'places',
         'consolidate',
+        'tag-canon',
       ],
       required: true,
     },

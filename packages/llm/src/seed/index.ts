@@ -83,6 +83,34 @@ Respond with JSON only, matching exactly:
 {"title": "...", "summary": "...", "contentMd": "...", "tags": ["..."], "suggestedCategory": "..." | null}`,
   },
   {
+    name: 'tag.canonicalize',
+    scope: 'tag-canon',
+    description:
+      'Maps a batch of newly-emitted tags onto an existing canonical-tag list, creating new canonicals only when nothing fits. Used to keep "job-listings", "job-postings", "remote-work", "fully-remote" all rolled up under one consistent tag.',
+    variables: ['emitted_tags', 'existing_canonicals'],
+    isDefault: true,
+    template: `You are normalising a batch of tags emitted for a single wiki page so they roll up cleanly with the user's existing tag taxonomy.
+
+EMITTED TAGS (from the latest page generation, lowercase kebab-case):
+{{emitted_tags}}
+
+EXISTING CANONICALS (tag\\tdisplayName\\taliases-comma-separated, one per line):
+{{existing_canonicals}}
+
+For EACH emitted tag, decide:
+  • If it is a synonym, plural, alternate phrasing, or near-equivalent of an existing canonical (e.g. "job-postings" ↔ "job-listings"; "fully-remote" ↔ "remote-work"; "ai" ↔ "artificial-intelligence"), map it to that canonical. Be willing to absorb obvious near-equivalents — the whole point is to consolidate. But don't overreach: "machine-learning" is NOT the same as "artificial-intelligence"; "remote-controlled-toys" is NOT "remote-work".
+  • Otherwise, treat it as a new canonical. The new canonical key is the emitted tag itself (kebab-case as supplied). Suggest a title-cased displayName ("Job Listings" for "job-listings"); when in doubt, capitalise each word.
+
+OUTPUT — JSON only, exactly this shape:
+{
+  "mappings": [
+    { "tag": "<emitted tag>", "canonical": "<existing or new canonical key, kebab-case>", "displayName": "<title-cased label>", "isNew": <bool> }
+  ]
+}
+
+Every emitted tag must appear once in mappings. \`isNew: true\` means there was no matching existing canonical. \`displayName\` is required for new canonicals; for existing canonicals you may echo the existing displayName or leave it blank.`,
+  },
+  {
     name: 'consolidate.topic',
     scope: 'consolidate',
     description:

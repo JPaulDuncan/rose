@@ -195,6 +195,30 @@ const pageSchema = new Schema(
       default: null,
     },
     /**
+     * Candidate pages this one might be a duplicate of. Produced by
+     * the merge-detection step that runs after each page write — it
+     * finds nearby pages by cosine similarity and runs the
+     * `dedupe.detect` LLM check over the top candidates. Surfaced in
+     * the UI as a "Potential duplicate of …" banner with merge /
+     * dismiss buttons so the user makes the final call. Dismissals
+     * are recorded so the same suggestion doesn't keep coming back.
+     */
+    mergeSuggestions: {
+      type: [
+        new Schema(
+          {
+            pageId: { type: Schema.Types.ObjectId, ref: 'Page', required: true },
+            score: { type: Number, required: true, min: 0, max: 1 },
+            reason: { type: String, default: '' },
+            suggestedAt: { type: Date, default: () => new Date() },
+            dismissedAt: { type: Date, default: null },
+          },
+          { _id: false },
+        ),
+      ],
+      default: [],
+    },
+    /**
      * Subjects (topics / entities / sender brands / tags) the daydream
      * worker has decided this page wants encyclopedic context for.
      * Notes themselves live in the DaydreamNote collection — this is
