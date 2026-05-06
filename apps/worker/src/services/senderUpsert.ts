@@ -1,6 +1,6 @@
 import { Types } from 'mongoose';
 import { Queue } from 'bullmq';
-import { Sender, type EmailDoc, type PageDoc } from '@rose/db';
+import { Sender, SenderBrand, type EmailDoc, type PageDoc } from '@rose/db';
 import { senderDomainTag } from '@rose/email-parser';
 import { redis } from '../lib/redis.js';
 import { logger } from '../lib/logger.js';
@@ -65,7 +65,85 @@ export function brandKeyFor(addr: string | null | undefined): {
  * `pageWasNew` is true the first time a particular page is created.
  * Used to bump the per-sender pageCount accurately on regenerations
  * versus net-new pages.
+ *
+ * Plan 14 — also dual-writes brand-global fields to the shared
+ * `SenderBrand` collection via `upsertGlobalSenderBrand` so every
+ * user benefits from one user's email data (logo, addresses,
+ * websites, name).
  */
+
+type SenderBucket = {
+  brandKey: string;
+  domain: string | null;
+  name: string;
+  addresses: Set<string>;
+  websites: Set<string>;
+  unsubscribeUrls: Set<string>;
+  logo: { url: string; alt: string | null; confidence: number } | null;
+  emails: EmailDoc[];
+};
+
+/**
+ * Upsert the global SenderBrand row for one bucket. Idempotent:
+ * subsequent calls $addToSet new addresses / websites and only
+ * overwrite the logo when the new candidate's confidence is
+ * strictly higher than what's on file. Plan 14.
+ */
+async function upsertGlobalSenderBrand(
+  userId: Types.ObjectId,
+  b: SenderBucket,
+): Promise<void> {
+  const existing = await SenderBrand.findOne({ brandKey: b.brandKey })
+    .select('logoUrl logoConfidence name')
+    .lean();
+
+  const candidateLogo = b.logo;
+  const fallbackLogo = candidateLogo
+    ? null
+    : defaultLogoUrlForDomain(b.brandKey, b.domain);
+  let nextLogoUrl = existing?.logoUrl ?? null;
+  let nextLogoConfidence = existing?.logoConfidence ?? 0;
+  if (
+    candidateLogo &&
+    candidateLogo.confidence > (existing?.logoConfidence ?? 0)
+  ) {
+    nextLogoUrl = candidateLogo.url;
+    nextLogoConfidence = candidateLogo.confidence;
+  } else if (!nextLogoUrl && fallbackLogo) {
+    nextLogoUrl = fallbackLogo;
+    nextLogoConfidence = 0.1;
+  }
+
+  // Keep `name` stable once set unless we still have the brand-key
+  // default (matches the per-user Sender heuristic).
+  const nextName =
+    existing?.name && existing.name !== b.brandKey
+      ? existing.name
+      : b.name || b.brandKey;
+
+  await SenderBrand.updateOne(
+    { brandKey: b.brandKey },
+    {
+      $setOnInsert: {
+        brandKey: b.brandKey,
+        firstSeenBy: userId,
+      },
+      $set: {
+        domain: b.domain,
+        name: nextName,
+        logoUrl: nextLogoUrl,
+        logoConfidence: nextLogoConfidence,
+      },
+      $addToSet: {
+        addresses: { $each: [...b.addresses] },
+        websites: { $each: [...b.websites] },
+        unsubscribeUrls: { $each: [...b.unsubscribeUrls].slice(0, 4) },
+      },
+    },
+    { upsert: true },
+  );
+}
+
 export async function upsertSendersFromPage(
   userId: Types.ObjectId,
   page: PageDoc,
@@ -132,6 +210,19 @@ export async function upsertSendersFromPage(
   }
 
   for (const b of buckets.values()) {
+    // Plan 14 — populate the global SenderBrand row alongside the
+    // per-user Sender. Any user's mail teaches Rose what
+    // `acme.com` looks like; every other user's UI gets the
+    // logo / addresses / websites for free without paying their
+    // own LLM brief.
+    try {
+      await upsertGlobalSenderBrand(userId, b);
+    } catch (err) {
+      logger.warn(
+        { err, brandKey: b.brandKey },
+        'sender-brand upsert failed (continuing)',
+      );
+    }
     try {
       const existing = await Sender.findOne({ userId, brandKey: b.brandKey });
       const now = new Date();

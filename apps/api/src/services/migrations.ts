@@ -1,4 +1,4 @@
-import { Page, DaydreamNote } from '@rose/db';
+import { Page, DaydreamNote, Sender, SenderBrand } from '@rose/db';
 import { Types } from 'mongoose';
 import { logger } from '../lib/logger.js';
 
@@ -161,5 +161,121 @@ export async function migrateDaydreamNotesToGlobal(): Promise<void> {
       deleted,
     },
     'daydream-note global migration completed',
+  );
+}
+
+/**
+ * Plan 14 — backfill the new global `SenderBrand` collection from
+ * existing per-user `Sender` rows. Idempotent: for each unique
+ * `brandKey`, picks the per-user row with the most evidence (longest
+ * addresses[] / websites[]; highest logoConfidence; latest summary
+ * timestamp) and upserts a single SenderBrand row with the union.
+ *
+ * After this runs, the worker's senderUpsert / summarizeSender start
+ * writing brand-global fields to SenderBrand. Existing Sender rows
+ * keep their now-stale brand-global field copies as fallback for
+ * any read path that hasn't migrated to the merged shape yet.
+ */
+export async function migrateSenderBrandsToGlobal(): Promise<void> {
+  type SenderRow = {
+    _id: Types.ObjectId;
+    userId: Types.ObjectId;
+    brandKey: string;
+    domain: string | null;
+    name: string;
+    addresses: string[];
+    websites: string[];
+    logoUrl: string | null;
+    logoConfidence: number;
+    unsubscribeUrls: string[];
+    postalAddresses: string[];
+    summary: string;
+    summaryGeneratedAt: Date | null;
+    firstSeenAt: Date | null;
+  };
+  const all = (await Sender.find({})
+    .select(
+      '_id userId brandKey domain name addresses websites logoUrl logoConfidence unsubscribeUrls postalAddresses summary summaryGeneratedAt firstSeenAt',
+    )
+    .lean()) as unknown as SenderRow[];
+  if (all.length === 0) return;
+
+  const groups = new Map<string, SenderRow[]>();
+  for (const r of all) {
+    const arr = groups.get(r.brandKey);
+    if (arr) arr.push(r);
+    else groups.set(r.brandKey, [r]);
+  }
+
+  let upserted = 0;
+  for (const [brandKey, rows] of groups) {
+    // Pick the row with the freshest summary, then fall back to the
+    // one with the highest logoConfidence, then the longest addresses
+    // list. Ties go to the lowest userId for determinism on retries.
+    rows.sort((a, b) => {
+      const sa = a.summaryGeneratedAt
+        ? new Date(a.summaryGeneratedAt).getTime()
+        : 0;
+      const sb = b.summaryGeneratedAt
+        ? new Date(b.summaryGeneratedAt).getTime()
+        : 0;
+      if (sa !== sb) return sb - sa;
+      if (a.logoConfidence !== b.logoConfidence)
+        return (b.logoConfidence ?? 0) - (a.logoConfidence ?? 0);
+      const la = (a.addresses ?? []).length;
+      const lb = (b.addresses ?? []).length;
+      if (la !== lb) return lb - la;
+      return String(a.userId).localeCompare(String(b.userId));
+    });
+    const best = rows[0]!;
+    // Union all addresses / websites / unsubscribeUrls /
+    // postalAddresses across users so the brand row is the most
+    // complete picture available.
+    const union = (key: keyof Pick<SenderRow, 'addresses' | 'websites' | 'unsubscribeUrls' | 'postalAddresses'>) => [
+      ...new Set(
+        rows.flatMap((r) =>
+          ((r[key] as string[] | undefined) ?? []).filter(Boolean),
+        ),
+      ),
+    ];
+    // The first user to surface the brand becomes the audit anchor —
+    // pick the row with the earliest firstSeenAt, falling back to
+    // the user with the lowest id.
+    const firstSeen = [...rows].sort((a, b) => {
+      const ta = a.firstSeenAt ? new Date(a.firstSeenAt).getTime() : Number.POSITIVE_INFINITY;
+      const tb = b.firstSeenAt ? new Date(b.firstSeenAt).getTime() : Number.POSITIVE_INFINITY;
+      return ta - tb;
+    })[0]!;
+    await SenderBrand.updateOne(
+      { brandKey },
+      {
+        $setOnInsert: {
+          brandKey,
+          firstSeenBy: firstSeen.userId,
+        },
+        $set: {
+          domain: best.domain,
+          name: best.name || brandKey,
+          addresses: union('addresses'),
+          websites: union('websites'),
+          logoUrl: best.logoUrl,
+          logoConfidence: best.logoConfidence ?? 0,
+          unsubscribeUrls: union('unsubscribeUrls').slice(0, 4),
+          postalAddresses: union('postalAddresses'),
+          summary: best.summary ?? '',
+          summaryGeneratedAt: best.summaryGeneratedAt ?? null,
+        },
+      },
+      { upsert: true },
+    );
+    upserted += 1;
+  }
+  logger.info(
+    {
+      brandKeys: groups.size,
+      perUserRowsRead: all.length,
+      upserted,
+    },
+    'sender-brand global migration completed',
   );
 }

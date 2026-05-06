@@ -18,6 +18,8 @@ export { CalendarEvent } from './models/Event.js';
 export type { EventDoc } from './models/Event.js';
 export { Sender } from './models/Sender.js';
 export type { SenderDoc } from './models/Sender.js';
+export { SenderBrand } from './models/SenderBrand.js';
+export type { SenderBrandDoc } from './models/SenderBrand.js';
 export { BayesProfile } from './models/BayesProfile.js';
 export type { BayesProfileDoc } from './models/BayesProfile.js';
 export { Conversation } from './models/Conversation.js';

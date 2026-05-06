@@ -1,6 +1,6 @@
 import { Worker, type Job } from 'bullmq';
 import { Types } from 'mongoose';
-import { Sender, Email, Instruction } from '@rose/db';
+import { Sender, SenderBrand, Email, Instruction } from '@rose/db';
 import { renderTemplate, SYSTEM_PROMPT_BASE } from '@rose/llm';
 import { redis } from '../lib/redis.js';
 import { logger } from '../lib/logger.js';
@@ -82,9 +82,42 @@ export function startSummarizeSenderWorker() {
         system: SYSTEM_PROMPT_BASE,
         temperature: 0.3,
       });
-      sender.summary = text.trim().slice(0, 600);
-      sender.summaryGeneratedAt = new Date();
+      const finalSummary = text.trim().slice(0, 600);
+      const generatedAt = new Date();
+      sender.summary = finalSummary;
+      sender.summaryGeneratedAt = generatedAt;
       await sender.save();
+
+      // Plan 14 — also write to the global SenderBrand so the brief
+      // is shared across users. Resets `forgottenBriefBy` because a
+      // fresh refresh from any user is worth re-showing to anyone
+      // who'd previously hidden it. Best-effort; worker logs but
+      // doesn't fail the job if the brand row write hiccups.
+      try {
+        await SenderBrand.updateOne(
+          { brandKey: sender.brandKey },
+          {
+            $setOnInsert: {
+              brandKey: sender.brandKey,
+              firstSeenBy: userId,
+              domain: sender.domain ?? null,
+              name: sender.name,
+            },
+            $set: {
+              summary: finalSummary,
+              summaryGeneratedAt: generatedAt,
+              summaryModel: `${(provider as { id?: string }).id ?? 'provider'}:${model}`,
+              forgottenBriefBy: [],
+            },
+          },
+          { upsert: true },
+        );
+      } catch (err) {
+        logger.warn(
+          { err, senderId: String(sender._id), brandKey: sender.brandKey },
+          'sender-brand summary write failed',
+        );
+      }
       logger.info({ senderId: String(sender._id) }, 'summary written');
     },
     { connection: redis, concurrency: 2, lockDuration: 5 * 60_000, stalledInterval: 60_000, maxStalledCount: 1 },

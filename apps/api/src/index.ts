@@ -161,13 +161,19 @@ async function bootstrap() {
   // `Page.threadKeys[]`. Idempotent — does nothing once the legacy
   // field is empty everywhere. Cheap to re-run on every boot.
   try {
-    const { migrateLegacyThreadKey, migrateDaydreamNotesToGlobal } =
-      await import('./services/migrations.js');
+    const {
+      migrateLegacyThreadKey,
+      migrateDaydreamNotesToGlobal,
+      migrateSenderBrandsToGlobal,
+    } = await import('./services/migrations.js');
     await migrateLegacyThreadKey();
     // Plan 14 — collapse per-user DaydreamNote duplicates into one
     // row per (kind, subjectKey) before the new unique index builds.
     // Idempotent.
     await migrateDaydreamNotesToGlobal();
+    // Plan 14 (pass 2) — backfill the new global SenderBrand
+    // collection from existing per-user Sender rows. Idempotent.
+    await migrateSenderBrandsToGlobal();
   } catch (err) {
     logger.warn({ err }, 'boot-time migration failed');
   }
