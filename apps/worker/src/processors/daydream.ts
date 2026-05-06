@@ -355,11 +355,17 @@ async function upsertNote(
     .filter((s) => s.include)
     .map(({ include: _i, ...rest }) => rest);
   const staleAfter = new Date(Date.now() + refreshAfterDays * 24 * 60 * 60 * 1000);
+  // Plan 14 — notes are global. Dedup on `(kind, subjectKey)`.
+  // `firstResearchedBy` is informational only; we set it on insert
+  // so the audit trail captures whoever's research first surfaced
+  // the subject. A successful refresh from any user clears the
+  // `forgottenBy` list — the assumption is that a re-fetch is
+  // worth re-showing to everyone, since the underlying content
+  // just changed.
   await DaydreamNote.findOneAndUpdate(
-    { userId, kind, subjectKey },
+    { kind, subjectKey },
     {
       $set: {
-        userId,
         kind,
         subjectKey,
         displayName: out.displayName.slice(0, 120),
@@ -372,7 +378,9 @@ async function upsertNote(
         staleAfter,
         failed: false,
         failureReason: null,
+        forgottenBy: [],
       },
+      $setOnInsert: { firstResearchedBy: userId },
     },
     { upsert: true, new: true, setDefaultsOnInsert: true },
   );
@@ -393,10 +401,9 @@ async function markFailed(
     Date.now() + Math.max(1, Math.floor(refreshAfterDays / 2)) * 24 * 60 * 60 * 1000,
   );
   await DaydreamNote.findOneAndUpdate(
-    { userId, kind, subjectKey },
+    { kind, subjectKey },
     {
       $set: {
-        userId,
         kind,
         subjectKey,
         failed: true,
@@ -405,6 +412,7 @@ async function markFailed(
         staleAfter,
       },
       $setOnInsert: {
+        firstResearchedBy: userId,
         displayName: subjectKey,
         summary: '',
         bodyMd: '',
@@ -518,11 +526,14 @@ async function researchSubject(
  * retry-cooldown window via staleAfter), and staleAfter is in the future.
  */
 async function isFresh(
-  userId: Types.ObjectId,
+  _userId: Types.ObjectId,
   kind: 'topic' | 'sender' | 'tag' | 'entity',
   subjectKey: string,
 ): Promise<boolean> {
-  const existing = await DaydreamNote.findOne({ userId, kind, subjectKey })
+  // Plan 14 — notes are global; freshness is shared. Any user's
+  // recent refresh of this subject keeps every other user from
+  // re-researching it until staleAfter elapses.
+  const existing = await DaydreamNote.findOne({ kind, subjectKey })
     .select('staleAfter')
     .lean();
   if (!existing?.staleAfter) return false;

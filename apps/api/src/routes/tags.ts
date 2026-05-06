@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { Types } from 'mongoose';
-import { Page, TagDigest, TagCanonical, DaydreamNote, normalizeTagKey, titleCaseTag } from '@rose/db';
+import { Page, TagDigest, TagCanonical, normalizeTagKey, titleCaseTag } from '@rose/db';
 import { userIdOf } from '../middleware/auth.js';
 import { tagDigestQueue } from '../lib/queues.js';
 
@@ -224,11 +224,12 @@ tagsRouter.post('/canonicals/:canonical/merge', async (req, res) => {
   }
 
   await TagCanonical.deleteOne({ userId, canonical: source });
-  // Plan 12 (G6) — clean up the orphaned daydream note for the
-  // source tag. The Background brief on a tag page is keyed by the
-  // canonical kebab (tags don't have a separate displayName-form
-  // subjectKey the way entities do), so we delete by the source key.
-  await DaydreamNote.deleteOne({ userId, kind: 'tag', subjectKey: source });
+  // Plan 14 — daydream notes are global; deleting here would
+  // pull the brief from every other user's tag page too. Tag
+  // canonicals are also per-user (TagCanonical is a per-user
+  // collection), so other users' merges don't propagate here
+  // anyway. The orphaned note simply becomes unrouted for this
+  // user without affecting anyone else.
 
   res.json({
     ok: true,
@@ -331,7 +332,7 @@ tagsRouter.delete('/canonicals/:canonical', async (req, res) => {
   const purge = (req.query.purgeFromPages ?? req.body?.purgeFromPages) === 'true' ||
     req.body?.purgeFromPages === true;
   await TagCanonical.deleteOne({ userId, canonical });
-  await DaydreamNote.deleteOne({ userId, kind: 'tag', subjectKey: canonical });
+  // Plan 14 — daydream notes are global; see merge handler above.
   let affected = 0;
   if (purge) {
     const r = await Page.updateMany(

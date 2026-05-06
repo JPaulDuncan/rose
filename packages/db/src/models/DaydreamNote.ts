@@ -6,13 +6,27 @@ import { Schema, model, type InferSchemaType, type HydratedDocument } from 'mong
  * external knowledge sources during idle periods. Non-destructive —
  * lives alongside the user's content, never modifies Page.contentMd.
  *
- * Dedup key is `(userId, kind, subjectKey)` so the same topic reused
- * across many pages produces one note. Pages back-reference the
- * subjects they depend on via `Page.daydreamSubjects[]`.
+ * Plan 14 — notes are now **globally shared** across users. The
+ * underlying content is encyclopedic (Wikipedia summaries, OpenAlex
+ * abstracts, etc.) and contains no user-specific signal, so any
+ * researcher's work benefits every other user. Per-user "forget"
+ * lives in `forgottenBy: ObjectId[]` — the user who clicks Forget
+ * gets the note hidden from their views, but the note itself
+ * persists and any other user's refresh resurfaces it.
+ *
+ * Dedup key is `(kind, subjectKey)`. `firstResearchedBy` records
+ * which user's daydream pass first surfaced the subject; purely
+ * informational and not used for filtering.
  */
 const noteSchema = new Schema(
   {
-    userId: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+    /** Audit-only — first user whose daydream pass surfaced this
+     *  subject. Reads MUST NOT filter by this. */
+    firstResearchedBy: {
+      type: Schema.Types.ObjectId,
+      ref: 'User',
+      default: null,
+    },
     kind: {
       type: String,
       enum: ['topic', 'sender', 'tag', 'entity'],
@@ -55,12 +69,20 @@ const noteSchema = new Schema(
     /** Last attempt produced no usable content from any enabled source. */
     failed: { type: Boolean, default: false },
     failureReason: { type: String, default: null },
+    /**
+     * Plan 14 — users who've explicitly "forgotten" this note. The
+     * note itself stays in the collection (so any user's refresh
+     * resurfaces it for everyone else); each entry just hides it
+     * from one user's views. Read paths filter
+     * `forgottenBy: { $ne: userId }`.
+     */
+    forgottenBy: { type: [Schema.Types.ObjectId], default: [], index: true },
   },
   { timestamps: true },
 );
 
-noteSchema.index({ userId: 1, kind: 1, subjectKey: 1 }, { unique: true });
-noteSchema.index({ userId: 1, generatedAt: -1 });
+noteSchema.index({ kind: 1, subjectKey: 1 }, { unique: true });
+noteSchema.index({ generatedAt: -1 });
 
 export type DaydreamNoteDoc = HydratedDocument<InferSchemaType<typeof noteSchema>>;
 export const DaydreamNote = model('DaydreamNote', noteSchema);

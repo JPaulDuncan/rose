@@ -417,18 +417,12 @@ entitiesRouter.post('/:key/merge', async (req, res) => {
   }
   if (sourceRow) await Entity.deleteOne({ _id: sourceRow._id });
 
-  // Clean up the source's DaydreamNote so the /n/<target> brief
-  // doesn't go looking for a now-orphaned note (the lookup uses
-  // displayName-derived subjectKey; merging changes which key
-  // resolves on /n/<target>). Same `kind: 'entity'` row, source
-  // displayName-derived subjectKey.
-  if (sourceRow?.displayName) {
-    await DaydreamNote.deleteOne({
-      userId,
-      kind: 'entity',
-      subjectKey: daydreamSubjectKey(sourceRow.displayName),
-    });
-  }
+  // Plan 14 — entities are per-user; daydream notes are global.
+  // The pre-plan-14 cleanup deleted the source entity's daydream
+  // note here, but doing that now would yank the encyclopedic
+  // brief from every other user too. The note is left in place;
+  // /n/<source> on this user's UI will simply not resolve to an
+  // entity row anymore, so the daydream lookup never fires.
 
   res.json({ ok: true, target, affectedPages: ids.length });
 });
@@ -519,13 +513,13 @@ entitiesRouter.delete('/:key', async (req, res) => {
   // associated DaydreamNote keyed on its displayName.
   const row = await Entity.findOne({ userId, key }).select('displayName').lean();
   await Entity.deleteOne({ userId, key });
-  if (row?.displayName) {
-    await DaydreamNote.deleteOne({
-      userId,
-      kind: 'entity',
-      subjectKey: daydreamSubjectKey(row.displayName),
-    });
-  }
+  // Plan 14 — daydream notes are global; the brief stays for other
+  // users who may still have an entity row resolving to this key.
+  // (Same reasoning as the merge cleanup above.) If the user wants
+  // the brief gone from THEIR view, the per-user "Forget" action
+  // on the daydream panel adds them to forgottenBy without
+  // touching anyone else's data.
+  void row?.displayName;
   let affected = 0;
   if (purge) {
     const r = await Page.updateMany(
@@ -557,11 +551,12 @@ entitiesRouter.get('/:key/daydream', async (req, res) => {
     res.json({ note: null });
     return;
   }
+  // Plan 14 — notes are global; filter out user-forgotten ones.
   const subjectKey = daydreamSubjectKey(entity.displayName);
   const note = await DaydreamNote.findOne({
-    userId,
     kind: 'entity',
     subjectKey,
+    forgottenBy: { $ne: userId },
   }).lean();
   res.json({
     note: note

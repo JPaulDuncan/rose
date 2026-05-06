@@ -447,9 +447,10 @@ pagesRouter.get('/:id/daydream', async (req, res) => {
     return;
   }
   // One $or branch per (kind, key) — keeps the index on
-  // (userId, kind, subjectKey) usable.
+  // (kind, subjectKey) usable. Plan 14 — notes are global; filter
+  // out anything this user has chosen to forget.
   const notes = await DaydreamNote.find({
-    userId,
+    forgottenBy: { $ne: userId },
     $or: subjects.map((s) => ({ kind: s.kind, subjectKey: s.subjectKey })),
   }).lean();
   res.json({

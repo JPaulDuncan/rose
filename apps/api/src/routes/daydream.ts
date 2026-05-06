@@ -106,12 +106,14 @@ daydreamRouter.patch('/', validateBody(DaydreamSettingsUpdate), async (req, res)
 /**
  * Recent daydream activity for the Settings page — a chronological
  * log so the user can see what daydream is doing without reading
- * worker logs. Includes failures with their reason.
+ * worker logs. Plan 14 — notes are now globally shared, so this
+ * lists everything the current user hasn't "forgotten" (sorted by
+ * generatedAt). Failures with their reason stay surfaced.
  */
 daydreamRouter.get('/recent', async (req, res) => {
   const userId = new Types.ObjectId(userIdOf(req));
   const limit = Math.min(Number(req.query.limit ?? 50), 200);
-  const notes = await DaydreamNote.find({ userId })
+  const notes = await DaydreamNote.find({ forgottenBy: { $ne: userId } })
     .sort({ generatedAt: -1 })
     .limit(limit)
     .lean();
@@ -136,7 +138,14 @@ daydreamRouter.get('/recent', async (req, res) => {
   });
 });
 
-/** Forget one note. Next sweep can re-research it from scratch. */
+/**
+ * "Forget" one note for the current user. Plan 14 — notes are
+ * shared, so this is a per-user mute (`$addToSet` on `forgottenBy`)
+ * rather than a global delete. Any other user's refresh resurfaces
+ * the note for them; the muted user has to wait for the next
+ * successful refresh from any user (which clears forgottenBy worker-
+ * side) to see it again.
+ */
 daydreamRouter.delete('/notes/:id', async (req, res) => {
   const userId = new Types.ObjectId(userIdOf(req));
   const id = req.params.id;
@@ -144,6 +153,9 @@ daydreamRouter.delete('/notes/:id', async (req, res) => {
     res.status(400).json({ error: 'invalid_request', message: 'invalid id' });
     return;
   }
-  const r = await DaydreamNote.deleteOne({ _id: new Types.ObjectId(id), userId });
-  res.json({ ok: true, deleted: r.deletedCount ?? 0 });
+  const r = await DaydreamNote.updateOne(
+    { _id: new Types.ObjectId(id) },
+    { $addToSet: { forgottenBy: userId } },
+  );
+  res.json({ ok: true, hidden: (r.modifiedCount ?? 0) > 0 });
 });
