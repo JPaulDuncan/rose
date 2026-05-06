@@ -207,7 +207,7 @@ export default function PageView() {
   }
 
   return (
-    <div className="mx-auto w-full max-w-6xl px-6 py-10">
+    <div className="w-full px-6 py-10">
       <div className="mb-6 flex items-start justify-between gap-4">
         <div className="min-w-0 flex-1">
           {mode === 'edit' ? (
