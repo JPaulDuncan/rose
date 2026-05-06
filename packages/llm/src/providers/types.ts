@@ -42,6 +42,11 @@ export type PullEvent = {
   digest?: string;
   total?: number;
   completed?: number;
+  /** Ollama emits `{"error": "..."}` ndjson lines mid-stream when
+   *  a pull fails (model not found, HF 404, registry timeout).
+   *  The proxy must surface this rather than treating it as a
+   *  normal progress event. */
+  error?: string;
 };
 
 export type PingResult = {

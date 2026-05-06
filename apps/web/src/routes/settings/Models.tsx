@@ -1070,11 +1070,16 @@ function OllamaCard({
 
       <div>
         <h3 className="mb-2 text-sm font-medium">Pull a model</h3>
+        <p className="mb-2 text-xs text-ink-500">
+          Ollama refs (<code>llama3.1:8b-instruct</code>) or Hugging Face GGUF
+          (<code>unsloth/Qwen3.5-9B-GGUF</code> — auto-prefixed with{' '}
+          <code>hf.co/</code>).
+        </p>
         <div className="flex gap-2">
           <input
             className="input"
             list="ollama-suggestions"
-            placeholder="e.g. llama3.1:8b-instruct"
+            placeholder="llama3.1:8b-instruct or owner/repo-GGUF"
             value={pullName}
             onChange={(e) => setPullName(e.target.value)}
             disabled={!!pullProgress}

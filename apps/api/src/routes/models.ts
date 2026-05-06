@@ -19,6 +19,36 @@ async function ollamaForUser(userId: string): Promise<OllamaProvider> {
   return new OllamaProvider({ baseUrl });
 }
 
+/**
+ * Normalise a user-supplied Ollama model reference. Ollama's
+ * registry convention is roughly:
+ *
+ *   • `llama3.1:8b-instruct`            — registry default
+ *   • `library/llama3.1:8b-instruct`    — explicit registry namespace
+ *   • `hf.co/<user>/<repo>[:tag]`        — Hugging Face GGUF
+ *   • `huggingface.co/<user>/<repo>`     — same, longer form
+ *   • `example.com/foo`                  — custom registry
+ *
+ * Users who paste an HF reference like `unsloth/Qwen3.5-9B-GGUF`
+ * (without the `hf.co/` prefix) hit a registry 404 because Ollama
+ * tries `registry.ollama.ai/unsloth/Qwen3.5-9B-GGUF`. We auto-
+ * prefix `hf.co/` when the input has a slash AND doesn't begin
+ * with a known host, the `library/` namespace, or anything that
+ * already looks like a fully-qualified registry path.
+ */
+export function normalizeOllamaRef(name: string): string {
+  const trimmed = name.trim();
+  if (!trimmed.includes('/')) return trimmed;
+  if (/^(hf\.co|huggingface\.co)\//i.test(trimmed)) return trimmed;
+  if (/^library\//i.test(trimmed)) return trimmed;
+  // First segment looks like a domain (contains a dot) — assume the
+  // user knows what they're doing.
+  const firstSegment = trimmed.split('/')[0]!;
+  if (firstSegment.includes('.')) return trimmed;
+  // Otherwise treat as a Hugging Face <owner>/<repo>[:<file/tag>] ref.
+  return `hf.co/${trimmed}`;
+}
+
 export const modelsRouter: Router = Router();
 
 modelsRouter.get('/', async (req, res, next) => {
@@ -40,15 +70,24 @@ modelsRouter.post('/pull', validateBody(PullBody), async (req, res, next) => {
   try {
     const userId = userIdOf(req);
     const { name } = req.body as z.infer<typeof PullBody>;
+    const resolved = normalizeOllamaRef(name);
     const ollama = await ollamaForUser(userId);
     void (async () => {
       try {
-        for await (const _ of ollama.pullModel(name)) void _;
+        for await (const ev of ollama.pullModel(resolved)) {
+          if (ev.error) {
+            logger.warn(
+              { name, resolved, error: ev.error },
+              'background ollama pull reported error',
+            );
+            return;
+          }
+        }
       } catch (err) {
-        logger.warn({ err, name }, 'background ollama pull failed');
+        logger.warn({ err, name, resolved }, 'background ollama pull failed');
       }
     })();
-    res.status(202).json({ ok: true });
+    res.status(202).json({ ok: true, resolved });
   } catch (err) {
     next(err);
   }
@@ -89,11 +128,12 @@ modelsStreamRouter.get('/pull/stream', async (req: Request, res: Response) => {
     res.status(401).json({ error: 'unauthorized', message: 'Invalid token' });
     return;
   }
-  const name = (req.query.name as string | undefined) ?? '';
-  if (!name) {
+  const rawName = (req.query.name as string | undefined) ?? '';
+  if (!rawName) {
     res.status(400).json({ error: 'invalid_request', message: 'Missing model name' });
     return;
   }
+  const name = normalizeOllamaRef(rawName);
 
   res.set({
     'Content-Type': 'text/event-stream',
@@ -104,15 +144,24 @@ modelsStreamRouter.get('/pull/stream', async (req: Request, res: Response) => {
   res.flushHeaders();
 
   const send = (data: unknown) => res.write(`data: ${JSON.stringify(data)}\n\n`);
-  send({ type: 'connected', name });
+  send({ type: 'connected', name, requested: rawName, resolved: name });
 
   const ollama = await ollamaForUser(userId);
   const ctrl = new AbortController();
   req.on('close', () => ctrl.abort());
 
   try {
-    for await (const ev of ollama.pullModel(name, ctrl.signal)) send({ type: 'progress', ...ev });
-    send({ type: 'completed', name });
+    let failed = false;
+    for await (const ev of ollama.pullModel(name, ctrl.signal)) {
+      if (ev.error) {
+        failed = true;
+        logger.warn({ rawName, name, error: ev.error }, 'ollama pull stream reported error');
+        send({ type: 'failed', name, message: ev.error });
+        break;
+      }
+      send({ type: 'progress', ...ev });
+    }
+    if (!failed) send({ type: 'completed', name });
   } catch (err) {
     send({ type: 'failed', name, message: (err as Error).message });
   } finally {
