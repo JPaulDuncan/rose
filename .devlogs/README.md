@@ -14,5 +14,6 @@ not auto-generated from code. Update them when the corresponding system changes.
 | [05-ux-spec.md](./05-ux-spec.md) | UX, keyboard map, command palette |
 | [06-auth-and-security.md](./06-auth-and-security.md) | JWT, cookies, encryption |
 | [07-docker-and-ops.md](./07-docker-and-ops.md) | Compose, healthchecks, GPU |
+| [12-feature-audit.md](./12-feature-audit.md) | Snapshot audit of redundancy + gaps as of 2026-05-06 |
 | [adr/](./adr/) | Short ADRs for irreversible decisions |
 | [plans/](./plans/) | Forward-looking specs for unshipped features (RAG chat, rules, outbound, etc.) |
