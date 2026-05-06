@@ -35,7 +35,7 @@ import { dispatchWebhookEvent } from './webhookDeliver.js';
 import { evaluatePageNotifications } from './pushNotify.js';
 import { describePageImages } from '../services/describeImages.js';
 import { extractPlacesFromPage, hashContent } from '../services/extractPlaces.js';
-import { extractEntitiesFromPage } from '../services/extractEntities.js';
+import { runPostWriteEntityExtraction } from '../services/extractEntities.js';
 import { geocode, normalizePlaceKey } from '../lib/geocode.js';
 import { canonicalizeTags } from '../services/tagCanonicalize.js';
 import { findMergeSuggestions } from '../services/mergeDetect.js';
@@ -317,22 +317,7 @@ async function runEntityExtraction(
   userId: Types.ObjectId,
   page: PageDoc,
 ): Promise<void> {
-  const hash = hashContent(page.contentMd ?? '');
-  if (hash && page.entitiesExtractedFromHash === hash) return;
-  const extracted = await extractEntitiesFromPage(userId, page);
-  // Replace wholesale — if the page no longer mentions an entity it
-  // shouldn't keep the link. The Entity collection row stays
-  // (other pages may still reference it); only the page-level
-  // membership is rewritten.
-  page.entities = extracted.map((e) => ({
-    name: e.name.slice(0, 200),
-    normKey: e.normKey,
-    type: e.type,
-    displayName: e.displayName,
-  })) as typeof page.entities;
-  page.entitiesExtractedFromHash = hash;
-  page.markModified('entities');
-  await page.save();
+  await runPostWriteEntityExtraction(userId, page, hashContent(page.contentMd ?? ''));
 }
 
 export function startGeneratePageWorker() {

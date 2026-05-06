@@ -151,3 +151,63 @@ export async function extractEntitiesFromPage(
 
   return [...seen.values()];
 }
+
+/**
+ * Plan 12 (R5+G1) — shared post-write entity-extraction step. Runs
+ * the same idempotent extract-and-persist cycle that previously
+ * lived inside `generatePage.runEntityExtraction`, but in a place
+ * any page-write surface can call (briefings + synthesis).
+ *
+ * Side-effects:
+ *   • Sets `Page.entities[]` to the freshly-extracted list.
+ *   • Bumps `Page.entitiesExtractedFromHash` so a regenerate that
+ *     produces the same body skips the LLM call.
+ *   • Adds `{ kind: 'entity' }` entries onto `Page.daydreamSubjects[]`
+ *     (deduped) so the sweeper picks the page up for the Background
+ *     brief on /n/<key>.
+ *
+ * Best-effort: any failure inside `extractEntitiesFromPage` already
+ * yields an empty list; this caller logs and returns rather than
+ * throwing.
+ */
+export async function runPostWriteEntityExtraction(
+  userId: Types.ObjectId,
+  page: PageDoc,
+  contentHash: string,
+): Promise<void> {
+  if (contentHash && page.entitiesExtractedFromHash === contentHash) return;
+  let extracted: ExtractedEntity[] = [];
+  try {
+    extracted = await extractEntitiesFromPage(userId, page);
+  } catch (err) {
+    logger.warn(
+      { err, pageId: String(page._id) },
+      'post-write entity extraction failed; leaving page.entities as-is',
+    );
+    return;
+  }
+  page.entities = extracted.map((e) => ({
+    name: e.name.slice(0, 200),
+    normKey: e.normKey,
+    type: e.type,
+    displayName: e.displayName,
+  })) as typeof page.entities;
+  page.entitiesExtractedFromHash = contentHash;
+  page.markModified('entities');
+
+  const existingSubjects = ((page.daydreamSubjects ?? []) as Array<{
+    kind: string;
+    subjectKey: string;
+  }>).slice();
+  const seen = new Set(existingSubjects.map((s) => `${s.kind}__${s.subjectKey}`));
+  for (const e of extracted) {
+    const subjectKey = e.displayName.trim().toLowerCase().replace(/\s+/g, ' ');
+    const dedupKey = `entity__${subjectKey}`;
+    if (seen.has(dedupKey)) continue;
+    seen.add(dedupKey);
+    existingSubjects.push({ kind: 'entity', subjectKey });
+  }
+  page.daydreamSubjects = existingSubjects.slice(0, 24) as typeof page.daydreamSubjects;
+  page.markModified('daydreamSubjects');
+  await page.save();
+}

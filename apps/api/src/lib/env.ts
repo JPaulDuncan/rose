@@ -22,6 +22,14 @@ export const env = {
   DEFAULT_GENERATION_MODEL: process.env.DEFAULT_GENERATION_MODEL ?? 'llama3.1:8b-instruct',
   DEFAULT_EMBEDDING_MODEL: process.env.DEFAULT_EMBEDDING_MODEL ?? 'nomic-embed-text',
   ENABLE_REGISTRATION: (process.env.ENABLE_REGISTRATION ?? 'true') === 'true',
+  /**
+   * Server-side idle-logout timeout in minutes. Pairs with the
+   * client-side `VITE_IDLE_TIMEOUT_MINUTES` so a stolen access JWT
+   * stops working at the same boundary the SPA gives up. Set 0 (or
+   * negative) to disable server-side enforcement entirely. Default
+   * 5 minutes — matches the SPA default.
+   */
+  IDLE_TIMEOUT_MINUTES: Number(process.env.IDLE_TIMEOUT_MINUTES ?? 5),
   VAPID_PUBLIC_KEY: process.env.VAPID_PUBLIC_KEY ?? '',
   VAPID_PRIVATE_KEY: process.env.VAPID_PRIVATE_KEY ?? '',
   VAPID_SUBJECT: process.env.VAPID_SUBJECT ?? 'mailto:admin@rose.local',

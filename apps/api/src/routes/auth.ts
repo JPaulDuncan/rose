@@ -3,7 +3,13 @@ import argon2 from 'argon2';
 import cookieParser from 'cookie-parser';
 import { LoginRequest, RegisterRequest, type PublicUser } from '@rose/shared';
 import { User, type UserDoc } from '@rose/db';
-import { signAccessToken, signRefreshToken, verifyRefreshToken } from '../middleware/auth.js';
+import {
+  signAccessToken,
+  signRefreshToken,
+  verifyRefreshToken,
+  recordActivity,
+  clearActivity,
+} from '../middleware/auth.js';
 import { validateBody } from '../middleware/validate.js';
 import { authLimiter } from '../middleware/rateLimit.js';
 import { env } from '../lib/env.js';
@@ -53,6 +59,7 @@ authRouter.post('/register', authLimiter, validateBody(RegisterRequest), async (
   const access = signAccessToken(user._id.toString());
   const refresh = signRefreshToken(user._id.toString());
   setRefreshCookie(res, refresh);
+  await recordActivity(user._id.toString());
   res.json({ user: toPublic(user), accessToken: access });
 });
 
@@ -71,6 +78,7 @@ authRouter.post('/login', authLimiter, validateBody(LoginRequest), async (req, r
   const access = signAccessToken(user._id.toString());
   const refresh = signRefreshToken(user._id.toString());
   setRefreshCookie(res, refresh);
+  await recordActivity(user._id.toString());
   res.json({ user: toPublic(user), accessToken: access });
 });
 
@@ -87,13 +95,27 @@ authRouter.post('/refresh', async (req, res) => {
     const access = signAccessToken(sub);
     const refresh = signRefreshToken(sub);
     setRefreshCookie(res, refresh);
+    await recordActivity(sub);
     res.json({ user: toPublic(user), accessToken: access });
   } catch {
     res.status(401).json({ error: 'unauthorized', message: 'Invalid refresh token' });
   }
 });
 
-authRouter.post('/logout', (_req, res) => {
+authRouter.post('/logout', async (req, res) => {
+  // Best-effort: clear server-side activity so the access JWT goes
+  // stale immediately even if the SPA doesn't drop it. We still
+  // return ok regardless; the refresh cookie clear is the
+  // load-bearing piece.
+  try {
+    const cookieToken = (req.cookies as Record<string, string> | undefined)?.rose_refresh;
+    if (cookieToken) {
+      const { sub } = verifyRefreshToken(cookieToken);
+      await clearActivity(sub);
+    }
+  } catch {
+    /* expired or absent — nothing to clear */
+  }
   res.clearCookie('rose_refresh', { path: '/api/auth' });
   res.json({ ok: true });
 });

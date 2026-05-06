@@ -3,6 +3,7 @@ import { Types } from 'mongoose';
 import { Entity, Page, DaydreamNote, normalizeTagKey, ENTITY_TYPES } from '@rose/db';
 import { userIdOf } from '../middleware/auth.js';
 import { daydreamQueue } from '../lib/queues.js';
+import { llmForceLimiter } from '../middleware/rateLimit.js';
 
 export const entitiesRouter: Router = Router();
 
@@ -343,6 +344,24 @@ entitiesRouter.post('/:key/merge', async (req, res) => {
     );
   }
   if (sourceRow) await Entity.deleteOne({ _id: sourceRow._id });
+
+  // Clean up the source's DaydreamNote so the /n/<target> brief
+  // doesn't go looking for a now-orphaned note (the lookup uses
+  // displayName-derived subjectKey; merging changes which key
+  // resolves on /n/<target>). Same `kind: 'entity'` row, source
+  // displayName-derived subjectKey.
+  if (sourceRow?.displayName) {
+    const orphanedKey = sourceRow.displayName
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, ' ');
+    await DaydreamNote.deleteOne({
+      userId,
+      kind: 'entity',
+      subjectKey: orphanedKey,
+    });
+  }
+
   res.json({ ok: true, target, affectedPages: ids.length });
 });
 
@@ -428,7 +447,17 @@ entitiesRouter.delete('/:key', async (req, res) => {
   const purge =
     (req.query.purgeFromPages ?? req.body?.purgeFromPages) === 'true' ||
     req.body?.purgeFromPages === true;
+  // Snapshot the row before delete so we can clean up the
+  // associated DaydreamNote keyed on its displayName.
+  const row = await Entity.findOne({ userId, key }).select('displayName').lean();
   await Entity.deleteOne({ userId, key });
+  if (row?.displayName) {
+    const subjectKey = row.displayName
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, ' ');
+    await DaydreamNote.deleteOne({ userId, kind: 'entity', subjectKey });
+  }
   let affected = 0;
   if (purge) {
     const r = await Page.updateMany(
@@ -497,8 +526,7 @@ entitiesRouter.get('/:key/daydream', async (req, res) => {
  * one subject. Cheap rate limit: 5 forces per user per minute,
  * shared with the page-level Daydream Now button.
  */
-const entityForceCalls = new Map<string, number[]>();
-entitiesRouter.post('/:key/daydream', async (req, res) => {
+entitiesRouter.post('/:key/daydream', llmForceLimiter, async (req, res) => {
   const userIdStr = userIdOf(req);
   const userId = new Types.ObjectId(userIdStr);
   const key = normalizeTagKey(decodeURIComponent(req.params.key ?? ''));
@@ -506,19 +534,6 @@ entitiesRouter.post('/:key/daydream', async (req, res) => {
     res.status(400).json({ error: 'invalid_request', message: 'Invalid entity key' });
     return;
   }
-  const now = Date.now();
-  const calls = (entityForceCalls.get(userIdStr) ?? []).filter(
-    (t) => now - t < 60_000,
-  );
-  if (calls.length >= 5) {
-    res.status(429).json({
-      error: 'rate_limited',
-      message: 'Daydream-now is capped at 5 per minute. Try again shortly.',
-    });
-    return;
-  }
-  calls.push(now);
-  entityForceCalls.set(userIdStr, calls);
 
   const entity = await Entity.findOne({ userId, $or: [{ key }, { aliases: key }] })
     .select('key displayName')

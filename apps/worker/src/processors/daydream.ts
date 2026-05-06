@@ -309,19 +309,41 @@ async function ensurePageSubjects(
     push({ kind: 'tag', key: normaliseSubjectKey(t), display: t });
   }
 
+  // Plan 12 (R1) — Page.entities[] is the authoritative source of
+  // named entities now (populated by the linker-driven extractor in
+  // generatePage post-persist). The legacy daydream-internal
+  // extractor is a fallback; if entities are already present we use
+  // them directly and skip the second LLM call entirely.
+  const pageEntities = ((page.entities ?? []) as Array<{
+    name: string;
+    displayName: string;
+    normKey: string;
+  }>);
+  for (const e of pageEntities) {
+    push({
+      kind: 'entity',
+      key: normaliseSubjectKey(e.displayName || e.name),
+      display: e.displayName || e.name,
+    });
+  }
+
   // Already-extracted entities from a prior pass — cheap to merge.
   for (const s of cachedPageSubjects(page)) {
     if (s.kind === 'entity') push(s);
   }
 
-  // First-pass extraction: only when daydreamSubjects has no entity
-  // entries yet AND the page body has substance. We bump the cap for
-  // this LLM call too — it's a real call against the user's provider.
-  const hasExtractedEntities = (page.daydreamSubjects ?? []).some(
-    (s: { kind?: string }) => s.kind === 'entity',
-  );
+  // Fallback extraction: only when neither Page.entities[] nor
+  // daydreamSubjects has any entity entry. The linker extractor
+  // already runs in generatePage post-persist; this branch only
+  // kicks in for legacy pages or pages where the linker step was
+  // disabled / failed.
+  const hasAnyEntity =
+    pageEntities.length > 0 ||
+    (page.daydreamSubjects ?? []).some(
+      (s: { kind?: string }) => s.kind === 'entity',
+    );
   const cap = cfg.dailyCallCap ?? 50;
-  if (!hasExtractedEntities && bumpAndCheckCap(String(userId), cap)) {
+  if (!hasAnyEntity && bumpAndCheckCap(String(userId), cap)) {
     const extracted = await extractEntitiesFromPage(userId, page);
     for (const e of extracted) {
       push({

@@ -12,6 +12,8 @@ import { slugify } from '@rose/shared';
 import { redis } from '../lib/redis.js';
 import { logger } from '../lib/logger.js';
 import { resolveProviderForUser, applyParamOverrides } from '../lib/providers.js';
+import { runPostWriteEntityExtraction } from '../services/extractEntities.js';
+import { hashContent } from '../services/extractPlaces.js';
 
 const QUEUE = 'rose.briefing';
 
@@ -265,6 +267,21 @@ async function generateBriefingForUser(
     editor: 'briefing',
     model: `${providerId}:${genModel}`,
   });
+  // Plan 12 (G1) — extract named entities from the briefing prose so
+  // mentions auto-link to /n/<key>. Best-effort; never blocks the
+  // briefing job on its own failures.
+  try {
+    await runPostWriteEntityExtraction(
+      userId,
+      created as unknown as Parameters<typeof runPostWriteEntityExtraction>[1],
+      hashContent(created.contentMd ?? ''),
+    );
+  } catch (err) {
+    logger.warn(
+      { err, pageId: String(created._id) },
+      'briefing: post-write entity extraction failed',
+    );
+  }
   return { generated: true, pageId: String(created._id), slug };
 }
 

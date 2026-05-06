@@ -109,6 +109,7 @@ async function liveMergeSuggestions(
 }
 
 import { embedPageQueue, daydreamQueue, generatePageQueue } from '../lib/queues.js';
+import { llmForceLimiter } from '../middleware/rateLimit.js';
 import { recordRevision, uniqueSlug } from '../services/wiki.js';
 
 export const pagesRouter: Router = Router();
@@ -476,25 +477,11 @@ pagesRouter.get('/:id/daydream', async (req, res) => {
 
 /**
  * Force a daydream pass on this page now — bypass the idle sweeper.
- * Cap at 5/min/user (in-memory) so a clicky user can't burn their
- * daily LLM budget by mashing the button.
+ * Rate-limited via the shared Redis-backed `llmForceLimiter` so the
+ * 5/min cap holds across multiple API processes.
  */
-const forceDaydreamCalls = new Map<string, number[]>();
-pagesRouter.post('/:id/daydream', async (req, res) => {
+pagesRouter.post('/:id/daydream', llmForceLimiter, async (req, res) => {
   const userIdStr = String(userIdOf(req));
-  const now = Date.now();
-  const calls = (forceDaydreamCalls.get(userIdStr) ?? []).filter(
-    (t) => now - t < 60_000,
-  );
-  if (calls.length >= 5) {
-    res.status(429).json({
-      error: 'rate_limited',
-      message: 'Daydream-now is capped at 5 per minute. Try again shortly.',
-    });
-    return;
-  }
-  calls.push(now);
-  forceDaydreamCalls.set(userIdStr, calls);
   const userId = new Types.ObjectId(userIdStr);
   const page = await Page.findOne({ _id: req.params.id, userId }).select('_id').lean();
   if (!page) {
