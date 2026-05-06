@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect } from 'react';
 import { Routes, Route, Navigate, Outlet } from 'react-router-dom';
 import { useAuth } from './lib/auth';
+import { useIdleLogout } from './lib/useIdleLogout';
 import { Shell } from './components/Shell';
 
 // Login + Register stay eager — they're tiny, on the unauthenticated
@@ -60,6 +61,10 @@ function RouteFallback() {
 
 function ProtectedShell() {
   const { user, ready } = useAuth();
+  // Idle-timeout watcher. Hook is unconditional (rules of hooks);
+  // its effect bails out internally when there's no authenticated
+  // user, so unauth renders below still go through the early return.
+  useIdleLogout();
   if (!ready) {
     return (
       <div className="flex h-screen items-center justify-center text-ink-500">
