@@ -1,7 +1,9 @@
 # 13 — DRY refactor audit
 
 **Date:** 2026-05-06.
-**Status:** Descriptive. Lists confirmed code duplications and the recommended refactors. No code changes are made by this document — it's a backlog with file:line references so any single item can be picked up independently.
+**Status:** Descriptive. Lists confirmed code duplications and the recommended refactors.
+
+**Update 2026-05-06 (later that day):** Tier 1 + Tier 2 executed across three commits. Per-finding resolution notes are inline in §2 / §3 below; a roll-up sits in the new §8 at the bottom. Tier 3 stays untouched by design.
 
 This is the second audit in this devlog series. The first (`12-feature-audit.md`) catalogued feature-level redundancy and gaps. This one catalogues code-level repetition: same logic copy-pasted into multiple files, or near-identical patterns that could share a helper.
 
@@ -21,7 +23,7 @@ Total: 11 confirmed duplications, 3 of which warrant a dedicated cleanup commit.
 
 ## 2. Tier 1 — should fix
 
-### D1 — `cosine` similarity copied three times  *(severity: high)*
+### D1 — `cosine` similarity copied three times  *(severity: high · **status: resolved**)*
 
 Three identical implementations of `cosine(a: number[], b: number[]) → number`:
 
@@ -35,7 +37,9 @@ Each handles the same edge cases (length mismatch, empty inputs, zero norm). The
 
 **Refactor:** Promote `pageAssignment.cosine` to `apps/worker/src/lib/vec.ts` and have `mergeDetect.ts` + `briefing.ts` import it. The existing test in `apps/worker/src/__tests__/pageAssignment.test.ts` migrates with the export. Net diff: -30 lines.
 
-### D2 — daydream subject-key normalisation copied  *(severity: medium)*
+**Resolution (commit `dd8261f`):** New `apps/worker/src/lib/vec.ts:cosine` exports the canonical implementation. `pageAssignment.ts` re-exports it under the same name so the worker test suite + downstream import sites keep compiling. Both private copies in `mergeDetect.ts` and `briefing.ts` are deleted.
+
+### D2 — daydream subject-key normalisation copied  *(severity: medium · **status: resolved**)*
 
 The "displayName → daydream subjectKey" transform (`trim → lowercase → collapse whitespace`) lives in two places:
 
@@ -46,7 +50,9 @@ Plus two **inline** copies of the same transform inside `apps/api/src/routes/ent
 
 **Refactor:** Move `normaliseSubjectKey` to `packages/db/src/models/Entity.ts` (same package as `normalizeTagKey`, `titleCaseTag`) so both worker and api can import without crossing the worker boundary. Then replace the four call sites. Net diff: -15 lines.
 
-### D3 — slug uniqueness loops copied  *(severity: medium)*
+**Resolution (commit `dd8261f`):** Helper now lives in `packages/db/src/models/Entity.ts:daydreamSubjectKey`, exported via `@rose/db`. The worker-side `apps/worker/src/lib/sourceLabel.ts:normaliseSubjectKey` re-exports the same function under the legacy name so existing worker imports keep compiling. Two inline copies in `apps/api/src/routes/entities.ts` (merge + delete cleanup) and one in `apps/worker/src/services/extractEntities.ts` now call the shared helper.
+
+### D3 — slug uniqueness loops copied  *(severity: medium · **status: resolved**)*
 
 `uniqueSlug` exists in `apps/api/src/services/wiki.ts:6` (exported, uses `slugify`). `uniqueSlugForUser` is a private duplicate inside `apps/worker/src/processors/briefing.ts:151`. Same find-and-bump-suffix loop.
 
@@ -54,13 +60,15 @@ A third inline variant lives in the new-page branch of `apps/worker/src/processo
 
 **Refactor:** Lift to a small `apps/worker/src/lib/slugUnique.ts` (or move to `@rose/db` so api + worker both import). Each call site becomes one line. Net diff: -25 lines.
 
+**Resolution (commit `dd8261f`):** Helper at `packages/db/src/util/uniqueSlug.ts`, exported via `@rose/db`. Takes a pre-slugified base + optional `excludePageId`. The api's `apps/api/src/services/wiki.ts:uniqueSlug` is preserved as a thin slugify-aware adapter so its existing callers don't have to slugify themselves. Worker's `briefing.ts` and `generatePage.ts` both call the new helper directly.
+
 ---
 
 ## 3. Tier 2 — fold opportunistically
 
 These are real duplications, but the abstraction has its own cost (parameterisation, type plumbing, or genuine difference in semantics) — and the audit's first principle is "don't abstract before the third copy appears with the same shape." For these, the third copy already exists; the patch is bigger than just renaming a function. Worth doing the next time a related commit touches either side.
 
-### D4 — Settings → Tags / Entities inline-edit panels  *(severity: high in absolute LOC; medium in priority)*
+### D4 — Settings → Tags / Entities inline-edit panels  *(severity: high in absolute LOC; medium in priority · **status: resolved**)*
 
 `apps/web/src/routes/settings/Tags.tsx` lines 155–410 and `apps/web/src/routes/settings/Entities.tsx` lines 266–522 share roughly **70% structural overlap**:
 
@@ -82,7 +90,9 @@ with per-callsite slots for the type select (Tags has none; Entities has 4 optio
 
 **Reason to defer:** The two pages have small but real divergences (Entities has type, Tags doesn't; placeholder copy; query keys). A naïve unification would force render-prop or slot complexity that costs as much as it saves. Worth a thoughtful design pass — not a fast win.
 
-### D5 — First-time egress acknowledgement banner  *(severity: medium)*
+**Resolution (commit pending):** Pulled the four mutations (save / merge / rename / delete) into a shared `useCanonicalMutations` hook at `apps/web/src/lib/useCanonicalMutations.ts`. The hook absorbs the API-contract differences: `keyField` selects between `canonical` (tags) and `key` (entities) for rename / PATCH bodies, and the rename success toast reads whichever response field is present. **Per-row JSX stays in each Settings page** — the divergences (entity type select, tag emergent badge, placeholder copy, kebab-key helper text) are real and attempting one component would force render-prop complexity. ~80 lines per page → ~10 lines per page on the mutations side; net -120 LOC.
+
+### D5 — First-time egress acknowledgement banner  *(severity: medium · **status: resolved**)*
 
 `apps/web/src/routes/settings/Daydream.tsx:123–148` and `apps/web/src/routes/settings/Maps.tsx:89–123` both render the same amber banner with the same conditional (`form.enabled && !settings?.enabled && !acceptedExplainer`):
 
@@ -100,7 +110,9 @@ Only the bullet contents differ.
 
 **Reason to do soon:** Both routes have stable APIs (the Daydream / Maps settings shapes are unlikely to change in lockstep). Low coupling, high mechanical reuse — the next "opt-in feature with egress" (federated chat? external sender enrichment?) will repeat the same banner.
 
-### D6 — `bumpAndCheckCap` copied between daydream + describeImages  *(severity: medium)*
+**Resolution (commit `73dd550`):** New `apps/web/src/components/EgressAcknowledgement.tsx` takes `show`, `onAccept`, and `bullets: ReactNode[]`. Three call sites (Settings → Daydream's daydream-master + external-search-master, Settings → Maps' maps-master) now use it.
+
+### D6 — `bumpAndCheckCap` copied between daydream + describeImages  *(severity: medium · **status: resolved**)*
 
 `apps/worker/src/processors/daydream.ts:83` defines `bumpAndCheckCap(userId, cap): boolean` — an in-process daily-call counter for LLM-cost gating. `apps/worker/src/services/describeImages.ts:17` has an **exact duplicate** with a different `Map`.
 
@@ -108,13 +120,17 @@ Both maps are per-process, so a multi-worker deployment would let a user blow pa
 
 **Refactor:** Move to `apps/worker/src/lib/dailyCap.ts` keyed on `(userId, kind)` so the same helper backs both LLM-call surfaces. Bonus path: back it with Redis the same way `llmForceLimiter` is now (avoids the multi-worker leak). Net diff: a refactor + a real bug fix in the same change.
 
-### D7 — `dataIo` import path repeats per-collection ID-remap  *(severity: medium)*
+**Resolution (commit `73dd550`):** New helper at `apps/worker/src/lib/dailyCap.ts` is Redis-backed via INCR + EX, namespaced on `kind` so daydream's quota and the vision-describe quota stay independent. Both callers wrap it with a per-surface `kind` literal. Failure mode is documented as fail-open (redis hiccup → one extra LLM call > silent feature outage). Closes the multi-worker leak: previously N workers meant up to `N × cap` calls/day.
+
+### D7 — `dataIo` import path repeats per-collection ID-remap  *(severity: medium · **status: resolved**)*
 
 `apps/api/src/routes/dataIo.ts:205–279` has roughly the same `.map(x => ({ ...x, _id: new Types.ObjectId(), userId }))` pattern repeated for ~7 collections, plus `Model.insertMany(arr, { ordered: false })` calls.
 
 **Refactor:** A small `importCollection<TModel>(rawList, { userId, remap, model })` helper eats roughly 60 lines. The function signature has to handle a few collection-specific quirks (`Page.userId`, `Conversation.messages` cross-references, `Event.pageId` remap), so it isn't a pure one-liner — but the boilerplate is mostly there.
 
 **Reason to defer:** Import is a low-traffic code path. The existing repetition is annoying but not error-prone (each block is short enough to grep). Worth folding when either the export schema bumps version (3+) or a new per-user collection lands.
+
+**Resolution (commit `73dd550`):** Inline `importCollection({ list, model, preserveId, transform })` helper drives all nine collections. The `preserveId` flag selects between "share id with the cross-collection idMap" (Pages, Conversations) and "fresh ObjectId" (no inbound references). FK-rewriting collections pass a small `transform` callback. Each per-collection block went from ~10 lines to ~5.
 
 ---
 
@@ -172,3 +188,27 @@ Combined: **Tier 1 alone** would land as a single 200-line commit (mostly deleti
 ## 7. Closing note
 
 DRY is a tool, not a target. Every "extract this" suggestion above has been weighed against the cost of having to read through one more layer of indirection. The Tier 3 section is as load-bearing as the Tier 1 section: the goal is to fix the duplications worth fixing and explicitly *not* fix the rest, so future contributors aren't tempted to abstract away patterns that pay their own way.
+
+---
+
+## 8. Resolution roll-up
+
+| ID | Title | Severity | Status | Commit |
+|---|---|---|---|---|
+| D1 | `cosine` copied 3× | high | resolved | `dd8261f` |
+| D2 | daydream subject-key normalisation copied | medium | resolved | `dd8261f` |
+| D3 | slug uniqueness loops copied | medium | resolved | `dd8261f` |
+| D4 | Settings → Tags / Entities edit panels | high LOC / medium priority | resolved (mutations only; per-row JSX kept) | (this pass) |
+| D5 | First-time egress banner | medium | resolved | `73dd550` |
+| D6 | `bumpAndCheckCap` copied | medium | resolved (also closes multi-worker leak) | `73dd550` |
+| D7 | dataIo per-collection remap | medium | resolved | `73dd550` |
+| N1–N5 | Tier 3 (.lean() casts, kebab vs place key, titleCaseTag, in-memory rate-limits, snapshot pattern) | — | deliberately untouched | — |
+
+**Three commits did the work** + this docs pass. **Tier 3 untouched by design** — see closing note above.
+
+**LOC delta:**
+- Tier 1 (D1+D2+D3): −62 net (−105 deletions, +43 in shared helpers).
+- Tier 2 (D5+D6+D7+D4-mutations): roughly +78 helper / −214 inline = −136 net across 11 files.
+- Combined: ~-200 LOC across the codebase, 4 new shared helpers (`vec.ts`, `dailyCap.ts`, `EgressAcknowledgement`, `useCanonicalMutations`).
+
+**Test count:** 62 (41 api + 21 worker), unchanged. The shared helpers are covered by call-site tests already in the suite (the `cosine` tests in `apps/worker/src/__tests__/pageAssignment.test.ts` exercise the canonical implementation since `pageAssignment` re-exports it).

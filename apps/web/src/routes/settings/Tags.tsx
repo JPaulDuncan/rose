@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Tag as TagIcon,
   Pencil,
@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useApi } from '../../lib/api';
+import { useCanonicalMutations } from '../../lib/useCanonicalMutations';
 
 type CanonicalRow = {
   canonical: string;
@@ -167,73 +168,15 @@ function TagRow({
   onSaved: () => void;
   allCanonicals: CanonicalRow[];
 }) {
-  const api = useApi();
   const [displayName, setDisplayName] = useState(row.displayName);
   const [aliasesText, setAliasesText] = useState(row.aliases.join(', '));
-
-  const save = useMutation({
-    mutationFn: async () =>
-      api.patch<{ canonical: string }>(
-        `/api/tags/canonicals/${encodeURIComponent(row.canonical)}`,
-        {
-          displayName: displayName.trim(),
-          aliases: aliasesText
-            .split(',')
-            .map((a) => a.trim())
-            .filter(Boolean),
-        },
-      ),
-    onSuccess: () => {
-      toast.success('Saved');
-      onSaved();
-    },
-    onError: (e: Error) => toast.error(e.message),
-  });
-
-  const merge = useMutation({
-    mutationFn: async (into: string) =>
-      api.post<{ ok: true; affectedPages: number }>(
-        `/api/tags/canonicals/${encodeURIComponent(row.canonical)}/merge`,
-        { into },
-      ),
-    onSuccess: (resp) => {
-      toast.success(
-        `Merged — ${resp.affectedPages} page${resp.affectedPages === 1 ? '' : 's'} updated`,
-      );
-      onSaved();
-    },
-    onError: (e: Error) => toast.error(e.message),
-  });
-
-  const rename = useMutation({
-    mutationFn: async (next: string) =>
-      api.post<{ ok: true; affectedPages: number; canonical: string }>(
-        `/api/tags/canonicals/${encodeURIComponent(row.canonical)}/rename`,
-        { canonical: next },
-      ),
-    onSuccess: (resp) => {
-      toast.success(
-        `Renamed to "${resp.canonical}" — ${resp.affectedPages} page${resp.affectedPages === 1 ? '' : 's'} updated`,
-      );
-      onSaved();
-    },
-    onError: (e: Error) => toast.error(e.message),
-  });
-
-  const remove = useMutation({
-    mutationFn: async (purge: boolean) =>
-      api.del<{ ok: true; affectedPages: number }>(
-        `/api/tags/canonicals/${encodeURIComponent(row.canonical)}?purgeFromPages=${purge}`,
-      ),
-    onSuccess: (resp) => {
-      toast.success(
-        resp.affectedPages > 0
-          ? `Deleted — purged from ${resp.affectedPages} page${resp.affectedPages === 1 ? '' : 's'}`
-          : 'Deleted',
-      );
-      onSaved();
-    },
-    onError: (e: Error) => toast.error(e.message),
+  // Plan 13 (D4) — shared mutations live in useCanonicalMutations.
+  const { save, merge, rename, remove } = useCanonicalMutations({
+    apiBase: '/api/tags/canonicals',
+    rowKey: row.canonical,
+    keyField: 'canonical',
+    queryKey: ['tag-canonicals'],
+    onSaved,
   });
 
   if (isEditing) {
@@ -281,7 +224,12 @@ function TagRow({
           <button
             type="button"
             className="btn-primary text-sm"
-            onClick={() => save.mutate()}
+            onClick={() =>
+              save.mutate({
+                displayName,
+                aliases: aliasesText.split(',').map((a) => a.trim()).filter(Boolean),
+              })
+            }
             disabled={save.isPending}
           >
             <Save className="h-3.5 w-3.5" /> Save

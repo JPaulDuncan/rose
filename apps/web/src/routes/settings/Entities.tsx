@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useApi } from '../../lib/api';
+import { useCanonicalMutations } from '../../lib/useCanonicalMutations';
 
 type EntityType = 'person' | 'work' | 'organization' | 'place';
 
@@ -276,72 +277,16 @@ function EntityRowEditor({
   onCancelEdit: () => void;
   onSaved: () => void;
 }) {
-  const api = useApi();
   const [displayName, setDisplayName] = useState(row.displayName);
   const [type, setType] = useState<EntityType>(row.type);
   const [aliasesText, setAliasesText] = useState(row.aliases.join(', '));
-
-  const save = useMutation({
-    mutationFn: async () =>
-      api.patch<{ key: string }>(`/api/entities/${encodeURIComponent(row.key)}`, {
-        displayName: displayName.trim(),
-        type,
-        aliases: aliasesText
-          .split(',')
-          .map((a) => a.trim())
-          .filter(Boolean),
-      }),
-    onSuccess: () => {
-      toast.success('Saved');
-      onSaved();
-    },
-    onError: (e: Error) => toast.error(e.message),
-  });
-
-  const merge = useMutation({
-    mutationFn: async (into: string) =>
-      api.post<{ ok: true; affectedPages: number }>(
-        `/api/entities/${encodeURIComponent(row.key)}/merge`,
-        { into },
-      ),
-    onSuccess: (resp) => {
-      toast.success(
-        `Merged — ${resp.affectedPages} page${resp.affectedPages === 1 ? '' : 's'} updated`,
-      );
-      onSaved();
-    },
-    onError: (e: Error) => toast.error(e.message),
-  });
-
-  const rename = useMutation({
-    mutationFn: async (next: string) =>
-      api.post<{ ok: true; affectedPages: number; key: string }>(
-        `/api/entities/${encodeURIComponent(row.key)}/rename`,
-        { key: next },
-      ),
-    onSuccess: (resp) => {
-      toast.success(
-        `Renamed to "${resp.key}" — ${resp.affectedPages} page${resp.affectedPages === 1 ? '' : 's'} updated`,
-      );
-      onSaved();
-    },
-    onError: (e: Error) => toast.error(e.message),
-  });
-
-  const remove = useMutation({
-    mutationFn: async (purge: boolean) =>
-      api.del<{ ok: true; affectedPages: number }>(
-        `/api/entities/${encodeURIComponent(row.key)}?purgeFromPages=${purge}`,
-      ),
-    onSuccess: (resp) => {
-      toast.success(
-        resp.affectedPages > 0
-          ? `Deleted — purged from ${resp.affectedPages} page${resp.affectedPages === 1 ? '' : 's'}`
-          : 'Deleted',
-      );
-      onSaved();
-    },
-    onError: (e: Error) => toast.error(e.message),
+  // Plan 13 (D4) — shared mutations live in useCanonicalMutations.
+  const { save, merge, rename, remove } = useCanonicalMutations({
+    apiBase: '/api/entities',
+    rowKey: row.key,
+    keyField: 'key',
+    queryKey: ['entities'],
+    onSaved,
   });
 
   if (isEditing) {
@@ -395,7 +340,13 @@ function EntityRowEditor({
           <button
             type="button"
             className="btn-primary text-sm"
-            onClick={() => save.mutate()}
+            onClick={() =>
+              save.mutate({
+                displayName,
+                aliases: aliasesText.split(',').map((a) => a.trim()).filter(Boolean),
+                extraPatch: { type },
+              })
+            }
             disabled={save.isPending}
           >
             <Save className="h-3.5 w-3.5" /> Save
