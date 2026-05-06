@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { MapPin } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useApi } from '../../lib/api';
+import { EgressAcknowledgement } from '../../components/EgressAcknowledgement';
 
 type MapsSettings = {
   enabled: boolean;
@@ -86,42 +87,34 @@ export default function MapsSettingsPage() {
           processed pages and events pick up coordinates.
         </p>
 
-        {wantsToEnableForFirstTime && (
-          <div className="mt-3 rounded border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-200">
-            <div className="font-medium">Heads-up before you enable</div>
-            <ul className="mt-1 list-disc pl-4">
-              <li>
-                Geocoding queries (event locations + extracted place
-                names) are sent to OpenStreetMap's Nominatim service
-                with a 24-hour cache; one outbound request per
-                previously-unseen place, throttled to 1 req/sec per
-                Nominatim's usage policy.
-              </li>
-              <li>
-                Map tiles are loaded from CARTO's public Voyager
-                basemap (OSM-attributed) directly by your browser when
-                a map renders.
-              </li>
-              <li>
-                Place extraction itself is one extra LLM call per
-                generated page against your configured generation
-                provider.
-              </li>
-              <li>
-                Disable this toggle any time — extraction stops
-                immediately and existing place data stays on the page
-                until you delete it.
-              </li>
-            </ul>
-            <button
-              type="button"
-              className="btn-secondary mt-2 text-xs"
-              onClick={() => setAcceptedExplainer(true)}
-            >
-              Got it
-            </button>
-          </div>
-        )}
+        <EgressAcknowledgement
+          show={wantsToEnableForFirstTime}
+          onAccept={() => setAcceptedExplainer(true)}
+          bullets={[
+            <>
+              Geocoding queries (event locations + extracted place
+              names) are sent to OpenStreetMap's Nominatim service
+              with a 24-hour cache; one outbound request per
+              previously-unseen place, throttled to 1 req/sec per
+              Nominatim's usage policy.
+            </>,
+            <>
+              Map tiles are loaded from CARTO's public Voyager
+              basemap (OSM-attributed) directly by your browser when
+              a map renders.
+            </>,
+            <>
+              Place extraction itself is one extra LLM call per
+              generated page against your configured generation
+              provider.
+            </>,
+            <>
+              Disable this toggle any time — extraction stops
+              immediately and existing place data stays on the page
+              until you delete it.
+            </>,
+          ]}
+        />
 
         <label className="mt-4 flex items-center gap-2 text-sm">
           <input

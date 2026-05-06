@@ -3,28 +3,13 @@ import { Page, User, type PageDoc } from '@rose/db';
 import { resolveProviderForUser } from '../lib/providers.js';
 import { logger } from '../lib/logger.js';
 
-/** Per-user / per-day cap state stored in memory in the worker. The
- *  user's `settings.vision.dailyCap` is the policy ceiling; we count
- *  describe calls in this map and reset at midnight UTC. Survives a
- *  worker restart-as-zero, which is fine — the goal is to keep
- *  metered providers from running away, not perfect accuracy. */
-const callsToday = new Map<string, { day: string; count: number }>();
-
-function todayKey(): string {
-  return new Date().toISOString().slice(0, 10);
-}
-
-function bumpAndCheckCap(userId: string, cap: number): boolean {
-  const day = todayKey();
-  const cur = callsToday.get(userId);
-  if (!cur || cur.day !== day) {
-    callsToday.set(userId, { day, count: 1 });
-    return true;
-  }
-  if (cur.count >= cap) return false;
-  cur.count += 1;
-  return true;
-}
+/** Per-user / per-day cap state. Plan 13 (D6) — folded into the
+ *  Redis-backed shared helper at `../lib/dailyCap.ts` so multiple
+ *  worker processes share the same quota. The user's
+ *  `settings.vision.dailyCap` is still the policy ceiling. */
+import { bumpAndCheckCap as bumpAndCheckCapShared } from '../lib/dailyCap.js';
+const bumpAndCheckCap = (userId: string, cap: number) =>
+  bumpAndCheckCapShared(userId, 'vision', cap);
 
 const SAFE_CONTENT_TYPES = new Set([
   'image/png',
@@ -103,7 +88,7 @@ export async function describePageImages(
 
   let described = 0;
   for (let i = 0; i < targets.length; i += 1) {
-    if (!bumpAndCheckCap(String(userId), cap)) {
+    if (!(await bumpAndCheckCap(String(userId), cap))) {
       logger.info({ userId: String(userId), cap }, 'vision: daily cap hit; skipping rest');
       break;
     }

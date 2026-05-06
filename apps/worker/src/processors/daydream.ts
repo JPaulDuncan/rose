@@ -73,24 +73,12 @@ type DaydreamUserSettings = {
   };
 };
 
-/** Per-user / per-day cap state. Reset at UTC midnight. Survives a
- *  worker restart as zero, which is fine — the goal is to keep
- *  metered providers from running away, not perfect accuracy. */
-const callsToday = new Map<string, { day: string; count: number }>();
-function todayKey(): string {
-  return new Date().toISOString().slice(0, 10);
-}
-function bumpAndCheckCap(userId: string, cap: number): boolean {
-  const day = todayKey();
-  const cur = callsToday.get(userId);
-  if (!cur || cur.day !== day) {
-    callsToday.set(userId, { day, count: 1 });
-    return true;
-  }
-  if (cur.count >= cap) return false;
-  cur.count += 1;
-  return true;
-}
+/** Per-user / per-day cap state. Plan 13 (D6) — folded into the
+ *  Redis-backed shared helper at `../lib/dailyCap.ts` so multiple
+ *  worker processes share the same quota. */
+import { bumpAndCheckCap as bumpAndCheckCapShared } from '../lib/dailyCap.js';
+const bumpAndCheckCap = (userId: string, cap: number) =>
+  bumpAndCheckCapShared(userId, 'daydream', cap);
 
 /**
  * Build the enabled adapter list from a user's daydream settings.
@@ -320,7 +308,7 @@ async function ensurePageSubjects(
       (s: { kind?: string }) => s.kind === 'entity',
     );
   const cap = cfg.dailyCallCap ?? 50;
-  if (!hasAnyEntity && bumpAndCheckCap(String(userId), cap)) {
+  if (!hasAnyEntity && (await bumpAndCheckCap(String(userId), cap))) {
     const extracted = await extractEntitiesFromPage(userId, page);
     for (const e of extracted) {
       push({
@@ -443,7 +431,7 @@ async function researchSubject(
 ): Promise<boolean> {
   const refreshAfterDays = cfg.refreshAfterDays ?? 30;
   const cap = cfg.dailyCallCap ?? 50;
-  if (!bumpAndCheckCap(String(userId), cap)) {
+  if (!(await bumpAndCheckCap(String(userId), cap))) {
     logger.info({ userId: String(userId), cap }, 'daydream: daily cap hit; skipping');
     return false;
   }

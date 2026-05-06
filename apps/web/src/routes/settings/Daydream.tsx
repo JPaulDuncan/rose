@@ -5,6 +5,7 @@ import toast from 'react-hot-toast';
 import type { DaydreamSettings as DaydreamSettingsT } from '@rose/shared';
 import { useApi } from '../../lib/api';
 import { adapterLabel } from '../../lib/sourceLabel';
+import { EgressAcknowledgement } from '../../components/EgressAcknowledgement';
 
 type RecentNote = {
   _id: string;
@@ -120,33 +121,25 @@ export default function DaydreamSettings() {
           on, runs only while there's no other work to do.
         </p>
 
-        {wantsToEnableForFirstTime && (
-          <div className="mt-3 rounded border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-200">
-            <div className="font-medium">Heads-up before you enable</div>
-            <ul className="mt-1 list-disc pl-4">
-              <li>
-                Your worker will make outbound HTTP requests to the
-                knowledge sources you tick below (Wikipedia by default).
-              </li>
-              <li>
-                Each researched subject is one extra LLM call against
-                your configured generation provider. The daily cap below
-                is a hard ceiling.
-              </li>
-              <li>
-                Daydream notes live in their own collection; they don't
-                modify your existing wiki pages.
-              </li>
-            </ul>
-            <button
-              type="button"
-              className="btn-secondary mt-2 text-xs"
-              onClick={() => setAcceptedExplainer(true)}
-            >
-              Got it
-            </button>
-          </div>
-        )}
+        <EgressAcknowledgement
+          show={wantsToEnableForFirstTime}
+          onAccept={() => setAcceptedExplainer(true)}
+          bullets={[
+            <>
+              Your worker will make outbound HTTP requests to the
+              knowledge sources you tick below (Wikipedia by default).
+            </>,
+            <>
+              Each researched subject is one extra LLM call against
+              your configured generation provider. The daily cap below
+              is a hard ceiling.
+            </>,
+            <>
+              Daydream notes live in their own collection; they don't
+              modify your existing wiki pages.
+            </>,
+          ]}
+        />
 
         <label className="mt-4 flex items-center gap-2 text-sm">
           <input
@@ -708,34 +701,26 @@ function ExternalSearchCard({
         individual flag.
       </p>
 
-      {wantsToEnableExt && (
-        <div className="mt-3 rounded border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-200">
-          <div className="font-medium">Heads-up before you enable</div>
-          <ul className="mt-1 list-disc pl-4">
-            <li>
-              Your daydream queries (topics + entity names from your
-              wiki pages) will be sent to whichever adapters you tick
-              below.
-            </li>
-            <li>
-              Marginalia and DuckDuckGo Instant Answer don't require a
-              key; Brave and SearXNG are services you supply yourself.
-              Rose never proxies or aggregates keys.
-            </li>
-            <li>
-              Disable the master switch any time — every adapter
-              stops firing immediately.
-            </li>
-          </ul>
-          <button
-            type="button"
-            className="btn-secondary mt-2 text-xs"
-            onClick={() => setAcceptedExternalExplainer(true)}
-          >
-            Got it
-          </button>
-        </div>
-      )}
+      <EgressAcknowledgement
+        show={wantsToEnableExt}
+        onAccept={() => setAcceptedExternalExplainer(true)}
+        bullets={[
+          <>
+            Your daydream queries (topics + entity names from your
+            wiki pages) will be sent to whichever adapters you tick
+            below.
+          </>,
+          <>
+            Marginalia and DuckDuckGo Instant Answer don't require a
+            key; Brave and SearXNG are services you supply yourself.
+            Rose never proxies or aggregates keys.
+          </>,
+          <>
+            Disable the master switch any time — every adapter
+            stops firing immediately.
+          </>,
+        ]}
+      />
 
       <label className="mt-4 flex items-center gap-2 text-sm">
         <input

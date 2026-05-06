@@ -190,6 +190,10 @@ dataIoRouter.post('/import', upload.single('file'), async (req, res) => {
   // Re-insert. We rewrite ObjectIds onto a clean ID-space rooted at
   // this user — safer than reusing the export's IDs (which could
   // collide with this user's existing rows once we re-insert).
+  // Plan 13 (D7) — `importCollection` factors the per-collection
+  // `.map(...).insertMany(...)` boilerplate that previously
+  // repeated 7 times. The `transform` callback is where each
+  // collection wires up its FK rewrites + per-row scrubs.
   const idMap = new Map<string, Types.ObjectId>();
   const remap = (oldId: string | Types.ObjectId | undefined): Types.ObjectId | null => {
     if (!oldId) return null;
@@ -202,81 +206,105 @@ dataIoRouter.post('/import', upload.single('file'), async (req, res) => {
     return next;
   };
 
-  const importedPages = ((parsed.pages as Record<string, unknown>[]) ?? []).map((p) => {
-    const newId = remap(p._id as string)!;
-    return { ...p, _id: newId, userId };
+  type AnyDoc = Record<string, unknown>;
+  type ModelLike = {
+    insertMany: (
+      arr: AnyDoc[],
+      opts?: { ordered?: boolean },
+    ) => Promise<unknown>;
+  };
+
+  /**
+   * Map a slice of the export payload onto a fresh ObjectId-space and
+   * insert. `preserveId` controls whether _id maps via the shared
+   * idMap (so other collections' FKs to this row stay coherent — used
+   * for Page, Conversation) or gets a brand-new one (collections
+   * whose primary key isn't referenced anywhere — Sender, Rule,
+   * Entity, TagCanonical, the per-message rows of Conversation).
+   */
+  async function importCollection({
+    list,
+    model,
+    preserveId,
+    transform,
+  }: {
+    list: AnyDoc[] | undefined;
+    model: ModelLike;
+    preserveId: boolean;
+    transform?: (row: AnyDoc) => AnyDoc;
+  }): Promise<number> {
+    const arr = list ?? [];
+    if (!arr.length) return 0;
+    const mapped = arr.map((row) => {
+      const base: AnyDoc = {
+        ...row,
+        _id: preserveId ? remap(row._id as string)! : new Types.ObjectId(),
+        userId,
+      };
+      return transform ? transform(base) : base;
+    });
+    await model.insertMany(mapped, { ordered: false });
+    return mapped.length;
+  }
+
+  const importedPagesCount = await importCollection({
+    list: parsed.pages as AnyDoc[] | undefined,
+    model: Page,
+    preserveId: true,
   });
-  if (importedPages.length) await Page.insertMany(importedPages, { ordered: false });
-
-  const importedRevisions = ((parsed.revisions as Record<string, unknown>[]) ?? []).map(
-    (r) => ({
-      ...r,
-      _id: new Types.ObjectId(),
-      pageId: remap(r.pageId as string),
+  const importedRevisionsCount = await importCollection({
+    list: parsed.revisions as AnyDoc[] | undefined,
+    model: PageRevision,
+    // Revisions don't get back-referenced; only their `pageId` FK
+    // matters and that has to remap onto the (possibly-rewritten)
+    // page id.
+    preserveId: false,
+    transform: (r) => ({ ...r, pageId: remap(r.pageId as string) }),
+  });
+  const importedConvsCount = await importCollection({
+    list: parsed.conversations as AnyDoc[] | undefined,
+    model: Conversation,
+    preserveId: true,
+  });
+  const importedMsgsCount = await importCollection({
+    list: parsed.messages as AnyDoc[] | undefined,
+    model: Message,
+    preserveId: false,
+    transform: (m) => ({
+      ...m,
+      conversationId: remap(m.conversationId as string),
     }),
-  );
-  if (importedRevisions.length)
-    await PageRevision.insertMany(importedRevisions, { ordered: false });
-
-  const importedConvs = ((parsed.conversations as Record<string, unknown>[]) ?? []).map(
-    (c) => {
-      const newId = remap(c._id as string)!;
-      return { ...c, _id: newId, userId };
-    },
-  );
-  if (importedConvs.length) await Conversation.insertMany(importedConvs, { ordered: false });
-
-  const importedMsgs = ((parsed.messages as Record<string, unknown>[]) ?? []).map((m) => ({
-    ...m,
-    _id: new Types.ObjectId(),
-    userId,
-    conversationId: remap(m.conversationId as string),
-  }));
-  if (importedMsgs.length) await Message.insertMany(importedMsgs, { ordered: false });
-
-  const importedEvents = ((parsed.events as Record<string, unknown>[]) ?? []).map((e) => ({
-    ...e,
-    _id: new Types.ObjectId(),
-    userId,
-    sourceEmailId: null,
-    pageId: remap(e.pageId as string),
-  }));
-  if (importedEvents.length)
-    await CalendarEvent.insertMany(importedEvents, { ordered: false });
-
-  const importedSenders = ((parsed.senders as Record<string, unknown>[]) ?? []).map((s) => ({
-    ...s,
-    _id: new Types.ObjectId(),
-    userId,
-  }));
-  if (importedSenders.length) await Sender.insertMany(importedSenders, { ordered: false });
-
-  const importedRules = ((parsed.rules as Record<string, unknown>[]) ?? []).map((r) => ({
-    ...r,
-    _id: new Types.ObjectId(),
-    userId,
-  }));
-  if (importedRules.length) await Rule.insertMany(importedRules, { ordered: false });
-
-  const importedEntities = ((parsed.entities as Record<string, unknown>[]) ?? []).map(
-    (e) => ({
+  });
+  const importedEventsCount = await importCollection({
+    list: parsed.events as AnyDoc[] | undefined,
+    model: CalendarEvent,
+    preserveId: false,
+    transform: (e) => ({
       ...e,
-      _id: new Types.ObjectId(),
-      userId,
+      sourceEmailId: null,
+      pageId: remap(e.pageId as string),
     }),
-  );
-  if (importedEntities.length)
-    await Entity.insertMany(importedEntities, { ordered: false });
-
-  const importedTagCanonicals = (
-    (parsed.tagCanonicals as Record<string, unknown>[]) ?? []
-  ).map((t) => ({
-    ...t,
-    _id: new Types.ObjectId(),
-    userId,
-  }));
-  if (importedTagCanonicals.length)
-    await TagCanonical.insertMany(importedTagCanonicals, { ordered: false });
+  });
+  const importedSendersCount = await importCollection({
+    list: parsed.senders as AnyDoc[] | undefined,
+    model: Sender,
+    preserveId: false,
+  });
+  const importedRulesCount = await importCollection({
+    list: parsed.rules as AnyDoc[] | undefined,
+    model: Rule,
+    preserveId: false,
+  });
+  const importedEntitiesCount = await importCollection({
+    list: parsed.entities as AnyDoc[] | undefined,
+    model: Entity,
+    preserveId: false,
+  });
+  const importedTagCanonicalsCount = await importCollection({
+    list: parsed.tagCanonicals as AnyDoc[] | undefined,
+    model: TagCanonical,
+    preserveId: false,
+  });
 
   // User-level fields — replace settings + savedSearches + spamPolicy
   // + featuredTags + weatherLocation. Don't touch email, password,
@@ -298,15 +326,15 @@ dataIoRouter.post('/import', upload.single('file'), async (req, res) => {
   res.json({
     ok: true,
     counts: {
-      pages: importedPages.length,
-      revisions: importedRevisions.length,
-      conversations: importedConvs.length,
-      messages: importedMsgs.length,
-      events: importedEvents.length,
-      senders: importedSenders.length,
-      rules: importedRules.length,
-      entities: importedEntities.length,
-      tagCanonicals: importedTagCanonicals.length,
+      pages: importedPagesCount,
+      revisions: importedRevisionsCount,
+      conversations: importedConvsCount,
+      messages: importedMsgsCount,
+      events: importedEventsCount,
+      senders: importedSendersCount,
+      rules: importedRulesCount,
+      entities: importedEntitiesCount,
+      tagCanonicals: importedTagCanonicalsCount,
     },
   });
 });
