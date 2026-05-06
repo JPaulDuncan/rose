@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Bookmark, BookOpen, ExternalLink, Search as SearchIcon } from 'lucide-react';
+import { Bookmark, BookOpen, ExternalLink, Search as SearchIcon, X } from 'lucide-react';
 import toast from 'react-hot-toast';
 import type { SearchResponse } from '@rose/shared';
 import { useApi } from '../lib/api';
@@ -24,12 +24,42 @@ type LibrarySearchResponse = {
 
 const LIBRARY_PREF_KEY = 'rose.search.includeLibrary';
 
+/**
+ * Read the search query and filters out of the URL so navigation
+ * (smart folders, deep links, browser back/forward) actually drives
+ * the search. Empty / missing values fall back to safe defaults.
+ */
+function parseSearchParams(sp: URLSearchParams): {
+  q: string;
+  mode: 'hybrid' | 'text' | 'semantic';
+  tags: string[];
+} {
+  const rawMode = sp.get('mode');
+  const mode: 'hybrid' | 'text' | 'semantic' =
+    rawMode === 'text' || rawMode === 'semantic' ? rawMode : 'hybrid';
+  return {
+    q: sp.get('q') ?? '',
+    mode,
+    // `tags` may appear once with a comma-separated value (smart-
+    // folder navigation) or repeated. Both forms collapse to the
+    // same string list here.
+    tags: sp
+      .getAll('tags')
+      .flatMap((v) => v.split(','))
+      .map((v) => v.trim())
+      .filter(Boolean),
+  };
+}
+
 export default function SearchPage() {
   const api = useApi();
   const qc = useQueryClient();
-  const [q, setQ] = useState('');
-  const [debounced, setDebounced] = useState('');
-  const [mode, setMode] = useState<'hybrid' | 'text' | 'semantic'>('hybrid');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const initial = parseSearchParams(searchParams);
+  const [q, setQ] = useState(initial.q);
+  const [debounced, setDebounced] = useState(initial.q);
+  const [mode, setMode] = useState<'hybrid' | 'text' | 'semantic'>(initial.mode);
+  const [tags, setTags] = useState<string[]>(initial.tags);
   // Read the user's last preference so the toggle survives reloads.
   // Library search is only meaningful when the user has the Library
   // enabled, but the toggle's harmless when off — the API just
@@ -58,6 +88,9 @@ export default function SearchPage() {
         name: name.trim(),
         query: debounced,
         pinned: true,
+        // Preserve any active tag filters so re-opening the saved
+        // search restores the same scope.
+        filters: tags.length ? { tags } : undefined,
       });
     },
     onSuccess: (r) => {
@@ -73,15 +106,58 @@ export default function SearchPage() {
     inputRef.current?.focus();
   }, []);
 
+  // Sync local state when the URL changes — clicking a different
+  // smart folder while already on this page triggers a navigation
+  // that updates `searchParams` but not our local state, so without
+  // this effect the input would stay on the previous query.
+  useEffect(() => {
+    const next = parseSearchParams(searchParams);
+    if (next.q !== q) {
+      setQ(next.q);
+      setDebounced(next.q);
+    }
+    if (next.mode !== mode) setMode(next.mode);
+    // Compare tag arrays positionally — saved-search clicks always
+    // produce a stable order so a shallow compare is enough here.
+    if (
+      next.tags.length !== tags.length ||
+      next.tags.some((t, i) => t !== tags[i])
+    ) {
+      setTags(next.tags);
+    }
+    // We deliberately depend only on `searchParams` — the local state
+    // setters trigger another effect run otherwise.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
+
   useEffect(() => {
     const t = setTimeout(() => setDebounced(q), 200);
     return () => clearTimeout(t);
   }, [q]);
 
+  // Write the current search to the URL so reload preserves state
+  // and the URL is shareable. `replace: true` keeps history clean
+  // while typing.
+  useEffect(() => {
+    const next = new URLSearchParams();
+    if (debounced) next.set('q', debounced);
+    if (mode !== 'hybrid') next.set('mode', mode);
+    if (tags.length) next.set('tags', tags.join(','));
+    const current = searchParams.toString();
+    const target = next.toString();
+    if (current !== target) setSearchParams(next, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [debounced, mode, tags]);
+
   const { data, isFetching } = useQuery({
-    queryKey: ['search', debounced, mode],
-    queryFn: () =>
-      api.get<SearchResponse>(`/api/search?q=${encodeURIComponent(debounced)}&mode=${mode}`),
+    queryKey: ['search', debounced, mode, tags],
+    queryFn: () => {
+      const params = new URLSearchParams();
+      params.set('q', debounced);
+      params.set('mode', mode);
+      for (const t of tags) params.append('tags', t);
+      return api.get<SearchResponse>(`/api/search?${params.toString()}`);
+    },
     enabled: debounced.length >= 2,
   });
 
@@ -131,6 +207,37 @@ export default function SearchPage() {
           Library
         </label>
       </div>
+      {tags.length > 0 && (
+        <div className="mb-2 flex flex-wrap items-center gap-1.5 text-xs">
+          <span className="text-ink-500">Filtered by</span>
+          {tags.map((t) => (
+            <span
+              key={t}
+              className="inline-flex items-center gap-1 rounded-full bg-rose-100 px-2 py-0.5 text-rose-800 dark:bg-rose-950/40 dark:text-rose-200"
+            >
+              #{t}
+              <button
+                type="button"
+                onClick={() => setTags(tags.filter((x) => x !== t))}
+                className="opacity-70 hover:opacity-100"
+                aria-label={`Remove ${t} filter`}
+                title="Remove this filter"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </span>
+          ))}
+          {tags.length > 1 && (
+            <button
+              type="button"
+              onClick={() => setTags([])}
+              className="ml-1 text-ink-500 hover:text-rose-600"
+            >
+              Clear all
+            </button>
+          )}
+        </div>
+      )}
       {data && (
         <div className="mb-6 flex items-center justify-between text-xs text-ink-500">
           <span>

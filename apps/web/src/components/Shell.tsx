@@ -358,7 +358,30 @@ type SavedSearch = {
   name: string;
   query: string;
   pinned: boolean;
+  /** Persisted filters from the saved-search model. The search page
+   *  honours `tags` today; senders / priority / flag are stored on
+   *  the model but not yet wired through `/api/search`. */
+  filters?: {
+    tags?: string[];
+    senders?: string[];
+    priority?: string[];
+  };
 };
+
+/**
+ * Build the URL for a saved-search smart-folder click. Includes the
+ * query plus whatever filters the saved search has captured. Today
+ * `/api/search` honours `tags`; future filter wiring can land here
+ * without touching call-sites.
+ */
+function urlForSavedSearch(s: SavedSearch): string {
+  const params = new URLSearchParams();
+  if (s.query) params.set('q', s.query);
+  const tags = (s.filters?.tags ?? []).filter(Boolean);
+  if (tags.length) params.set('tags', tags.join(','));
+  const qs = params.toString();
+  return qs ? `/search?${qs}` : '/search';
+}
 
 /**
  * Pinned saved searches as a thin strip under the top bar — only
@@ -395,11 +418,18 @@ function SavedSearchStrip() {
           >
             <button
               type="button"
-              onClick={() =>
-                navigate(`/search?q=${encodeURIComponent(s.query ?? '')}`)
-              }
+              onClick={() => navigate(urlForSavedSearch(s))}
               className="truncate"
-              title={s.query}
+              title={
+                [
+                  s.query ? `q: ${s.query}` : null,
+                  (s.filters?.tags ?? []).length
+                    ? `tags: ${(s.filters?.tags ?? []).join(', ')}`
+                    : null,
+                ]
+                  .filter(Boolean)
+                  .join(' · ') || 'Open this saved search'
+              }
             >
               {s.name}
             </button>
