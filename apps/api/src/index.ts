@@ -155,6 +155,16 @@ async function bootstrap() {
     logger.warn({ err }, 'seed reconcile failed');
   }
 
+  // Plan 12 (R2) — migrate legacy `Page.threadKey` (singular) into
+  // `Page.threadKeys[]`. Idempotent — does nothing once the legacy
+  // field is empty everywhere. Cheap to re-run on every boot.
+  try {
+    const { migrateLegacyThreadKey } = await import('./services/migrations.js');
+    await migrateLegacyThreadKey();
+  } catch (err) {
+    logger.warn({ err }, 'threadKey migration failed');
+  }
+
   const server = app.listen(env.PORT, () => {
     logger.info({ port: env.PORT }, 'rose api listening');
   });

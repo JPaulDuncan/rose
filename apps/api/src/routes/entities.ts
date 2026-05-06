@@ -24,6 +24,71 @@ function daydreamSubjectKey(displayName: string): string {
  * not paginated yet, and the auto-linker per-page is bounded by
  * Page.entities[] anyway.
  */
+/**
+ * Create a new entity row by hand. The auto-extractor doesn't always
+ * pick everything up; this gives the user an explicit "add to my
+ * taxonomy" affordance from Settings → Entities. Returns 409 when
+ * the kebab key already exists (use Edit / Merge for those).
+ */
+entitiesRouter.post('/', async (req, res) => {
+  const userId = new Types.ObjectId(userIdOf(req));
+  const body = (req.body ?? {}) as {
+    displayName?: string;
+    type?: string;
+    aliases?: string[];
+  };
+  const displayName = (body.displayName ?? '').trim();
+  if (!displayName) {
+    res.status(400).json({ error: 'invalid_request', message: 'displayName is required' });
+    return;
+  }
+  const type = body.type;
+  if (type !== 'person' && type !== 'work' && type !== 'organization') {
+    res.status(400).json({
+      error: 'invalid_request',
+      message: 'type must be one of "person", "work", or "organization"',
+    });
+    return;
+  }
+  const key = normalizeTagKey(displayName);
+  if (!key) {
+    res.status(400).json({ error: 'invalid_request', message: 'displayName produces no valid key' });
+    return;
+  }
+  const existing = await Entity.findOne({ userId, $or: [{ key }, { aliases: key }] }).lean();
+  if (existing) {
+    res.status(409).json({
+      error: 'entity_exists',
+      message: `"${existing.key}" already exists.`,
+    });
+    return;
+  }
+  const aliases = Array.isArray(body.aliases)
+    ? [
+        ...new Set(
+          body.aliases
+            .map((a) => normalizeTagKey(String(a)))
+            .filter((a) => a && a !== key),
+        ),
+      ]
+    : [];
+  const created = await Entity.create({
+    userId,
+    key,
+    displayName: displayName.slice(0, 200),
+    type,
+    aliases,
+    pageCount: 0,
+    lastSeenAt: new Date(),
+  });
+  res.status(201).json({
+    key: created.key,
+    displayName: created.displayName,
+    type: created.type,
+    aliases: (created.aliases as string[] | undefined) ?? [],
+  });
+});
+
 entitiesRouter.get('/', async (req, res) => {
   const userId = new Types.ObjectId(userIdOf(req));
   const type = req.query.type as string | undefined;

@@ -10,6 +10,8 @@ import {
   Sender,
   Rule,
   User,
+  Entity,
+  TagCanonical,
 } from '@rose/db';
 import { userIdOf } from '../middleware/auth.js';
 
@@ -20,7 +22,13 @@ const upload = multer({
   limits: { fileSize: 200 * 1024 * 1024, files: 1 },
 });
 
-const EXPORT_VERSION = 1;
+/**
+ * Bumped to 2 in plan 12 (G8) when the export grew to cover the
+ * Entity + TagCanonical collections (and Page.mergeSuggestions
+ * round-trips via the existing `pages` payload). Imports of v1 are
+ * still accepted — those collections just come up empty.
+ */
+const EXPORT_VERSION = 2;
 
 /**
  * Stream the user's portable wiki state as a single JSON document.
@@ -38,22 +46,36 @@ const EXPORT_VERSION = 1;
 dataIoRouter.get('/export', async (req, res) => {
   const userId = new Types.ObjectId(userIdOf(req));
 
-  const [user, pages, conversations, messages, events, senders, rules] =
-    await Promise.all([
-      User.findById(userId)
-        .select(
-          'email displayName settings spamPolicy featuredTags weatherLocation savedSearches',
-        )
-        .lean(),
-      Page.find({ userId })
-        .select('-embedding -topicCentroid')
-        .lean(),
-      Conversation.find({ userId }).lean(),
-      Message.find({ userId }).sort({ createdAt: 1 }).lean(),
-      CalendarEvent.find({ userId }).lean(),
-      Sender.find({ userId }).lean(),
-      Rule.find({ userId }).lean(),
-    ]);
+  const [
+    user,
+    pages,
+    conversations,
+    messages,
+    events,
+    senders,
+    rules,
+    entities,
+    tagCanonicals,
+  ] = await Promise.all([
+    User.findById(userId)
+      .select(
+        'email displayName settings spamPolicy featuredTags weatherLocation savedSearches',
+      )
+      .lean(),
+    Page.find({ userId })
+      // Page.mergeSuggestions[] is small + already on the page doc;
+      // exporting it lets a re-import preserve a user's pending
+      // dismissals (so re-detection doesn't immediately re-suggest).
+      .select('-embedding -topicCentroid')
+      .lean(),
+    Conversation.find({ userId }).lean(),
+    Message.find({ userId }).sort({ createdAt: 1 }).lean(),
+    CalendarEvent.find({ userId }).lean(),
+    Sender.find({ userId }).lean(),
+    Rule.find({ userId }).lean(),
+    Entity.find({ userId }).select('-embedding').lean(),
+    TagCanonical.find({ userId }).select('-embedding').lean(),
+  ]);
 
   // Revisions need the page IDs, fetch separately so the type inference
   // for the parallel Promise.all stays clean.
@@ -90,6 +112,8 @@ dataIoRouter.get('/export', async (req, res) => {
       events: events.length,
       senders: senders.length,
       rules: rules.length,
+      entities: entities.length,
+      tagCanonicals: tagCanonicals.length,
     },
     pages,
     revisions: allRevisions,
@@ -98,6 +122,8 @@ dataIoRouter.get('/export', async (req, res) => {
     events,
     senders,
     rules,
+    entities,
+    tagCanonicals,
   });
 });
 
@@ -134,7 +160,10 @@ dataIoRouter.post('/import', upload.single('file'), async (req, res) => {
     res.status(400).json({ error: 'invalid_request', message: 'Invalid JSON' });
     return;
   }
-  if ((parsed.version as number) !== EXPORT_VERSION) {
+  // Accept v1 (pre-entities/tag-canonicals) too — those imports
+  // just come up with empty Entity / TagCanonical collections.
+  const version = parsed.version as number;
+  if (version !== EXPORT_VERSION && version !== 1) {
     res.status(400).json({
       error: 'invalid_request',
       message: `Unsupported export version: ${parsed.version}`,
@@ -154,6 +183,8 @@ dataIoRouter.post('/import', upload.single('file'), async (req, res) => {
     CalendarEvent.deleteMany({ userId }),
     Sender.deleteMany({ userId }),
     Rule.deleteMany({ userId }),
+    Entity.deleteMany({ userId }),
+    TagCanonical.deleteMany({ userId }),
   ]);
 
   // Re-insert. We rewrite ObjectIds onto a clean ID-space rooted at
@@ -227,6 +258,26 @@ dataIoRouter.post('/import', upload.single('file'), async (req, res) => {
   }));
   if (importedRules.length) await Rule.insertMany(importedRules, { ordered: false });
 
+  const importedEntities = ((parsed.entities as Record<string, unknown>[]) ?? []).map(
+    (e) => ({
+      ...e,
+      _id: new Types.ObjectId(),
+      userId,
+    }),
+  );
+  if (importedEntities.length)
+    await Entity.insertMany(importedEntities, { ordered: false });
+
+  const importedTagCanonicals = (
+    (parsed.tagCanonicals as Record<string, unknown>[]) ?? []
+  ).map((t) => ({
+    ...t,
+    _id: new Types.ObjectId(),
+    userId,
+  }));
+  if (importedTagCanonicals.length)
+    await TagCanonical.insertMany(importedTagCanonicals, { ordered: false });
+
   // User-level fields — replace settings + savedSearches + spamPolicy
   // + featuredTags + weatherLocation. Don't touch email, password,
   // providers (those are install-specific).
@@ -254,6 +305,8 @@ dataIoRouter.post('/import', upload.single('file'), async (req, res) => {
       events: importedEvents.length,
       senders: importedSenders.length,
       rules: importedRules.length,
+      entities: importedEntities.length,
+      tagCanonicals: importedTagCanonicals.length,
     },
   });
 });

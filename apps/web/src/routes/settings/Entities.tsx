@@ -11,6 +11,7 @@ import {
   Save,
   X as XIcon,
   Search as SearchIcon,
+  Plus,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useApi } from '../../lib/api';
@@ -64,6 +65,24 @@ export default function EntitiesSettings() {
   const [filter, setFilter] = useState('');
   const [typeFilter, setTypeFilter] = useState<'' | EntityType>('');
   const [editing, setEditing] = useState<string | null>(null);
+  const [showCreate, setShowCreate] = useState(false);
+  const [newName, setNewName] = useState('');
+  const [newType, setNewType] = useState<EntityType>('person');
+
+  const create = useMutation({
+    mutationFn: async () =>
+      api.post<{ key: string }>('/api/entities', {
+        displayName: newName.trim(),
+        type: newType,
+      }),
+    onSuccess: () => {
+      toast.success('Created');
+      setShowCreate(false);
+      setNewName('');
+      qc.invalidateQueries({ queryKey: ['entities'] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
 
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ['entities', typeFilter],
@@ -120,6 +139,14 @@ export default function EntitiesSettings() {
             : `${filtered.length} ${filtered.length === 1 ? 'entity' : 'entities'}`}
         </h3>
         <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            className="btn-secondary text-xs"
+            onClick={() => setShowCreate((s) => !s)}
+            title="Create a new entity (the extractor won't always find everything)"
+          >
+            <Plus className="h-3.5 w-3.5" /> New entity
+          </button>
           <div className="flex gap-1 rounded-lg border border-ink-200 p-0.5 text-xs dark:border-ink-800">
             {TYPE_FILTERS.map((t) => (
               <button
@@ -155,6 +182,54 @@ export default function EntitiesSettings() {
           </div>
         </div>
       </div>
+
+      {showCreate && (
+        <div className="card flex flex-wrap items-end gap-2 bg-rose-50 dark:bg-rose-950/20">
+          <label className="block text-xs">
+            <span className="mb-1 block font-medium">Display name</span>
+            <input
+              autoFocus
+              className="input text-sm"
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              placeholder="Bill Walsh"
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && newName.trim()) create.mutate();
+              }}
+            />
+          </label>
+          <label className="block text-xs">
+            <span className="mb-1 block font-medium">Type</span>
+            <select
+              className="input text-sm"
+              value={newType}
+              onChange={(e) => setNewType(e.target.value as EntityType)}
+            >
+              <option value="person">Person</option>
+              <option value="work">Work</option>
+              <option value="organization">Organization</option>
+            </select>
+          </label>
+          <button
+            type="button"
+            className="btn-primary text-sm"
+            onClick={() => create.mutate()}
+            disabled={create.isPending || !newName.trim()}
+          >
+            <Save className="h-3.5 w-3.5" /> Create
+          </button>
+          <button
+            type="button"
+            className="btn-ghost text-sm"
+            onClick={() => {
+              setShowCreate(false);
+              setNewName('');
+            }}
+          >
+            Cancel
+          </button>
+        </div>
+      )}
 
       <ul className="divide-y divide-ink-200 rounded-lg border border-ink-200 dark:divide-ink-800 dark:border-ink-800">
         {filtered.length === 0 && !isLoading && (

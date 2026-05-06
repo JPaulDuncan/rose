@@ -46,7 +46,10 @@ export function isAutomatedSender(addr: string | undefined | null): boolean {
   return AUTOMATED_LOCAL_RE.test(local);
 }
 
-function cosine(a: number[], b: number[]): number {
+/** Cosine similarity between two same-length numeric vectors.
+ *  Returns 0 for empty / mismatched-length inputs.
+ *  Exported so the worker test suite can assert it directly. */
+export function cosine(a: number[], b: number[]): number {
   if (!a.length || a.length !== b.length) return 0;
   let dot = 0,
     na = 0,
@@ -184,7 +187,8 @@ export async function findPageForEmail(email: EmailDoc): Promise<Assignment> {
  * conservative — bare single-word topics are the source of most
  * false-positive cross-sender merges.
  */
-function isSpecificTopic(t: string): boolean {
+/** Exported for unit testing the cross-sender topic gate. */
+export function isSpecificTopic(t: string): boolean {
   const s = t.trim();
   if (s.length < 3) return false;
   if (s.includes(' ')) return true;

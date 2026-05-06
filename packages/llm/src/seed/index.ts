@@ -1,4 +1,4 @@
-import type { InstructionSeed } from '../registry.js';
+import { SYSTEM_PROMPT_NEWS_PROSE, type InstructionSeed } from '../registry.js';
 
 export const SEED_INSTRUCTIONS: InstructionSeed[] = [
   {

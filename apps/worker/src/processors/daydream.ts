@@ -24,6 +24,10 @@ import { redis } from '../lib/redis.js';
 import { logger } from '../lib/logger.js';
 import { resolveProviderForUser } from '../lib/providers.js';
 import { webCache } from '../lib/webFetchCache.js';
+import {
+  hostnameAdapterLabel as hostnameOrUnknown,
+  normaliseSubjectKey,
+} from '../lib/sourceLabel.js';
 import { LinkGraphAdapter } from '../lib/discovery/linkGraph.js';
 import { LibraryAdapter } from '../lib/discovery/libraryAdapter.js';
 import { extractEntitiesFromPage } from '../lib/discovery/entityExtraction.js';
@@ -86,33 +90,6 @@ function bumpAndCheckCap(userId: string, cap: number): boolean {
   if (cur.count >= cap) return false;
   cur.count += 1;
   return true;
-}
-
-function normaliseSubjectKey(s: string): string {
-  return s.trim().toLowerCase().replace(/\s+/g, ' ');
-}
-
-/**
- * Derive a short adapter label from a URL when the snippet wasn't
- * tagged with one — e.g. "en.wikipedia.org" → "wikipedia",
- * "openalex.org" → "openalex". Strips leading "www." and the TLD.
- * Returns the literal "source" only when the URL is unparseable,
- * because "unknown source" is what we're trying to stop showing.
- */
-function hostnameOrUnknown(url: string): string {
-  try {
-    let host = new URL(url).hostname.toLowerCase().replace(/^www\./, '');
-    // Drop language subdomain on wikipedia / wikidata / wiktionary.
-    host = host.replace(/^(?:en|es|fr|de|ja|zh)\./, '');
-    // "openalex.org" → "openalex". Keep multi-part TLDs like
-    // ".co.uk" as the second-to-last label so "example.co.uk"
-    // becomes "example".
-    const parts = host.split('.');
-    if (parts.length >= 2) return parts[parts.length - 2]!;
-    return host || 'source';
-  } catch {
-    return 'source';
-  }
 }
 
 /**
