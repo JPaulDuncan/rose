@@ -45,6 +45,7 @@ const IngestPage = lazy(() => import('./routes/settings/Ingest'));
 const DaydreamSettingsPage = lazy(() => import('./routes/settings/Daydream'));
 const MapsSettingsPage = lazy(() => import('./routes/settings/Maps'));
 const TagsSettingsPage = lazy(() => import('./routes/settings/Tags'));
+const EntitiesSettingsPage = lazy(() => import('./routes/settings/Entities'));
 const LibrarySettingsPage = lazy(() => import('./routes/settings/Library'));
 
 /**
@@ -129,6 +130,7 @@ export default function App() {
           <Route path="daydream" element={<DaydreamSettingsPage />} />
           <Route path="maps" element={<MapsSettingsPage />} />
           <Route path="tags" element={<TagsSettingsPage />} />
+          <Route path="entities" element={<EntitiesSettingsPage />} />
           <Route path="library" element={<LibrarySettingsPage />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />

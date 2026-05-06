@@ -34,7 +34,8 @@ const FETCH_TIMEOUT_MS = 8000;
 export type DaydreamJobData =
   | { kind: 'page'; userId: string; pageId: string }
   | { kind: 'sender'; userId: string; brandKey: string; displayName?: string }
-  | { kind: 'tag'; userId: string; tag: string };
+  | { kind: 'tag'; userId: string; tag: string }
+  | { kind: 'entity'; userId: string; key: string; displayName?: string };
 
 type DaydreamUserSettings = {
   enabled?: boolean;
@@ -603,6 +604,26 @@ export function startDaydreamWorker(): void {
           'tag',
           key,
           job.data.tag,
+        );
+        return { researched: ok ? 1 : 0 };
+      }
+
+      // Direct per-entity daydream — used by the entity page's
+      // "Daydream now" button. The key is already in the daydream
+      // subjectKey form (whitespace-collapsed lowercase displayName)
+      // so it composes cleanly with cached notes that the page-
+      // driven flow produced.
+      if (job.data.kind === 'entity') {
+        const key = String(job.data.key ?? '').trim();
+        if (!key) return { skipped: 'no-key' };
+        if (await isFresh(userId, 'entity', key)) return { skipped: 'fresh' };
+        const ok = await researchSubject(
+          userId,
+          cfg,
+          adapters,
+          'entity',
+          key,
+          job.data.displayName ?? key,
         );
         return { researched: ok ? 1 : 0 };
       }

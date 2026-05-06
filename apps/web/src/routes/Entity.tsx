@@ -1,6 +1,16 @@
 import { useParams, Link } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
-import { User, Film, Building2, MapPin as MapPinIcon, ArrowRight } from 'lucide-react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  User,
+  Film,
+  Building2,
+  MapPin as MapPinIcon,
+  ArrowRight,
+  Sparkles,
+  ExternalLink,
+  RotateCw,
+} from 'lucide-react';
+import toast from 'react-hot-toast';
 import { useApi } from '../lib/api';
 import { MapInset } from '../components/MapInset';
 
@@ -35,6 +45,18 @@ type EntityResponse = {
   placeCoords: { lat: number; lon: number; displayName: string | null } | null;
   pages: EntityPageDoc[];
   related: RelatedEntity[];
+};
+
+type DaydreamNoteView = {
+  _id: string;
+  summary: string;
+  bodyMd: string;
+  sources: { adapter: string; url: string; title: string; fetchedAt: string | null }[];
+  confidence: 'low' | 'medium' | 'high';
+  model: string | null;
+  generatedAt: string | null;
+  failed: boolean;
+  failureReason: string | null;
 };
 
 const TYPE_LABEL: Record<NonNullable<EntityType>, string> = {
@@ -150,6 +172,8 @@ export default function EntityPage() {
         </section>
       )}
 
+      <BackgroundBrief entityKey={data.key} displayName={data.displayName} type={data.type} />
+
       <div className="grid gap-6 lg:grid-cols-[minmax(0,7fr)_minmax(0,3fr)]">
         <section>
           <h2 className="mb-3 text-sm font-semibold uppercase tracking-widest text-ink-500">
@@ -236,5 +260,147 @@ export default function EntityPage() {
         </aside>
       </div>
     </div>
+  );
+}
+
+/**
+ * Daydream-supplied "what is this" brief. Pulls the cached note for
+ * the entity (kind: 'entity', subjectKey = lowercased displayName)
+ * from /api/entities/:key/daydream and renders summary + body +
+ * source attribution. The "Daydream now" button enqueues a fresh
+ * pass via the daydream worker's per-entity job mode.
+ *
+ * When no note exists yet the component still renders — a slim
+ * "ask Rose to research this" prompt with the same button — so the
+ * surface is always discoverable.
+ */
+function BackgroundBrief({
+  entityKey,
+  displayName,
+  type,
+}: {
+  entityKey: string;
+  displayName: string;
+  type: EntityType;
+}) {
+  const api = useApi();
+  const qc = useQueryClient();
+  const { data, isLoading } = useQuery({
+    queryKey: ['entity-daydream', entityKey],
+    queryFn: () =>
+      api.get<{ note: DaydreamNoteView | null }>(
+        `/api/entities/${encodeURIComponent(entityKey)}/daydream`,
+      ),
+  });
+  const force = useMutation({
+    mutationFn: async () =>
+      api.post<{ jobId: string }>(
+        `/api/entities/${encodeURIComponent(entityKey)}/daydream`,
+      ),
+    onSuccess: () => {
+      toast.success('Daydream queued — refresh in a moment');
+      // Existing daydream config holds research time at a few
+      // seconds for cheap subjects, longer for those that need
+      // multiple adapters; 5s is a reasonable refetch delay so the
+      // UI usually catches the result on the first invalidation.
+      window.setTimeout(() => {
+        qc.invalidateQueries({ queryKey: ['entity-daydream', entityKey] });
+      }, 5000);
+    },
+    onError: (e: Error) => {
+      if (e.message.includes('rate_limited')) {
+        toast.error('Daydream-now is rate-limited (5/min).');
+      } else {
+        toast.error(e.message);
+      }
+    },
+  });
+
+  const note = data?.note;
+  const typeLabel =
+    type === 'person'
+      ? 'person'
+      : type === 'work'
+        ? 'work'
+        : type === 'organization'
+          ? 'organization'
+          : type === 'place'
+            ? 'place'
+            : 'subject';
+
+  return (
+    <section className="card mb-6">
+      <div className="mb-2 flex items-center gap-2">
+        <Sparkles className="h-4 w-4 text-rose-500" />
+        <h2 className="text-sm font-semibold">Background</h2>
+        <button
+          type="button"
+          onClick={() => force.mutate()}
+          disabled={force.isPending}
+          className="ml-auto inline-flex items-center gap-1 text-xs text-ink-500 hover:text-rose-600 dark:hover:text-rose-300"
+          title="Run daydream now to refresh the brief — needs daydream enabled in Settings → Daydream"
+        >
+          <RotateCw
+            className={`h-3 w-3 ${force.isPending ? 'animate-spin' : ''}`}
+          />
+          {note ? 'Refresh' : 'Daydream now'}
+        </button>
+      </div>
+      {isLoading ? (
+        <p className="text-sm text-ink-500">Loading…</p>
+      ) : !note ? (
+        <p className="text-sm italic text-ink-500">
+          No background research yet for this {typeLabel}. Click
+          "Daydream now" to ask Rose to fetch encyclopedic context
+          from your enabled knowledge sources (Wikipedia, Wikidata,
+          OpenAlex, etc.). Daydream must be enabled in{' '}
+          <Link to="/settings/daydream" className="text-rose-600 hover:underline">
+            Settings → Daydream
+          </Link>
+          .
+        </p>
+      ) : note.failed ? (
+        <p className="text-xs italic text-ink-500">
+          No background found
+          {note.failureReason ? `: ${note.failureReason}` : ''}. Try
+          enabling more knowledge sources in{' '}
+          <Link to="/settings/daydream" className="text-rose-600 hover:underline">
+            Settings → Daydream
+          </Link>
+          .
+        </p>
+      ) : (
+        <>
+          <p className="text-sm text-ink-700 dark:text-ink-200">
+            {note.summary || displayName}
+          </p>
+          {note.bodyMd && note.bodyMd !== note.summary && (
+            <p className="mt-2 whitespace-pre-wrap text-xs text-ink-600 dark:text-ink-300">
+              {note.bodyMd}
+            </p>
+          )}
+          {note.sources.length > 0 && (
+            <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-ink-500">
+              {note.sources.slice(0, 6).map((s) => (
+                <a
+                  key={s.url}
+                  href={s.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1 rounded bg-ink-100 px-1.5 py-0.5 hover:text-rose-600 dark:bg-ink-800"
+                  title={s.title || s.url}
+                >
+                  via {s.adapter}
+                  <ExternalLink className="h-2.5 w-2.5" />
+                </a>
+              ))}
+              {note.generatedAt && (
+                <span>· {new Date(note.generatedAt).toLocaleDateString()}</span>
+              )}
+            </div>
+          )}
+        </>
+      )}
+    </section>
   );
 }
