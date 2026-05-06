@@ -32,8 +32,17 @@ export function startSummarizeSenderWorker() {
       const userId = new Types.ObjectId(job.data.userId);
       const sender = await Sender.findOne({ _id: job.data.senderId, userId });
       if (!sender) return;
-      if (sender.summaryLocked) {
-        logger.info({ senderId: String(sender._id) }, 'summary locked — skipping');
+      // Plan 15 — brand-global brief lives on SenderBrand. Read
+      // canonical brand metadata from there; the per-user Sender
+      // row only carries counters / overrides.
+      const brand = await SenderBrand.findOne({ brandKey: sender.brandKey })
+        .select('name domain addresses websites')
+        .lean();
+      if (!brand) {
+        logger.warn(
+          { senderId: String(sender._id), brandKey: sender.brandKey },
+          'summarize: brand row missing — skipping',
+        );
         return;
       }
       const template = await templateFor(userId);
@@ -44,12 +53,15 @@ export function startSummarizeSenderWorker() {
         );
         return;
       }
-      // Pull recent subjects from this sender's mail to give the LLM
-      // something to work with. We bias toward variety: distinct subjects
-      // first, capped to 12.
+      // Pull recent subjects from THIS user's mail to give the LLM
+      // something to work with. The brief itself is brand-global,
+      // but the recent-subjects evidence comes from whoever
+      // triggered the regen. The prompt template enforces
+      // encyclopedic prose (no "you often get…") so the result
+      // stays usable for every other user too.
       const recent = await Email.find({
         userId,
-        'from.address': { $in: sender.addresses ?? [] },
+        'from.address': { $in: brand.addresses ?? [] },
       })
         .sort({ date: -1 })
         .limit(60)
@@ -66,10 +78,10 @@ export function startSummarizeSenderWorker() {
       }
 
       const prompt = renderTemplate(template, {
-        name: sender.name,
-        domain: sender.domain ?? '(none)',
-        addresses: (sender.addresses ?? []).slice(0, 6).join(', ') || '(none)',
-        websites: (sender.websites ?? []).slice(0, 8).join(', ') || '(none)',
+        name: brand.name ?? sender.brandKey,
+        domain: brand.domain ?? '(none)',
+        addresses: (brand.addresses ?? []).slice(0, 6).join(', ') || '(none)',
+        websites: (brand.websites ?? []).slice(0, 8).join(', ') || '(none)',
         recent_subjects: subjects.join('\n') || '(no recent subjects)',
         email_count: String(sender.emailCount ?? 0),
         page_count: String(sender.pageCount ?? 0),
@@ -84,15 +96,10 @@ export function startSummarizeSenderWorker() {
       });
       const finalSummary = text.trim().slice(0, 600);
       const generatedAt = new Date();
-      sender.summary = finalSummary;
-      sender.summaryGeneratedAt = generatedAt;
-      await sender.save();
 
-      // Plan 14 — also write to the global SenderBrand so the brief
-      // is shared across users. Resets `forgottenBriefBy` because a
-      // fresh refresh from any user is worth re-showing to anyone
-      // who'd previously hidden it. Best-effort; worker logs but
-      // doesn't fail the job if the brand row write hiccups.
+      // Plan 15 — the brief is global; only write to SenderBrand.
+      // `forgottenBriefBy` clears so anyone who'd previously muted
+      // sees the refreshed version.
       try {
         await SenderBrand.updateOne(
           { brandKey: sender.brandKey },
@@ -100,8 +107,6 @@ export function startSummarizeSenderWorker() {
             $setOnInsert: {
               brandKey: sender.brandKey,
               firstSeenBy: userId,
-              domain: sender.domain ?? null,
-              name: sender.name,
             },
             $set: {
               summary: finalSummary,

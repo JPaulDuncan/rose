@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { Types } from 'mongoose';
-import { Page, Category, Sender, normalizeCategoryName } from '@rose/db';
+import { Page, Category, Sender, SenderBrand, normalizeCategoryName } from '@rose/db';
 import { userIdOf } from '../middleware/auth.js';
 
 export const codexRouter: Router = Router();
@@ -34,12 +34,24 @@ codexRouter.get('/', async (req, res) => {
       .sort({ updatedAt: -1 })
       .lean(),
     Category.find({ userId }).sort({ name: 1 }).lean(),
+    // Plan 15 — per-user counters live on Sender; brand-global
+    // metadata (name, domain, logoUrl, summary) lives on
+    // SenderBrand. We merge below.
     Sender.find({ userId })
       .sort({ pageCount: -1, lastSeenAt: -1 })
       .limit(40)
-      .select('brandKey name domain logoUrl pageCount emailCount summary')
+      .select('brandKey pageCount emailCount nameOverride logoUrlOverride')
       .lean(),
   ]);
+
+  // Pull the corresponding brand rows in one query and key them.
+  const brandKeys = senders.map((s) => s.brandKey);
+  const brandRows = brandKeys.length
+    ? await SenderBrand.find({ brandKey: { $in: brandKeys } })
+        .select('brandKey name domain logoUrl summary')
+        .lean()
+    : [];
+  const brandByKey = new Map(brandRows.map((b) => [b.brandKey, b]));
 
   const entryShape = (p: typeof pages[number]) => ({
     _id: String(p._id),
@@ -130,15 +142,18 @@ codexRouter.get('/', async (req, res) => {
   res.json({
     chapters,
     orphans,
-    dramatisPersonae: senders.map((s) => ({
-      brandKey: s.brandKey,
-      name: s.name,
-      domain: s.domain ?? null,
-      logoUrl: s.logoUrl ?? null,
-      pageCount: s.pageCount ?? 0,
-      emailCount: s.emailCount ?? 0,
-      summary: s.summary ?? '',
-    })),
+    dramatisPersonae: senders.map((s) => {
+      const brand = brandByKey.get(s.brandKey);
+      return {
+        brandKey: s.brandKey,
+        name: s.nameOverride || brand?.name || s.brandKey,
+        domain: brand?.domain ?? null,
+        logoUrl: s.logoUrlOverride ?? brand?.logoUrl ?? null,
+        pageCount: s.pageCount ?? 0,
+        emailCount: s.emailCount ?? 0,
+        summary: brand?.summary ?? '',
+      };
+    }),
     index,
     counts: {
       chapters: chapters.length,

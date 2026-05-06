@@ -227,44 +227,39 @@ export async function upsertSendersFromPage(
       const existing = await Sender.findOne({ userId, brandKey: b.brandKey });
       const now = new Date();
       if (!existing) {
-        // New sender — pick the strongest logo we can: prefer one
-        // extracted from email content; otherwise fall back to the
-        // domain's favicon via DuckDuckGo's icon service. The
-        // fallback gets a low confidence so a future email-derived
-        // logo can override it.
-        const fallbackLogoUrl = b.logo?.url
-          ? null
-          : defaultLogoUrlForDomain(b.brandKey, b.domain);
-        const logoUrl = b.logo?.url ?? fallbackLogoUrl ?? null;
-        const logoConfidence = b.logo?.confidence ?? (fallbackLogoUrl ? 0.1 : 0);
+        // Plan 15 — Sender stores only per-user state. All
+        // brand-global writes (logo, addresses, websites, etc.)
+        // happen above via `upsertGlobalSenderBrand`.
         const created = await Sender.create({
           userId,
           brandKey: b.brandKey,
-          name: b.name,
-          domain: b.domain,
-          addresses: [...b.addresses],
-          websites: [...b.websites].slice(0, 30),
-          unsubscribeUrls: [...b.unsubscribeUrls].slice(0, 4),
-          logoUrl,
-          logoConfidence,
           emailCount: b.emails.length,
           pageCount: pageWasNew ? 1 : 0,
           firstSeenAt: now,
           lastSeenAt: now,
         });
-        // Auto-generate the brief on first sight. Idempotent —
-        // jobId scoped to (user, sender) so re-creates collapse.
+        // Auto-generate the brief on first sight when the brand
+        // doesn't already have one. Plan 15 — the brief lives on
+        // SenderBrand globally; if any other user has already
+        // triggered a summarize for this brand we skip and let the
+        // shared brief serve. Idempotent: jobId scoped to brand
+        // so concurrent first-sights from multiple users collapse.
         try {
-          await summarizeQueue.add(
-            'summarize',
-            { senderId: String(created._id), userId: String(userId) },
-            {
-              jobId: `auto__${String(userId)}__${String(created._id)}`,
-              attempts: 2,
-              removeOnComplete: 200,
-              removeOnFail: 200,
-            },
-          );
+          const brand = await SenderBrand.findOne({ brandKey: b.brandKey })
+            .select('summary')
+            .lean();
+          if (!brand?.summary) {
+            await summarizeQueue.add(
+              'summarize',
+              { senderId: String(created._id), userId: String(userId) },
+              {
+                jobId: `auto__brand__${b.brandKey}`,
+                attempts: 2,
+                removeOnComplete: 200,
+                removeOnFail: 200,
+              },
+            );
+          }
         } catch (err) {
           logger.warn(
             { err, brandKey: b.brandKey },
@@ -273,61 +268,27 @@ export async function upsertSendersFromPage(
         }
         continue;
       }
-      // Merge addresses + websites + unsubscribe URLs without duplicates.
-      const addrs = new Set<string>([...(existing.addresses ?? []), ...b.addresses]);
-      const sites = new Set<string>([...(existing.websites ?? []), ...b.websites]);
-      const unsub = new Set<string>([
-        ...(existing.unsubscribeUrls ?? []),
-        ...b.unsubscribeUrls,
-      ]);
-      existing.addresses = [...addrs];
-      existing.websites = [...sites].slice(0, 30);
-      existing.unsubscribeUrls = [...unsub].slice(0, 4);
-
-      // Only update the logo when we have a stronger candidate AND the
-      // user hasn't pinned theirs.
-      if (
-        !existing.logoLocked &&
-        b.logo &&
-        b.logo.confidence > (existing.logoConfidence ?? 0)
-      ) {
-        existing.logoUrl = b.logo.url;
-        existing.logoConfidence = b.logo.confidence;
-      }
-
-      // Backfill: existing senders predating this code path may have
-      // no logoUrl at all. Plug in the favicon fallback so they pick
-      // up a default on the next regeneration without needing a
-      // dedicated migration.
-      if (!existing.logoLocked && !existing.logoUrl) {
-        const fallback = defaultLogoUrlForDomain(b.brandKey, b.domain);
-        if (fallback) {
-          existing.logoUrl = fallback;
-          existing.logoConfidence = 0.1;
-        }
-      }
-
-      // Always keep `name` as the user-edited value if they set one,
-      // otherwise prefer the brand-cased default we computed above.
-      if (!existing.name || existing.name === existing.brandKey) {
-        existing.name = b.name;
-      }
-
+      // Existing per-user row — bump counters only. Brand-global
+      // updates happened above on the SenderBrand row.
       existing.emailCount = (existing.emailCount ?? 0) + b.emails.length;
       if (pageWasNew) existing.pageCount = (existing.pageCount ?? 0) + 1;
       existing.lastSeenAt = now;
       await existing.save();
 
-      // Auto-summarise existing senders that have never been
-      // briefed yet — covers users who upgrade past this commit
-      // with a sender table that pre-dates auto-brief.
-      if (!existing.summary && !existing.summaryLocked) {
+      // Auto-summarise when the BRAND has no brief yet. Replaces
+      // the pre-plan-15 per-user check (`!existing.summary &&
+      // !existing.summaryLocked`); the brief's home is SenderBrand
+      // now.
+      const brand = await SenderBrand.findOne({ brandKey: b.brandKey })
+        .select('summary')
+        .lean();
+      if (!brand?.summary) {
         try {
           await summarizeQueue.add(
             'summarize',
             { senderId: String(existing._id), userId: String(userId) },
             {
-              jobId: `auto:${String(userId)}:${String(existing._id)}`,
+              jobId: `auto__brand__${b.brandKey}`,
               attempts: 2,
               removeOnComplete: 200,
               removeOnFail: 200,

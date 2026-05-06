@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { Types } from 'mongoose';
 import {
   Email,
-  Sender,
+  SenderBrand,
   Source,
   Instruction,
   OutboundMessage,
@@ -48,21 +48,24 @@ Reply in plain markdown, no headings.`;
 }
 
 async function senderBriefFor(
-  userId: Types.ObjectId,
+  _userId: Types.ObjectId,
   fromAddress: string | null | undefined,
 ): Promise<string> {
   if (!fromAddress) return '(no sender info)';
   const brand = senderDomainTag(fromAddress);
   const brandKey = brand ? brand.toLowerCase() : fromAddress.toLowerCase();
-  const sender = await Sender.findOne({ userId, brandKey })
+  // Plan 15 — brand-global fields live on SenderBrand. Reply
+  // context doesn't need any per-user state, so we read directly
+  // from the global row.
+  const row = await SenderBrand.findOne({ brandKey })
     .select('name domain summary websites')
     .lean();
-  if (!sender) return '(no address-book entry yet)';
+  if (!row) return '(no address-book entry yet)';
   const parts = [
-    sender.name && `Display name: ${sender.name}`,
-    sender.domain && `Domain: ${sender.domain}`,
-    sender.summary && `Summary: ${sender.summary}`,
-    sender.websites?.length && `Websites: ${sender.websites.slice(0, 3).join(', ')}`,
+    row.name && `Display name: ${row.name}`,
+    row.domain && `Domain: ${row.domain}`,
+    row.summary && `Summary: ${row.summary}`,
+    row.websites?.length && `Websites: ${row.websites.slice(0, 3).join(', ')}`,
   ].filter(Boolean);
   return parts.join('\n') || '(empty entry)';
 }

@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { Types } from 'mongoose';
-import { Sender, SenderBrand, Page, Email } from '@rose/db';
+import { Sender, SenderBrand, User, Page, Email } from '@rose/db';
 import { userIdOf } from '../middleware/auth.js';
 import { summarizeSenderQueue } from '../lib/queues.js';
 
@@ -21,66 +21,71 @@ type AnyDoc = Record<string, unknown>;
 async function brandOverlay(brandKey: string): Promise<AnyDoc | null> {
   const brand = await SenderBrand.findOne({ brandKey })
     .select(
-      'name domain addresses websites logoUrl logoConfidence summary summaryGeneratedAt unsubscribeUrls postalAddresses forgottenBriefBy',
+      'name domain addresses websites logoUrl logoConfidence summary summaryGeneratedAt unsubscribeUrls postalAddresses forgottenBriefBy firstSeenBy',
     )
     .lean();
   return (brand as AnyDoc | null) ?? null;
 }
 
 /**
- * Merge a global brand row onto a per-user sender doc, preferring
- * the global value for brand-global fields. The user's locks
- * (`logoLocked`, `summaryLocked`) keep the per-user value when the
- * user has explicitly pinned it.
+ * Resolve a userId → displayName for the "contributed by" chip.
+ * Returns empty string when the id is null or the user is gone.
+ */
+async function resolveContributorName(
+  userId: Types.ObjectId | null | undefined,
+): Promise<string> {
+  if (!userId) return '';
+  const u = await User.findById(userId).select('displayName').lean();
+  return u?.displayName ?? '';
+}
+
+/**
+ * Compose a per-user sender row + the global brand row into the
+ * shape the UI expects. Plan 15 — the per-user side carries only
+ * counters / toggles / explicit overrides
+ * (`nameOverride`, `logoUrlOverride`); brand-global fields all
+ * come from `SenderBrand`.
+ *
+ * Output keys mirror the pre-plan-15 Sender shape so existing UI
+ * keeps working: `name`, `logoUrl`, `summary`, `addresses[]`,
+ * `websites[]`, etc.
  */
 function mergeBrandIntoSender(
   perUser: AnyDoc,
   brand: AnyDoc | null,
   userId: Types.ObjectId,
 ): AnyDoc {
-  if (!brand) return perUser;
-  const merged: AnyDoc = { ...perUser };
-  // Brand-global preferred unless the user has locked their copy.
-  if (!perUser.logoLocked) {
-    merged.logoUrl = brand.logoUrl ?? perUser.logoUrl ?? null;
-    merged.logoConfidence = (brand.logoConfidence as number) ?? perUser.logoConfidence ?? 0;
-  }
-  if (!perUser.summaryLocked) {
+  const out: AnyDoc = { ...perUser };
+  // Display name: explicit user override > brand-global > brandKey.
+  out.name =
+    (perUser.nameOverride as string | null) ||
+    (brand?.name as string | undefined) ||
+    (perUser.brandKey as string);
+  // Logo: explicit user override > brand-global > null.
+  out.logoUrl =
+    (perUser.logoUrlOverride as string | null) ??
+    (brand?.logoUrl as string | null | undefined) ??
+    null;
+  out.logoConfidence = (brand?.logoConfidence as number | undefined) ?? 0;
+  // Brief: brand-global, hidden when the user is in forgottenBriefBy.
+  if (brand) {
     const forgotten = (brand.forgottenBriefBy as Types.ObjectId[] | undefined) ?? [];
     const isForgotten = forgotten.some((id) => String(id) === String(userId));
-    if (!isForgotten) {
-      merged.summary = brand.summary || perUser.summary || '';
-      merged.summaryGeneratedAt =
-        brand.summaryGeneratedAt ?? perUser.summaryGeneratedAt ?? null;
-    }
+    out.summary = isForgotten ? '' : (brand.summary as string | undefined) ?? '';
+    out.summaryGeneratedAt = isForgotten
+      ? null
+      : (brand.summaryGeneratedAt as Date | null | undefined) ?? null;
+  } else {
+    out.summary = '';
+    out.summaryGeneratedAt = null;
   }
-  // Union addresses + websites + unsubscribeUrls + postalAddresses
-  // so the user's view sees everything any other user has surfaced.
-  const unionStr = (a: string[] | undefined, b: string[] | undefined) => [
-    ...new Set([...(a ?? []), ...(b ?? [])]),
-  ];
-  merged.addresses = unionStr(
-    perUser.addresses as string[] | undefined,
-    brand.addresses as string[] | undefined,
-  );
-  merged.websites = unionStr(
-    perUser.websites as string[] | undefined,
-    brand.websites as string[] | undefined,
-  );
-  merged.unsubscribeUrls = unionStr(
-    perUser.unsubscribeUrls as string[] | undefined,
-    brand.unsubscribeUrls as string[] | undefined,
-  ).slice(0, 4);
-  merged.postalAddresses = unionStr(
-    perUser.postalAddresses as string[] | undefined,
-    brand.postalAddresses as string[] | undefined,
-  );
-  // Brand-cased name only wins if the user hasn't customised it
-  // (current heuristic: user's name === brandKey means default).
-  if (!perUser.name || perUser.name === perUser.brandKey) {
-    merged.name = brand.name || perUser.name || perUser.brandKey;
-  }
-  return merged;
+  // Brand-global arrays come straight from the brand row.
+  out.domain = (brand?.domain as string | null | undefined) ?? null;
+  out.addresses = (brand?.addresses as string[] | undefined) ?? [];
+  out.websites = (brand?.websites as string[] | undefined) ?? [];
+  out.unsubscribeUrls = ((brand?.unsubscribeUrls as string[] | undefined) ?? []).slice(0, 4);
+  out.postalAddresses = (brand?.postalAddresses as string[] | undefined) ?? [];
+  return out;
 }
 
 /**
@@ -108,6 +113,14 @@ function listShape(s: Record<string, unknown>) {
     spamMarkedCount: (s.spamMarkedCount as number | undefined) ?? 0,
     rescuedCount: (s.rescuedCount as number | undefined) ?? 0,
     autoQuarantine: !!s.autoQuarantine,
+    /** Plan 15 — has the user explicitly overridden the brand-
+     *  global display name / logo? UI uses this to render the
+     *  "Promote to brand" button next to the override input. */
+    nameOverride: (s.nameOverride as string | null) ?? null,
+    logoUrlOverride: (s.logoUrlOverride as string | null) ?? null,
+    /** Plan 15 — display name of the user whose mail first
+     *  surfaced this brand. Empty string when missing. */
+    contributedBy: (s.contributedBy as string | undefined) ?? '',
   };
 }
 
@@ -148,20 +161,9 @@ sendersRouter.get('/', async (req, res) => {
  * convention. Returns 404 when we don't have an entry yet.
  */
 sendersRouter.get('/by-address/:address', async (req, res) => {
-  const userId = new Types.ObjectId(userIdOf(req));
   const addr = req.params.address.toLowerCase();
-  // Plan 14 — try per-user first (user has personal counters and
-  // toggles for this sender), then fall back to global SenderBrand
-  // so the brand chip on a wiki page links to /s/:brandKey even
-  // when the current user has never personally interacted with the
-  // sender.
-  const sender = await Sender.findOne({ userId, addresses: addr })
-    .select('brandKey name')
-    .lean();
-  if (sender) {
-    res.json({ brandKey: sender.brandKey, name: sender.name });
-    return;
-  }
+  // Plan 15 — addresses live exclusively on SenderBrand (brand-
+  // global). One lookup; no per-user fallback needed.
   const brand = await SenderBrand.findOne({ addresses: addr })
     .select('brandKey name')
     .lean();
@@ -169,7 +171,7 @@ sendersRouter.get('/by-address/:address', async (req, res) => {
     res.status(404).json({ error: 'not_found' });
     return;
   }
-  res.json({ brandKey: brand.brandKey, name: brand.name });
+  res.json({ brandKey: brand.brandKey, name: brand.name ?? brand.brandKey });
 });
 
 /**
@@ -185,10 +187,14 @@ sendersRouter.get('/:brandKey', async (req, res) => {
     res.status(404).json({ error: 'not_found', message: 'Sender not found' });
     return;
   }
-  // Plan 14 — overlay the global brand row.
+  // Plans 14–15 — overlay the global brand row + resolve the
+  // first-contributor display name for the attribution chip.
   const brand = await brandOverlay(sender.brandKey);
   const composed = mergeBrandIntoSender(sender.toObject() as AnyDoc, brand, userId);
-  const composedAddresses = (composed.addresses as string[] | undefined) ?? sender.addresses ?? [];
+  composed.contributedBy = await resolveContributorName(
+    brand?.firstSeenBy as Types.ObjectId | null | undefined,
+  );
+  const composedAddresses = (composed.addresses as string[] | undefined) ?? [];
   const pages = await Page.find({
     userId,
     senderAddresses: { $in: composedAddresses },
@@ -228,8 +234,19 @@ sendersRouter.get('/:brandKey', async (req, res) => {
   });
 });
 
-/** User overrides (logo / name / summary). Sets the *Locked flag so the
- *  worker stops auto-overwriting that field. */
+/**
+ * Plan 15 — User PATCH writes:
+ *   • `name` / `logoUrl` → per-user `nameOverride` / `logoUrlOverride`
+ *     (only this user's view changes).
+ *   • `stripAds` → per-user toggle.
+ *   • `summary` → no longer accepted; the brief is brand-global.
+ *     Use POST /:brandKey/refresh to regenerate (affects everyone)
+ *     or DELETE /:brandKey/brief to mute for yourself.
+ *
+ * The "promote to brand" endpoints
+ * (POST /:brandKey/promote-logo, /promote-name) flip an override
+ * onto the global SenderBrand so it becomes everyone's default.
+ */
 sendersRouter.patch('/:brandKey', async (req, res) => {
   const userId = new Types.ObjectId(userIdOf(req));
   const sender = await Sender.findOne({ userId, brandKey: req.params.brandKey });
@@ -238,33 +255,114 @@ sendersRouter.patch('/:brandKey', async (req, res) => {
     return;
   }
   const body = (req.body ?? {}) as {
-    name?: string;
+    name?: string | null;
     logoUrl?: string | null;
-    summary?: string;
     stripAds?: boolean;
   };
-  if (typeof body.name === 'string' && body.name.trim()) {
-    sender.name = body.name.trim().slice(0, 80);
+  if (body.name === null) {
+    sender.nameOverride = null;
+  } else if (typeof body.name === 'string') {
+    const trimmed = body.name.trim().slice(0, 80);
+    sender.nameOverride = trimmed || null;
   }
   if (body.logoUrl === null) {
-    sender.logoUrl = null;
-    sender.logoConfidence = 0;
-    sender.logoLocked = true;
+    sender.logoUrlOverride = null;
   } else if (typeof body.logoUrl === 'string') {
-    sender.logoUrl = body.logoUrl.trim() || null;
-    sender.logoConfidence = sender.logoUrl ? 1 : 0;
-    sender.logoLocked = true;
-  }
-  if (typeof body.summary === 'string') {
-    sender.summary = body.summary.trim().slice(0, 600);
-    sender.summaryLocked = true;
-    sender.summaryGeneratedAt = new Date();
+    const trimmed = body.logoUrl.trim();
+    sender.logoUrlOverride = trimmed || null;
   }
   if (typeof body.stripAds === 'boolean') {
     sender.stripAds = body.stripAds;
   }
   await sender.save();
-  res.json({ sender: listShape(sender.toObject()) });
+  // Compose the response with the brand overlay so the UI sees its
+  // freshly-saved override merged against the brand row.
+  const brand = await brandOverlay(sender.brandKey);
+  const composed = mergeBrandIntoSender(sender.toObject() as AnyDoc, brand, userId);
+  res.json({ sender: listShape(composed) });
+});
+
+/**
+ * Promote the user's `logoUrlOverride` (or, when no override is set,
+ * the brand's current logo at high confidence) onto SenderBrand
+ * globally. After this fires the user's override clears — the
+ * promoted value IS the brand default now, so it'd render the same
+ * either way.
+ *
+ * Plan 15. Pairs with the global "forget" model — anyone can refresh
+ * what's shared, anyone can mute it from their own view. Promoting
+ * a logo is the additive flip side: the user contributes their
+ * better data back to the shared row.
+ */
+sendersRouter.post('/:brandKey/promote-logo', async (req, res) => {
+  const userId = new Types.ObjectId(userIdOf(req));
+  const sender = await Sender.findOne({ userId, brandKey: req.params.brandKey });
+  if (!sender) {
+    res.status(404).json({ error: 'not_found', message: 'Sender not found' });
+    return;
+  }
+  const target = sender.logoUrlOverride;
+  if (!target) {
+    res.status(400).json({
+      error: 'invalid_request',
+      message: 'No logo override on this sender to promote.',
+    });
+    return;
+  }
+  await SenderBrand.updateOne(
+    { brandKey: sender.brandKey },
+    {
+      $setOnInsert: {
+        brandKey: sender.brandKey,
+        firstSeenBy: userId,
+      },
+      $set: {
+        logoUrl: target,
+        logoConfidence: 1,
+      },
+    },
+    { upsert: true },
+  );
+  // Clear the per-user override now that it's the global default.
+  sender.logoUrlOverride = null;
+  await sender.save();
+  res.json({ ok: true });
+});
+
+/**
+ * Same shape as promote-logo but for the display name. Promotes
+ * `nameOverride` onto `SenderBrand.name` and clears the per-user
+ * override.
+ */
+sendersRouter.post('/:brandKey/promote-name', async (req, res) => {
+  const userId = new Types.ObjectId(userIdOf(req));
+  const sender = await Sender.findOne({ userId, brandKey: req.params.brandKey });
+  if (!sender) {
+    res.status(404).json({ error: 'not_found', message: 'Sender not found' });
+    return;
+  }
+  const target = sender.nameOverride;
+  if (!target) {
+    res.status(400).json({
+      error: 'invalid_request',
+      message: 'No name override on this sender to promote.',
+    });
+    return;
+  }
+  await SenderBrand.updateOne(
+    { brandKey: sender.brandKey },
+    {
+      $setOnInsert: {
+        brandKey: sender.brandKey,
+        firstSeenBy: userId,
+      },
+      $set: { name: target.slice(0, 80) },
+    },
+    { upsert: true },
+  );
+  sender.nameOverride = null;
+  await sender.save();
+  res.json({ ok: true });
 });
 
 /**
@@ -282,11 +380,11 @@ sendersRouter.post('/:brandKey/refresh', async (req, res) => {
     res.status(404).json({ error: 'not_found', message: 'Sender not found' });
     return;
   }
-  sender.summaryLocked = false;
-  await sender.save();
-  // Best-effort — the worker re-resets forgottenBriefBy on
-  // successful write, but doing it now means existing renders
-  // pick up the un-forget without waiting for the LLM round-trip.
+  // Plan 15 — `summaryLocked` is gone; the brief is brand-global,
+  // so nothing to "unlock" before regenerating. Clear
+  // `forgottenBriefBy` immediately so existing renders pick up the
+  // un-forget without waiting for the LLM round-trip; the worker
+  // re-clears it on successful write.
   try {
     await SenderBrand.updateOne(
       { brandKey: sender.brandKey },

@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { PageUpdateRequest } from '@rose/shared';
 import { userIdOf } from '../middleware/auth.js';
 import { validateBody } from '../middleware/validate.js';
-import { Page, Sender, SenderBrand, DaydreamNote, TagCanonical, Email, titleCaseTag } from '@rose/db';
+import { Page, SenderBrand, DaydreamNote, TagCanonical, Email, titleCaseTag } from '@rose/db';
 import { PageRevision } from '@rose/db';
 
 /**
@@ -13,12 +13,11 @@ import { PageRevision } from '@rose/db';
  * chips and link each sender to its address-book page (`/s/:brandKey`)
  * without per-address requests.
  *
- * Plan 14 — reads from the **global** `SenderBrand` collection
- * (preferred) and falls back to the per-user `Sender` row for any
- * brand that hasn't been migrated yet. This is the source of the
- * "logos shared system-wide" guarantee: a logo learned from one
- * user's email shows up for every user encountering the same
- * sender, even users who've never interacted with that brand.
+ * Plans 14–15 — reads exclusively from the **global** `SenderBrand`
+ * collection. This is the source of the "logos shared system-wide"
+ * guarantee: a logo learned from one user's email shows up for
+ * every user encountering the same sender, even users who've never
+ * interacted with that brand.
  */
 async function senderBrandsForPage(
   userId: Types.ObjectId,
@@ -38,31 +37,14 @@ async function senderBrandsForPage(
       }
     }
   }
-  // Pass 2: per-user fallback for any address the global pass missed
-  // (legacy senders that pre-date SenderBrand and haven't been
-  // re-touched by the worker yet). The boot-time migration covers
-  // the bulk; this is the safety net for anything created in the
-  // last few seconds.
-  const missingAddrs = addresses.filter((a) => !out[a]);
-  if (missingAddrs.length > 0) {
-    const senders = await Sender.find({
-      userId,
-      addresses: { $in: missingAddrs },
-    })
-      .select('brandKey name logoUrl addresses')
-      .lean();
-    for (const s of senders) {
-      for (const a of s.addresses ?? []) {
-        if (!out[a]) {
-          out[a] = {
-            brandKey: s.brandKey,
-            name: s.name,
-            logoUrl: s.logoUrl ?? null,
-          };
-        }
-      }
-    }
-  }
+  // Plan 15 — `Sender` no longer carries brand-global fields, so
+  // the per-user fallback that used to live here is gone. The
+  // boot-time migration backfills SenderBrand for every existing
+  // brand on first boot; subsequent worker writes keep it in sync.
+  // If an address is missing from the result map at this point,
+  // the user's mail just hasn't reached the senderUpsert step yet —
+  // the chip will appear without a logo until the next page write
+  // catches up.
   return out;
 }
 /**

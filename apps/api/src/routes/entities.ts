@@ -4,6 +4,7 @@ import {
   Entity,
   Page,
   DaydreamNote,
+  User,
   normalizeTagKey,
   ENTITY_TYPES,
   daydreamSubjectKey,
@@ -558,6 +559,15 @@ entitiesRouter.get('/:key/daydream', async (req, res) => {
     subjectKey,
     forgottenBy: { $ne: userId },
   }).lean();
+  // Plan 15 — resolve firstResearchedBy → displayName for the
+  // attribution chip on the entity page Background card.
+  let contributedBy = '';
+  if (note?.firstResearchedBy) {
+    const u = await User.findById(note.firstResearchedBy)
+      .select('displayName')
+      .lean();
+    contributedBy = u?.displayName ?? '';
+  }
   res.json({
     note: note
       ? {
@@ -577,6 +587,7 @@ entitiesRouter.get('/:key/daydream', async (req, res) => {
             : null,
           failed: note.failed ?? false,
           failureReason: note.failureReason ?? null,
+          contributedBy,
         }
       : null,
   });

@@ -187,15 +187,20 @@ export async function migrateSenderBrandsToGlobal(): Promise<void> {
     websites: string[];
     logoUrl: string | null;
     logoConfidence: number;
+    logoLocked: boolean;
     unsubscribeUrls: string[];
     postalAddresses: string[];
     summary: string;
     summaryGeneratedAt: Date | null;
+    summaryLocked: boolean;
     firstSeenAt: Date | null;
   };
+  // Plan 15 — read brand-global fields from legacy per-user rows.
+  // Even though the schema no longer declares these, MongoDB still
+  // carries the values; we use a raw cursor to read them.
   const all = (await Sender.find({})
     .select(
-      '_id userId brandKey domain name addresses websites logoUrl logoConfidence unsubscribeUrls postalAddresses summary summaryGeneratedAt firstSeenAt',
+      '_id userId brandKey domain name addresses websites logoUrl logoConfidence logoLocked unsubscribeUrls postalAddresses summary summaryGeneratedAt summaryLocked firstSeenAt',
     )
     .lean()) as unknown as SenderRow[];
   if (all.length === 0) return;
@@ -209,10 +214,14 @@ export async function migrateSenderBrandsToGlobal(): Promise<void> {
 
   let upserted = 0;
   for (const [brandKey, rows] of groups) {
-    // Pick the row with the freshest summary, then fall back to the
-    // one with the highest logoConfidence, then the longest addresses
-    // list. Ties go to the lowest userId for determinism on retries.
+    // Plan 15 — prefer rows where the user pinned their own summary
+    // (`summaryLocked: true`); their hand-curated brief is the most
+    // valuable signal. After that, freshest summary, highest
+    // logoConfidence, longest addresses, lowest userId for
+    // determinism on retries.
     rows.sort((a, b) => {
+      if (!!a.summaryLocked !== !!b.summaryLocked)
+        return a.summaryLocked ? -1 : 1;
       const sa = a.summaryGeneratedAt
         ? new Date(a.summaryGeneratedAt).getTime()
         : 0;
@@ -277,5 +286,99 @@ export async function migrateSenderBrandsToGlobal(): Promise<void> {
       upserted,
     },
     'sender-brand global migration completed',
+  );
+}
+
+/**
+ * Plan 15 — strip the now-redundant brand-global fields from per-
+ * user `Sender` rows once `SenderBrand` is the source of truth.
+ * Preserves the user's intent:
+ *   • `logoLocked: true` rows have their `logoUrl` copied to
+ *     `logoUrlOverride` so the user keeps seeing their pinned logo.
+ *   • Any `name` that differs from the brand-global default ends
+ *     up on `nameOverride` so user-customised display names
+ *     ("Dad" instead of "john.smith.42@gmail.com") survive.
+ *   • Hand-curated summaries (summaryLocked rows) were already
+ *     promoted onto SenderBrand by `migrateSenderBrandsToGlobal`'s
+ *     prefer-locked sort — they belong to the brand now.
+ *
+ * Then `$unset` the dropped fields. Idempotent: if the fields are
+ * already gone, the updateMany has zero candidates and returns
+ * fast. Re-runs after a clean migration are safe.
+ *
+ * Runs after `migrateSenderBrandsToGlobal` so the brand row has the
+ * canonical values before the per-user rows lose theirs.
+ */
+export async function migrateSenderStripBrandFields(): Promise<void> {
+  type LegacyRow = {
+    _id: Types.ObjectId;
+    brandKey: string;
+    name?: string;
+    logoUrl?: string | null;
+    logoLocked?: boolean;
+  };
+  // Find rows that still carry any of the legacy brand-global
+  // fields. If none, the migration is already done.
+  const candidates = (await Sender.find({
+    $or: [
+      { name: { $exists: true } },
+      { logoUrl: { $exists: true } },
+      { summary: { $exists: true } },
+    ],
+  })
+    .select('_id brandKey name logoUrl logoLocked')
+    .lean()) as unknown as LegacyRow[];
+  if (candidates.length === 0) return;
+
+  // Pull each row's brand for a name-equality compare.
+  const brandKeys = [...new Set(candidates.map((r) => r.brandKey))];
+  const brands = await SenderBrand.find({ brandKey: { $in: brandKeys } })
+    .select('brandKey name')
+    .lean();
+  const brandName = new Map(brands.map((b) => [b.brandKey, b.name ?? '']));
+
+  let nameOverridesSet = 0;
+  let logoOverridesSet = 0;
+  for (const r of candidates) {
+    const update: Record<string, unknown> = {};
+    // Name override: only when the user's value differs from both
+    // the brand-global value and the bare brandKey default.
+    if (r.name && r.name !== brandName.get(r.brandKey) && r.name !== r.brandKey) {
+      update.nameOverride = r.name.slice(0, 80);
+      nameOverridesSet += 1;
+    }
+    // Logo override: only when the user explicitly locked theirs.
+    if (r.logoLocked && r.logoUrl) {
+      update.logoUrlOverride = r.logoUrl;
+      logoOverridesSet += 1;
+    }
+    await Sender.updateOne(
+      { _id: r._id },
+      {
+        $set: update,
+        $unset: {
+          name: '',
+          domain: '',
+          addresses: '',
+          websites: '',
+          logoUrl: '',
+          logoConfidence: '',
+          logoLocked: '',
+          summary: '',
+          summaryGeneratedAt: '',
+          summaryLocked: '',
+          unsubscribeUrls: '',
+          postalAddresses: '',
+        },
+      },
+    );
+  }
+  logger.info(
+    {
+      stripped: candidates.length,
+      nameOverridesSet,
+      logoOverridesSet,
+    },
+    'sender brand-global field strip completed',
   );
 }

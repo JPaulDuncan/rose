@@ -19,6 +19,9 @@ type RecentNote = {
   generatedAt: string | null;
   failed: boolean;
   failureReason: string | null;
+  /** Plan 15 — display name of the user whose pass first surfaced
+   *  this subject. Empty string when missing. */
+  contributedBy?: string;
 };
 
 export default function DaydreamSettings() {
@@ -634,6 +637,14 @@ export default function DaydreamSettings() {
                       ))}
                       {n.generatedAt && (
                         <span>· {new Date(n.generatedAt).toLocaleString()}</span>
+                      )}
+                      {n.contributedBy && (
+                        <span
+                          className="italic"
+                          title="Daydream notes are shared. This shows whose research first surfaced the subject."
+                        >
+                          · contributed by {n.contributedBy}
+                        </span>
                       )}
                     </div>
                   )}

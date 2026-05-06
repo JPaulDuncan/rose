@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { Types } from 'mongoose';
-import { Page, Sender } from '@rose/db';
+import { Page, SenderBrand } from '@rose/db';
 import { userIdOf } from '../middleware/auth.js';
 
 export const promotionsRouter: Router = Router();
@@ -34,8 +34,9 @@ promotionsRouter.get('/', async (req, res) => {
       pages.flatMap((p) => (p.senderAddresses as string[] | undefined) ?? []),
     ),
   ];
+  // Plan 15 — brand-global fields live on SenderBrand.
   const senders = allAddrs.length
-    ? await Sender.find({ userId, addresses: { $in: allAddrs } })
+    ? await SenderBrand.find({ addresses: { $in: allAddrs } })
         .select('brandKey name domain logoUrl addresses')
         .lean()
     : [];
@@ -44,10 +45,10 @@ promotionsRouter.get('/', async (req, res) => {
     { brandKey: string; name: string; domain: string | null; logoUrl: string | null }
   > = {};
   for (const s of senders) {
-    for (const a of s.addresses ?? []) {
+    for (const a of (s.addresses as string[] | undefined) ?? []) {
       senderBrands[a] = {
         brandKey: s.brandKey,
-        name: s.name,
+        name: s.name ?? s.brandKey,
         domain: s.domain ?? null,
         logoUrl: s.logoUrl ?? null,
       };

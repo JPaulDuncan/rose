@@ -9,6 +9,7 @@ import {
   normalizeCategoryName,
   User,
   Sender,
+  SenderBrand,
   Entity,
   uniqueSlug,
   type EmailDoc,
@@ -496,17 +497,32 @@ export function startGeneratePageWorker() {
             .filter((a): a is string => !!a),
         ),
       ];
-      const stripBrands = promptAddrs.length
-        ? await Sender.find({
-            userId,
-            addresses: { $in: promptAddrs },
-            stripAds: true,
-          })
-            .select('addresses')
+      // Plan 15 — `Sender` carries only per-user fields; addresses
+      // live on the global `SenderBrand` row. To find which prompt
+      // emails come from senders this user has flagged stripAds=true,
+      // first translate prompt addresses → brandKeys via the global
+      // brand row, then check the user's Sender rows for the toggle,
+      // then translate back to addresses.
+      const brandRowsForPrompt = promptAddrs.length
+        ? await SenderBrand.find({ addresses: { $in: promptAddrs } })
+            .select('brandKey addresses')
             .lean()
         : [];
+      const promptBrandKeys = brandRowsForPrompt.map((b) => b.brandKey);
+      const stripUserSenders = promptBrandKeys.length
+        ? await Sender.find({
+            userId,
+            brandKey: { $in: promptBrandKeys },
+            stripAds: true,
+          })
+            .select('brandKey')
+            .lean()
+        : [];
+      const stripBrandKeys = new Set(stripUserSenders.map((s) => s.brandKey));
       const stripAddrs = new Set<string>(
-        stripBrands.flatMap((s) => (s.addresses as string[] | undefined) ?? []),
+        brandRowsForPrompt
+          .filter((b) => stripBrandKeys.has(b.brandKey))
+          .flatMap((b) => (b.addresses as string[] | undefined) ?? []),
       );
       const stripAdsFor = (addr: string | undefined | null) =>
         !!(addr && stripAddrs.has(addr.toLowerCase()));

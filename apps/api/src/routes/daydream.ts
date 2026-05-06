@@ -1,6 +1,33 @@
 import { Router } from 'express';
 import { Types } from 'mongoose';
 import { User, DaydreamNote } from '@rose/db';
+
+/**
+ * Plan 15 — resolve a list of userIds to `{id → displayName}` for
+ * "contributed by" attribution on globally-shared records. Cheap
+ * enough to call inline (one $in query); cap at 100 ids per call
+ * since we only ever attribute one user per row today.
+ */
+async function displayNamesFor(
+  userIds: (Types.ObjectId | null | undefined)[],
+): Promise<Record<string, string>> {
+  const unique = [
+    ...new Set(
+      userIds
+        .filter((u): u is Types.ObjectId => !!u)
+        .map((u) => String(u)),
+    ),
+  ];
+  if (unique.length === 0) return {};
+  const users = await User.find({ _id: { $in: unique } })
+    .select('displayName')
+    .lean();
+  const out: Record<string, string> = {};
+  for (const u of users) {
+    out[String(u._id)] = u.displayName ?? '';
+  }
+  return out;
+}
 import { DaydreamSettings, DaydreamSettingsUpdate } from '@rose/shared';
 import { userIdOf } from '../middleware/auth.js';
 import { validateBody } from '../middleware/validate.js';
@@ -117,6 +144,11 @@ daydreamRouter.get('/recent', async (req, res) => {
     .sort({ generatedAt: -1 })
     .limit(limit)
     .lean();
+  // Plan 15 — resolve `firstResearchedBy` to a display name so the
+  // UI can render a "contributed by …" chip alongside each note.
+  const names = await displayNamesFor(
+    notes.map((n) => n.firstResearchedBy as Types.ObjectId | null),
+  );
   res.json({
     notes: notes.map((n) => ({
       _id: String(n._id),
@@ -134,6 +166,9 @@ daydreamRouter.get('/recent', async (req, res) => {
       generatedAt: n.generatedAt ? n.generatedAt.toISOString() : null,
       failed: !!n.failed,
       failureReason: n.failureReason ?? null,
+      contributedBy: n.firstResearchedBy
+        ? names[String(n.firstResearchedBy)] ?? ''
+        : '',
     })),
   });
 });

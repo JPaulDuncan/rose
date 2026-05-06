@@ -58,6 +58,9 @@ type DaydreamNoteView = {
   generatedAt: string | null;
   failed: boolean;
   failureReason: string | null;
+  /** Plan 15 — display name of the user whose daydream pass first
+   *  surfaced this entity. Empty string when unknown / unmigrated. */
+  contributedBy?: string;
 };
 
 const TYPE_LABEL: Record<NonNullable<EntityType>, string> = {
@@ -397,6 +400,14 @@ function BackgroundBrief({
               ))}
               {note.generatedAt && (
                 <span>· {new Date(note.generatedAt).toLocaleDateString()}</span>
+              )}
+              {note.contributedBy && (
+                <span
+                  className="italic"
+                  title="Daydream notes are shared. This shows whose research first surfaced the subject."
+                >
+                  · contributed by {note.contributedBy}
+                </span>
               )}
             </div>
           )}

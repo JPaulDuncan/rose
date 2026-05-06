@@ -35,6 +35,14 @@ type Sender = {
   spamMarkedCount?: number;
   rescuedCount?: number;
   autoQuarantine?: boolean;
+  /** Plan 15 — explicit per-user overrides. When non-null, the
+   *  user's view shows these instead of the brand-global value;
+   *  the "Promote to brand" button copies them onto SenderBrand. */
+  nameOverride?: string | null;
+  logoUrlOverride?: string | null;
+  /** Plan 15 — display name of the user whose mail first surfaced
+   *  this brand. Empty string when missing / unknown. */
+  contributedBy?: string;
 };
 
 type SenderDetail = {
@@ -200,9 +208,19 @@ export default function SenderPage() {
         <div className="space-y-8">
           {/* Summary */}
           <section>
-            <h2 className="text-[10px] uppercase tracking-[0.25em] text-ink-500">
-              Summary
-            </h2>
+            <div className="flex items-baseline justify-between gap-2">
+              <h2 className="text-[10px] uppercase tracking-[0.25em] text-ink-500">
+                Summary
+              </h2>
+              {s.contributedBy && (
+                <span
+                  className="text-[10px] italic text-ink-400"
+                  title="The brand brief is shared across all users. This shows whose mail first surfaced this brand."
+                >
+                  contributed by {s.contributedBy}
+                </span>
+              )}
+            </div>
             {s.summary ? (
               <p className="mt-2 text-base leading-relaxed first-letter:font-serif first-letter:text-3xl first-letter:font-bold first-letter:leading-none first-letter:mr-1 first-letter:float-left first-letter:mt-1">
                 {s.summary}
@@ -210,7 +228,9 @@ export default function SenderPage() {
             ) : (
               <p className="mt-2 text-sm italic text-ink-500">
                 No brief written yet. Click "Generate brief" to have the
-                LLM compose one from this sender's metadata.
+                LLM compose one from this sender's metadata. The brief is
+                brand-global — every user benefits from one user's
+                refresh.
               </p>
             )}
           </section>
@@ -389,14 +409,19 @@ function SenderEditPanel({
 }) {
   const api = useApi();
   const qc = useQueryClient();
-  const [name, setName] = useState(sender.name);
-  const [logoUrl, setLogoUrl] = useState(sender.logoUrl ?? '');
-  const [summary, setSummary] = useState(sender.summary ?? '');
+  // Plan 15 — the form edits per-user overrides. The placeholders
+  // show whatever the brand-global value is so the user can see
+  // what the default looks like before deciding to override.
+  const [name, setName] = useState(sender.nameOverride ?? '');
+  const [logoUrl, setLogoUrl] = useState(sender.logoUrlOverride ?? '');
   const save = useMutation({
     mutationFn: async () =>
       api.patch<{ sender: Sender }>(
         `/api/senders/${encodeURIComponent(sender.brandKey)}`,
-        { name, logoUrl: logoUrl.trim() || null, summary },
+        {
+          name: name.trim() || null,
+          logoUrl: logoUrl.trim() || null,
+        },
       ),
     onSuccess: () => {
       toast.success('Sender saved');
@@ -408,6 +433,30 @@ function SenderEditPanel({
     },
     onError: (e: Error) => toast.error(e.message),
   });
+  const promoteLogo = useMutation({
+    mutationFn: async () =>
+      api.post<{ ok: true }>(
+        `/api/senders/${encodeURIComponent(sender.brandKey)}/promote-logo`,
+      ),
+    onSuccess: () => {
+      toast.success('Logo promoted to brand — visible to every user');
+      qc.invalidateQueries({ queryKey: ['sender', sender.brandKey] });
+      qc.invalidateQueries({ queryKey: ['senders'] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+  const promoteName = useMutation({
+    mutationFn: async () =>
+      api.post<{ ok: true }>(
+        `/api/senders/${encodeURIComponent(sender.brandKey)}/promote-name`,
+      ),
+    onSuccess: () => {
+      toast.success('Display name promoted to brand — visible to every user');
+      qc.invalidateQueries({ queryKey: ['sender', sender.brandKey] });
+      qc.invalidateQueries({ queryKey: ['senders'] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
   return (
     <form
       className="card mt-4 space-y-3"
@@ -416,39 +465,76 @@ function SenderEditPanel({
         save.mutate();
       }}
     >
+      <p className="text-[11px] text-ink-500">
+        Plan 15 — display name and logo are <strong>brand-global</strong>: any
+        user's edit affects everyone unless they set a per-user override
+        below. Use <em>Promote to brand</em> to push your override onto
+        the shared row so future users see it too.
+      </p>
       <label className="block text-xs">
         <span className="mb-1 block font-medium text-ink-700 dark:text-ink-200">
-          Display name
+          Display name (your override)
         </span>
-        <input
-          className="input"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          required
-        />
+        <div className="flex items-center gap-2">
+          <input
+            className="input flex-1"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder={sender.name || sender.brandKey}
+          />
+          <button
+            type="button"
+            className="btn-ghost text-xs"
+            disabled={!sender.nameOverride || promoteName.isPending}
+            onClick={() => {
+              if (
+                confirm(
+                  `Promote "${sender.nameOverride}" to the brand row? Every user will see this name unless they have their own override.`,
+                )
+              )
+                promoteName.mutate();
+            }}
+            title="Push this override onto the shared brand row"
+          >
+            Promote to brand
+          </button>
+        </div>
       </label>
       <label className="block text-xs">
         <span className="mb-1 block font-medium text-ink-700 dark:text-ink-200">
-          Logo URL
+          Logo URL (your override)
         </span>
-        <input
-          className="input"
-          value={logoUrl}
-          onChange={(e) => setLogoUrl(e.target.value)}
-          placeholder="https://example.com/logo.svg"
-        />
+        <div className="flex items-center gap-2">
+          <input
+            className="input flex-1"
+            value={logoUrl}
+            onChange={(e) => setLogoUrl(e.target.value)}
+            placeholder={sender.logoUrl || 'https://example.com/logo.svg'}
+          />
+          <button
+            type="button"
+            className="btn-ghost text-xs"
+            disabled={!sender.logoUrlOverride || promoteLogo.isPending}
+            onClick={() => {
+              if (
+                confirm(
+                  `Promote your logo to the brand row? Every user will see this logo unless they have their own override.`,
+                )
+              )
+                promoteLogo.mutate();
+            }}
+            title="Push this override onto the shared brand row"
+          >
+            Promote to brand
+          </button>
+        </div>
       </label>
-      <label className="block text-xs">
-        <span className="mb-1 block font-medium text-ink-700 dark:text-ink-200">
-          "Who is this" summary
-        </span>
-        <textarea
-          className="input min-h-[100px]"
-          value={summary}
-          onChange={(e) => setSummary(e.target.value)}
-          maxLength={600}
-        />
-      </label>
+      <p className="text-[11px] italic text-ink-500">
+        The "who is this" brief is brand-global and regenerated by the
+        AI from the sender's metadata. Use the Refresh button (header)
+        to re-run it for everyone, or Forget (header) to hide it from
+        your view only.
+      </p>
       <div className="flex justify-end gap-2 text-xs">
         <button type="button" className="btn-ghost" onClick={onClose}>
           Cancel

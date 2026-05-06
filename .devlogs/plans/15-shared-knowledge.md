@@ -135,9 +135,94 @@ Both migrations are no-ops on a fresh install and log row counts when they do wo
 
 ---
 
-## What's deliberately not here
+## Closeout (later that day)
 
-- **Logo upload UI.** The user-side logo override (`logoLocked: true`) still exists on per-user `Sender`, but there's no global "promote my logo to the brand row" path. Could add later; not load-bearing.
-- **Per-user displayName override** for global brands. If you want to call "Medium" something else, today the per-user `Sender.name` already works (via the lock heuristic in `mergeBrandIntoSender`).
-- **Migrating `Sender`'s now-redundant brand-global fields out.** Kept for now as fallback during the transition; a future cleanup commit can drop them once SenderBrand has full coverage in production.
-- **A "see what other users contributed" history view** for daydream notes / sender briefs. The `firstResearchedBy` and `firstSeenBy` audit fields exist but aren't surfaced anywhere. UI work is its own scope.
+The "deliberately not here" list got picked off in a third commit:
+
+### Sender field strip
+
+`Sender` is now per-user state only. The legacy brand-global fields
+(`name`, `domain`, `addresses`, `websites`, `logoUrl`,
+`logoConfidence`, `logoLocked`, `summary`, `summaryGeneratedAt`,
+`summaryLocked`, `unsubscribeUrls`, `postalAddresses`) are
+`$unset` by `migrateSenderStripBrandFields` at boot. Two new
+override fields take their place:
+
+- `nameOverride: string | null` — user's preferred display name
+  for this brand. null = use the shared `SenderBrand.name`.
+- `logoUrlOverride: string | null` — user's preferred logo. null
+  = use `SenderBrand.logoUrl`.
+
+The migration preserves user customisations:
+- `logoLocked: true` rows have their `logoUrl` copied to
+  `logoUrlOverride`.
+- Names that differ from both the brand row and the bare
+  `brandKey` default end up on `nameOverride`.
+- Hand-curated summaries (`summaryLocked: true` rows) were
+  already promoted onto `SenderBrand` by the earlier
+  `migrateSenderBrandsToGlobal` pass — its sort order now
+  prefers locked-and-non-empty summaries.
+
+`migrateSenderBrandsToGlobal` was updated to sort
+`summaryLocked: true` rows first when picking which row's data
+becomes canonical.
+
+### Promote to brand
+
+Two new endpoints invert the per-user override flow — push your
+override onto the global row so every user benefits:
+
+- `POST /api/senders/:brandKey/promote-logo` — copies
+  `logoUrlOverride` to `SenderBrand.logoUrl` (with
+  `logoConfidence: 1`) and clears the per-user override since
+  it's now the default.
+- `POST /api/senders/:brandKey/promote-name` — same shape for
+  `nameOverride → SenderBrand.name`.
+
+Both are exposed as **Promote to brand** buttons in the
+`SenderEditPanel` next to the relevant override input. Disabled
+until the user has actually set an override.
+
+### "Contributed by" attribution
+
+`SenderBrand.firstSeenBy` and `DaydreamNote.firstResearchedBy`
+audit fields are now resolved to the user's `displayName` and
+included on three response surfaces:
+
+- `/api/daydream/recent` — each note carries
+  `contributedBy: string`.
+- `/api/entities/:key/daydream` — single-note response carries
+  it too.
+- `/api/senders/:brandKey` — sender detail surfaces the same.
+
+The UI shows each as a small italic chip in the metadata row
+("contributed by Alice"), with a tooltip explaining that the
+record is shared.
+
+### Worker / API write paths after the strip
+
+- `senderUpsert.ts` — new senders only get per-user counters
+  (`emailCount`, `pageCount`, `firstSeenAt`, `lastSeenAt`).
+  Brand-global fields all flow through `upsertGlobalSenderBrand`.
+- `summarizeSender.ts` — reads brand metadata from
+  `SenderBrand`, writes the new brief only to `SenderBrand`. The
+  per-user `Sender.summary` write was redundant and is gone.
+- `senders.ts` PATCH — accepts `name` (→ `nameOverride`),
+  `logoUrl` (→ `logoUrlOverride`), `stripAds`. Drops the old
+  `summary` parameter (the brief is brand-global; use refresh /
+  forget). Auto-summarize jobs are now dedup-keyed by brand
+  rather than user so concurrent first-sights from multiple
+  users collapse into one job.
+- Reply context (`reply.ts`) reads brand metadata from
+  `SenderBrand` directly.
+- Codex / Promotions / Digest routes read `SenderBrand` for
+  brand-global fields and merge per-user counters from
+  `Sender`.
+
+### Done
+
+Every "deliberately not here" item from the original plan has
+shipped. The `Sender` model is genuinely thin now; the
+`SenderBrand` row is unambiguously the source of truth for any
+fact about a brand; users can refresh / forget / promote — and
+attribution makes it visible whose work everyone's standing on.

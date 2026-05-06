@@ -165,6 +165,7 @@ async function bootstrap() {
       migrateLegacyThreadKey,
       migrateDaydreamNotesToGlobal,
       migrateSenderBrandsToGlobal,
+      migrateSenderStripBrandFields,
     } = await import('./services/migrations.js');
     await migrateLegacyThreadKey();
     // Plan 14 — collapse per-user DaydreamNote duplicates into one
@@ -174,6 +175,10 @@ async function bootstrap() {
     // Plan 14 (pass 2) — backfill the new global SenderBrand
     // collection from existing per-user Sender rows. Idempotent.
     await migrateSenderBrandsToGlobal();
+    // Plan 15 — drop the now-redundant brand-global fields from
+    // per-user Sender rows; preserve user customisations as
+    // overrides (nameOverride / logoUrlOverride). Idempotent.
+    await migrateSenderStripBrandFields();
   } catch (err) {
     logger.warn({ err }, 'boot-time migration failed');
   }
