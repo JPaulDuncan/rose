@@ -13,6 +13,7 @@ const TABS = [
   { to: 'models', label: 'Models' },
   { to: 'daydream', label: 'Daydream' },
   { to: 'maps', label: 'Maps' },
+  { to: 'tags', label: 'Tags' },
   { to: 'library', label: 'Library' },
   { to: 'spam', label: 'Spam' },
 ];
