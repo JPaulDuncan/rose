@@ -14,6 +14,7 @@ import {
   BookOpen,
   ShieldAlert,
   Megaphone,
+  EyeOff,
   Sparkles,
   Bookmark,
   X,
@@ -48,8 +49,11 @@ const PRIMARY_NAV: NavItem[] = [
 const SECONDARY_NAV: NavItem[] = [
   { to: '/library', label: 'Library', icon: BookOpen, key: 'g l' },
   { to: '/streams', label: 'Streams', icon: Activity, key: 'g t' },
-  { to: '/quarantine', label: 'Quarantine', icon: ShieldAlert, key: 'g q' },
-  { to: '/promotions', label: 'Promotions', icon: Megaphone, key: 'g p' },
+  // Plan 12 (R6) — single landing page that surfaces totals across
+  // quarantine + spam + promotions. The dedicated routes still exist
+  // for bulk actions (and keep their hotkeys), but the user has one
+  // entry point in the sidebar instead of three.
+  { to: '/hidden', label: 'Hidden', icon: EyeOff, key: 'g q' },
 ];
 
 export function Shell({ children }: { children: ReactNode }) {

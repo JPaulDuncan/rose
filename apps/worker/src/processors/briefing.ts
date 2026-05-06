@@ -167,6 +167,30 @@ async function generateBriefingForUser(
 ): Promise<{ generated: boolean; reason?: string; pageId?: string; slug?: string }> {
   const period = cfg?.cadence === 'monthly' ? 30 : 7;
   const since = new Date(Date.now() - period * 24 * 3600 * 1000);
+
+  // Plan 12 (G9) — uniqueness gate. The hourly briefing sweep can
+  // tick twice within the same calendar period if the worker
+  // restarts; without this check we'd produce two briefings for
+  // the same week/month. Skip when an LLM-authored briefing of the
+  // same cadence already exists since `since`.
+  const periodLabelForCheck: 'weekly' | 'monthly' = cfg?.cadence === 'monthly' ? 'monthly' : 'weekly';
+  const existing = await Page.findOne({
+    userId,
+    groupingMode: 'briefing',
+    tags: `${periodLabelForCheck}-briefing`,
+    generatedBy: 'briefing',
+    generatedAt: { $gte: since },
+  })
+    .select('_id slug')
+    .lean();
+  if (existing) {
+    return {
+      generated: false,
+      reason: 'briefing-already-exists-for-period',
+      pageId: String(existing._id),
+      slug: existing.slug,
+    };
+  }
   const pool = (await Page.find({
     userId,
     updatedAt: { $gte: since },

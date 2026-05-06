@@ -9,6 +9,7 @@ import {
   normalizeCategoryName,
   User,
   Sender,
+  Entity,
   type EmailDoc,
   type PageDoc,
 } from '@rose/db';
@@ -304,6 +305,37 @@ async function runPlacesExtraction(
   page.placesExtractedFromHash = hash;
   page.markModified('places');
   await page.save();
+
+  // Plan 12 (R3) — also upsert each place into the Entity registry
+  // with `type: 'place'`. Lets /n/<key> route uniformly across every
+  // named thing; the entity page already handles place-specific
+  // map rendering when the key matches a Page.places[] row.
+  for (const p of next) {
+    if (!p.normKey) continue;
+    try {
+      await Entity.updateOne(
+        { userId, key: p.normKey },
+        {
+          $set: {
+            displayName: p.displayName ?? p.name,
+            type: 'place',
+            lastSeenAt: new Date(),
+          },
+          $setOnInsert: {
+            userId,
+            key: p.normKey,
+            pageCount: 0,
+          },
+        },
+        { upsert: true },
+      );
+    } catch (err) {
+      logger.warn(
+        { err, userId: String(userId), key: p.normKey },
+        'place → entity upsert failed',
+      );
+    }
+  }
 }
 
 /**

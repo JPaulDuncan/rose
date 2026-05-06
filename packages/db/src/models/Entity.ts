@@ -1,14 +1,18 @@
 import { Schema, model, type InferSchemaType, type HydratedDocument } from 'mongoose';
 
 /**
- * Named entity types the extractor recognises. Kept narrow on
- * purpose — every type adds prompt complexity and surface area for
- * false positives. Places live in Page.places (with geocoding) but
- * are still linkable through the same /n/:key route, so the entity
- * page handles them as first-class even though they're not in this
- * Entity collection.
+ * Named entity types the registry recognises. `person`, `work`, and
+ * `organization` come from the linker-driven `extract.entities`
+ * step. `place` rows are written by the place-extraction step
+ * (post-geocoding) so /n/<key> can route uniformly without
+ * special-casing places in every API handler.
+ *
+ * Plan 12 (R3) — `place` was added when the audit flagged the
+ * cross-collection special-casing as redundant. Place rows still
+ * live alongside entries in Page.places[] (which carries lat/lon);
+ * Entity is the canonical "everything named" registry.
  */
-export const ENTITY_TYPES = ['person', 'work', 'organization'] as const;
+export const ENTITY_TYPES = ['person', 'work', 'organization', 'place'] as const;
 export type EntityType = (typeof ENTITY_TYPES)[number];
 
 /**

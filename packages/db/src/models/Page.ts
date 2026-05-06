@@ -272,7 +272,7 @@ const pageSchema = new Schema(
             normKey: { type: String, required: true, maxlength: 200, index: true },
             type: {
               type: String,
-              enum: ['person', 'work', 'organization'],
+              enum: ['person', 'work', 'organization', 'place'],
               required: true,
             },
             /** Display form preserved from the LLM output ("Wait

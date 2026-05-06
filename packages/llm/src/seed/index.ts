@@ -53,11 +53,7 @@ TAGS — strict rules:
 CONTEXT
 {{sender_summary}}
 
-WRITING STYLE — read like a news story, not a wiki breakdown
-- Inverted-pyramid news prose. The newest, most consequential information leads. Background, history, and earlier developments come AFTER the lede.
-- Coherent paragraphs of flowing prose. NO H2 sections like "Overview / Participants / Timeline / Decisions / Action Items" by default. NO bulleted breakdowns of who said what. Bullets are allowed only for genuinely list-shaped content (e.g. multiple action items the reader needs to act on).
-- Voice: third-person, neutral, plain-English. Active verbs. Specific over generic.
-- Length: scale to the substance. A single short email is one or two paragraphs; a months-long thread with many turns can be 6–10 paragraphs. Don't pad.
+${SYSTEM_PROMPT_NEWS_PROSE}
 
 STRUCTURE
 - Title: a stable noun phrase that names the *topic* of the page — not the subject of any one email. < 80 chars. No "Re:" / "Fwd:" prefixes, no dates.
@@ -67,11 +63,7 @@ STRUCTURE
 CITATIONS
 - Every factual claim, decision, action item, quoted statement, or attributed fact MUST be followed by an inline citation referencing the source email using the exact label provided — e.g. \`The deploy is set for Friday [e2]\` or \`Costs were debated at length [e1, e3]\`. Multiple labels comma-separated inside one bracket. Only use labels that appear below; never invent labels.
 - Weave citations naturally into the prose. Don't dump a row of bracketed numbers at the end of a paragraph.
-
-GROUND RULES
-- Do NOT invent participants, dates, numbers, decisions, or developments that aren't in the source. If messages contradict each other, lead with the latest position and mention the prior view as context.
-- NEVER write filler or meta-commentary about the source — phrases like "the email is empty", "no content provided", "this thread has no information", "the message contains only a subject" are forbidden. If body text is sparse, work from the available metadata (subject, sender, date) instead. If there is genuinely nothing to say, output one short paragraph using only that metadata.
-- Tags: 3–7 short lowercase tags, hyphenated. Each tag is a NOUN or PROPER NOUN — a topic, entity, project, product, person, place, or concept the page is about. NEVER emit verbs, courtesy/question words ("please", "how", "what", "thanks"), email-status words ("re", "fwd"), or generic fillers ("here", "now", "today"). If unsure whether something is a noun, drop it.
+- If messages contradict each other, lead with the latest position and mention the prior view as context.
 
 ADDITIONAL INSTRUCTIONS FROM USER:
 {{extra_instructions}}
@@ -168,6 +160,8 @@ Every emitted tag must appear once in mappings. \`isNew: true\` means there was 
 SENDERS contributing across the full page:
 {{sender_summary}}
 
+${SYSTEM_PROMPT_NEWS_PROSE}
+
 CURRENT PAGE
 - Title: {{page_title}}
 - Summary: {{page_summary}}
@@ -187,7 +181,7 @@ MERGE RULES — these are the differences from a fresh-write
 5. Citations: every NEW factual claim must cite the new email's label (e.g. [e1], [e2]). NEVER invent labels for emails not in the new-email list. Existing citations in the body remain as-is.
 6. Title: keep it stable. Only change the title if the new emails reveal the page was misnamed (e.g. "Iran tensions" → "Iran-Israel war"). When you do change it, prefer the broader, longer-lived noun phrase.
 7. Summary: ≤ 280 chars, written like a news lede that reflects the latest development across the full page.
-8. Tags: union of the existing tags with whatever the new emails add. Same noun-only / proper-noun-only rule as before — drop verbs, courtesy words, status words.
+8. Tags: union of existing + whatever the new emails add (the noun-only rules above apply).
 9. topicAliases: if the new emails phrase the underlying story differently than the existing title (e.g. body says "Iran-Israel conflict" while title says "War in Iran"), include the alternate phrasings as lowercase strings here so future emails using either phrasing route to this page.
 
 OUTPUT — JSON only, matching exactly:
@@ -387,6 +381,8 @@ REQUIREMENTS
     isDefault: true,
     template: `You are writing the editor's note for a {{period_label}} briefing of the user's wiki. Be specific, concrete, and confident — name the actual things that happened. Cite source page titles inline as [[page-slug]] (the SPA linkifies them).
 
+${SYSTEM_PROMPT_NEWS_PROSE}
+
 CLUSTERS (each cluster has a theme + the pages in it):
 {{clusters}}
 
@@ -405,6 +401,8 @@ No bullet lists. No headings. No fluff phrases like "in summary". Plain markdown
     variables: ['entries', 'focus'],
     isDefault: true,
     template: `Combine the wiki entries below into one coherent meta-entry. Cite each as [pN] inline using the labels above. Don't drop anything important; do drop redundant phrasing across the source pages. Plain markdown only — no preamble, no top-level heading.
+
+${SYSTEM_PROMPT_NEWS_PROSE}
 
 ENTRIES
 {{entries}}
@@ -448,9 +446,7 @@ Output JSON only:
     isDefault: true,
     template: `You are the section editor for the "#{{tag}}" beat in a daily newspaper. Write the day's section brief — what a reader skimming the front page should know about this beat today. {{page_count}} wiki entries are in scope; each is labeled [p1], [p2], … Newest entries are listed first.
 
-VOICE
-- Newspaper section editor, third person, neutral. Active verbs. Specific over generic. No "in summary", no "this section".
-- Inverted-pyramid: lead with the day's most consequential development; older context follows.
+${SYSTEM_PROMPT_NEWS_PROSE}
 
 OUTPUT — JSON only, three fields:
 
@@ -460,8 +456,7 @@ OUTPUT — JSON only, three fields:
     "bodyMd": "<= 800 chars markdown — a single paragraph (or at most two) of inverted-pyramid prose covering the day. Cite each contributing page inline as [pN] using the exact labels in ENTRIES. Don't list / bullet — write a section editor's brief that flows."
   }
 
-GROUND RULES
-- Don't invent facts that aren't in the entries.
+DIGEST-SPECIFIC RULES
 - If only one entry is in scope, the dek can be a single noun-phrase and the body can be one sentence — don't pad.
 - If the entries are sparse / metadata-only, say so plainly in the dek and produce a bodyMd that names the senders involved.
 - Never write "no content" or "this section is empty" — if there's nothing to report, the headline becomes "Quiet day on #{{tag}}" and the body says what the most recent entries were even when sparse.

@@ -26,6 +26,7 @@ const CodexPage = lazy(() => import('./routes/Codex'));
 const SenderPage = lazy(() => import('./routes/Sender'));
 const QuarantinePage = lazy(() => import('./routes/Quarantine'));
 const PromotionsPage = lazy(() => import('./routes/Promotions'));
+const HiddenPage = lazy(() => import('./routes/Hidden'));
 const ChatPage = lazy(() => import('./routes/Chat'));
 const SavePage = lazy(() => import('./routes/Save'));
 const FavoritesPage = lazy(() => import('./routes/Favorites'));
@@ -110,6 +111,7 @@ export default function App() {
         <Route path="/s/:brandKey" element={<SenderPage />} />
         <Route path="/quarantine" element={<QuarantinePage />} />
         <Route path="/promotions" element={<PromotionsPage />} />
+        <Route path="/hidden" element={<HiddenPage />} />
         <Route path="/chat" element={<ChatPage />} />
         <Route path="/chat/:id" element={<ChatPage />} />
         <Route path="/save" element={<SavePage />} />

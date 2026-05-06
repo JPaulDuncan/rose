@@ -43,10 +43,15 @@ entitiesRouter.post('/', async (req, res) => {
     return;
   }
   const type = body.type;
-  if (type !== 'person' && type !== 'work' && type !== 'organization') {
+  if (
+    type !== 'person' &&
+    type !== 'work' &&
+    type !== 'organization' &&
+    type !== 'place'
+  ) {
     res.status(400).json({
       error: 'invalid_request',
-      message: 'type must be one of "person", "work", or "organization"',
+      message: 'type must be one of "person", "work", "organization", "place"',
     });
     return;
   }
@@ -93,7 +98,12 @@ entitiesRouter.get('/', async (req, res) => {
   const userId = new Types.ObjectId(userIdOf(req));
   const type = req.query.type as string | undefined;
   const filter: Record<string, unknown> = { userId };
-  if (type === 'person' || type === 'work' || type === 'organization') {
+  if (
+    type === 'person' ||
+    type === 'work' ||
+    type === 'organization' ||
+    type === 'place'
+  ) {
     filter.type = type;
   }
   const rows = await Entity.find(filter)

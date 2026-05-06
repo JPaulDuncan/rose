@@ -5,6 +5,7 @@ import {
   User as UserIcon,
   Film,
   Building2,
+  MapPin as MapPinIcon,
   Pencil,
   GitMerge,
   Trash2,
@@ -16,7 +17,7 @@ import {
 import toast from 'react-hot-toast';
 import { useApi } from '../../lib/api';
 
-type EntityType = 'person' | 'work' | 'organization';
+type EntityType = 'person' | 'work' | 'organization' | 'place';
 
 type EntityRow = {
   key: string;
@@ -32,6 +33,7 @@ const TYPE_FILTERS: Array<{ value: '' | EntityType; label: string }> = [
   { value: 'person', label: 'People' },
   { value: 'work', label: 'Works' },
   { value: 'organization', label: 'Orgs' },
+  { value: 'place', label: 'Places' },
 ];
 
 function typePill(type: EntityType): string {
@@ -42,6 +44,8 @@ function typePill(type: EntityType): string {
       return 'bg-rose-100 text-rose-800 dark:bg-rose-950/40 dark:text-rose-200';
     case 'organization':
       return 'bg-sky-100 text-sky-800 dark:bg-sky-950/40 dark:text-sky-200';
+    case 'place':
+      return 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200';
   }
 }
 
@@ -49,6 +53,7 @@ function TypeIcon({ type, className }: { type: EntityType; className?: string })
   const cls = className ?? 'h-3 w-3';
   if (type === 'person') return <UserIcon className={cls} />;
   if (type === 'work') return <Film className={cls} />;
+  if (type === 'place') return <MapPinIcon className={cls} />;
   return <Building2 className={cls} />;
 }
 
@@ -208,6 +213,7 @@ export default function EntitiesSettings() {
               <option value="person">Person</option>
               <option value="work">Work</option>
               <option value="organization">Organization</option>
+              <option value="place">Place</option>
             </select>
           </label>
           <button
@@ -361,6 +367,7 @@ function EntityRowEditor({
               <option value="person">Person</option>
               <option value="work">Work (movie / show / book / song / article)</option>
               <option value="organization">Organization</option>
+              <option value="place">Place</option>
             </select>
           </label>
           <label className="col-span-full block text-xs">
@@ -464,7 +471,13 @@ function EntityRowEditor({
         title={row.type}
       >
         <TypeIcon type={row.type} />
-        {row.type === 'person' ? 'Person' : row.type === 'work' ? 'Work' : 'Org'}
+        {row.type === 'person'
+          ? 'Person'
+          : row.type === 'work'
+            ? 'Work'
+            : row.type === 'place'
+              ? 'Place'
+              : 'Org'}
       </span>
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline gap-2">

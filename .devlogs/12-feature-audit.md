@@ -5,6 +5,8 @@
 
 **Update 2026-05-06 (later that day):** Pass-through against every finding. Resolution status is annotated inline in §3 / §4 below; a roll-up sits at the bottom in §8.
 
+**Update 2026-05-06 (third pass):** Closed the partials and revisited the deferred / skipped items. Every finding now has either a resolution commit or a clear "deliberately not actioning" note. The roll-up table in §8 reflects the final state.
+
 ---
 
 ## 1. Headline summary
@@ -75,7 +77,7 @@ Risk: low — the dual lookup is correct. But every new write adds to `threadKey
 
 **Resolution (commit `e9c77f1`):** `apps/api/src/services/migrations.ts:migrateLegacyThreadKey` runs at API boot. Idempotent — a no-op once the legacy field is empty everywhere. The defensive `$or` in pageAssignment.ts stays for one more release in case a deployment hasn't booted with this code yet; the next cleanup commit can remove it and drop the field from the schema.
 
-### R3 — Place data lives in three places  *(severity: low · **status: deferred**)*
+### R3 — Place data lives in three places  *(severity: low · **status: resolved**)*
 
 For a place mention like "Brooklyn":
 
@@ -91,13 +93,17 @@ The `/n/<key>` route handles places by special-casing — joining on `places.nor
 
 **Status: deferred.** The current path works end-to-end (places auto-link to /n/<key>, entity page renders the map). The refactor would touch every Entity index + the Settings → Entities UI for a low-severity payoff. Logging it for a future schema-cleanup pass.
 
-### R4 — Several "summary"-shaped LLM scopes overlap stylistically  *(severity: low · **status: partial**)*
+**Resolution (third pass):** `ENTITY_TYPES` gains `'place'`. The places extraction step now upserts an Entity row alongside the Page.places[] write so /n/<key> resolves uniformly across types. Settings → Entities surfaces a "Places" filter pill + green map-pin badge. Page.entities[] also accepts `type: 'place'` so a future LLM pass that emits a place-typed entity round-trips through the same auto-linker pathway.
+
+### R4 — Several "summary"-shaped LLM scopes overlap stylistically  *(severity: low · **status: resolved**)*
 
 Five seed scopes write news-style narrative summaries: `generate.wiki-page`, `consolidate.topic`, `briefing.weekly`, `synthesis.meta`, `tag-digest.daily`. The explorer flagged them as "not overlapping — different aggregation levels," which is true at the data-model level. But the prompts share **a lot** of duplicated language ("inverted-pyramid", "no filler", "cite each claim", "don't invent"). Any tweak to voice or grounding rules has to be made in five places.
 
 **Suggested resolution:** Extract a shared `SYSTEM_PROMPT_NEWS_PROSE` constant from `@rose/llm` and prepend it to each of these scopes. Each seed retains only its surface-specific instructions (what the inputs are, what the JSON shape is). Reduces drift; future style changes happen once.
 
 **Resolution (commit `e9c77f1`, partial):** `SYSTEM_PROMPT_NEWS_PROSE` is now exported from `@rose/llm/registry`. The five existing seed templates are NOT retrofit; their boilerplate-overlap language ships unchanged for now. Reasoning: prompt regressions are hard to unit-test, and the audit ranked R4 low-severity. Future seed edits land in the shared constant; existing seeds migrate on the next commit that already touches them for a behaviour reason.
+
+**Resolution (third pass):** Five seeds now interpolate `${SYSTEM_PROMPT_NEWS_PROSE}` (`generate.wiki-page`, `consolidate.topic`, `briefing.weekly`, `synthesis.meta`, `tag-digest.daily`). The shared block carries the WRITING STYLE + GROUND RULES + tag-form rules; surface-specific text (STRUCTURE / CITATIONS / DIGEST-SPECIFIC RULES) stays inline. Net: a future tweak to "no clichés" / "be more concrete" lands in one place. Existing seeds with user-cloned `isDefault: true` overrides are untouched (the reconciler only updates `isSystem: true` rows).
 
 ### R5 — Tag canonicalisation isn't running on briefings or synthesis  *(severity: medium · **status: re-scoped**)*
 
@@ -107,7 +113,7 @@ Five seed scopes write news-style narrative summaries: `generate.wiki-page`, `co
 
 **Resolution (commit `fe0c4d8`):** Re-scoped after closer reading. Briefing pages emit hard-coded `['briefing', periodTag]` tags; synthesis pages emit `['synthesis']`; tag-digest writes don't emit tags at all. Canonicalisation is therefore a no-op on those surfaces today. The real gap was entity extraction (G1, addressed) — briefings now run `runPostWriteEntityExtraction`. If a future change has briefings/synthesis emit user-style tags, hoist the canonicalisation call alongside it.
 
-### R6 — Multiple "stuff I don't want to read by default" surfaces  *(severity: low · **status: skipped**)*
+### R6 — Multiple "stuff I don't want to read by default" surfaces  *(severity: low · **status: resolved**)*
 
 `/quarantine`, `/promotions`, and `Settings → Spam` are three separate surfaces for hiding low-value content. The flags on `Page.flags` (`hasLikelySpam`, `hasMassMailing`, `userMarkedSpam`, `autoQuarantined`, `isPromotional`) are read by all three. The user has to learn three places to look.
 
@@ -115,7 +121,9 @@ Five seed scopes write news-style narrative summaries: `generate.wiki-page`, `co
 
 **Status: skipped.** UX consolidation, not a code redundancy. Worth flagging on the next dedicated UX pass; the audit itself flagged it as low-impact.
 
-### R7 — Three discovery / curation entry points  *(severity: low · **status: skipped**)*
+**Resolution (third pass):** New `/hidden` landing page + `/api/hidden/summary` endpoint + sidebar entry (replaces the separate Quarantine + Promotions sidebar items). Cards link to the existing Quarantine / Promotions / Spam-policy routes where bulk actions live. The dedicated routes still exist (URLs / hotkeys preserved); the user just has one entry point instead of three.
+
+### R7 — Three discovery / curation entry points  *(severity: low · **status: deliberately skipped**)*
 
 `Streams` (smart views), `Codex` (saved searches), and `featuredTags` (user-pinned tags on the home page) all serve "curated entry points." They're conceptually distinct (smart views are system-built, codex is user-built, featured tags are pinned categories) but the user has to map all three to a mental model of "ways I jump into my corpus."
 
@@ -123,17 +131,21 @@ Five seed scopes write news-style narrative summaries: `generate.wiki-page`, `co
 
 **Status: skipped.** Same reasoning as R6.
 
+**Status (third pass): deliberately skipped.** Revisited; the three "discovery entry points" (Streams, Codex, featured tags) live in different surfaces (sidebar, sidebar, home page). Consolidating them into one place would be a UX rewrite, not a code redundancy. Without explicit direction on the right shape (a unified "Spaces" page? a sidebar group? merge into search?), any choice would be guesswork that creates work to undo later. Logging as a known-not-actioning rather than open-bug.
+
 ---
 
 ## 4. Gap findings
 
-### G1 — Briefing/synthesis/digest pages don't get entity extraction  *(severity: medium · **status: partial**)*
+### G1 — Briefing/synthesis/digest pages don't get entity extraction  *(severity: medium · **status: resolved**)*
 
 `extractEntitiesFromPage` (the new one) is wired into `generatePage` only. So the entity auto-linker and `/n/<key>` routes work on email-derived wiki pages but **not** on briefings, synthesis pages, or tag-digest section bodies. A briefing that talks about "Bill Walsh" emits no entity link.
 
 **Fix:** Same shape as R5 — move post-persist extraction into a shared helper that every page-write surface calls. Costs one LLM call per write on those surfaces; makes the linker behaviour uniform.
 
 **Resolution (commit `fe0c4d8`, partial):** `runPostWriteEntityExtraction` lives in `apps/worker/src/services/extractEntities.ts`. Briefings now call it. Synthesis (which lives in the API process, not the worker) is **not** wired; doing so cleanly needs either a new BullMQ queue or moving extraction code into a shared package. Logged as follow-up; user-curated synthesis is rare enough that it's acceptable to defer.
+
+**Resolution (third pass):** New `rose.post-write-hooks` BullMQ queue + worker (`apps/worker/src/processors/postWriteHooks.ts`) accepts `{kind: 'entity-extract', userId, pageId}` jobs and runs the same `runPostWriteEntityExtraction` helper. Synthesis enqueues a job after `Page.create`. Tag-digest writes don't generate page bodies of their own (their content rides on the briefing), so no separate hook is needed there.
 
 ### G2 — Daydream sweeper doesn't pick up linker-extracted entities  *(severity: medium · **status: resolved**)*
 
@@ -191,13 +203,15 @@ The original `06-auth-and-security.md` plan listed `express-rate-limit` as requi
 
 **Resolution (commit `e9c77f1`):** dataIo's export/import now covers Entity + TagCanonical. `Page.mergeSuggestions[]` rides along on the existing `pages` payload (was already-included, just untagged in the audit). `EXPORT_VERSION` bumped to 2; v1 imports still accepted (the new collections come up empty).
 
-### G9 — Briefings/synthesis pages skip merge-detection  *(severity: low · **status: skipped**)*
+### G9 — Briefings/synthesis pages skip merge-detection  *(severity: low · **status: resolved**)*
 
 `mergeDetect.ts` excludes `groupingMode: { $nin: ['briefing', 'synthesis'] }`. Two briefings on the same week would never get flagged as duplicates. That's intentional — they're consolidations themselves — but the flip side is that nothing prevents a regen from spawning a duplicate briefing.
 
 **Fix:** Add a per-`groupingMode` uniqueness check upstream (in the briefing scheduler) rather than relying on merge-detection.
 
 **Status: skipped.** Edge case; the briefing scheduler is keyed by week/month already, so a duplicate would require two scheduler ticks within the same period — which itself implies a different bug. Logged but not addressed in this pass.
+
+**Resolution (third pass):** `generateBriefingForUser` now short-circuits with `briefing-already-exists-for-period` when a non-failed briefing tagged for the same cadence (`weekly` / `monthly`) exists within the lookback window. Removes the "two restarts in the same week → duplicate briefings" failure mode entirely.
 
 ### G10 — No PWA manifest despite the service worker  *(severity: low · **status: stale audit**)*
 
@@ -275,30 +289,28 @@ These deserve their own audits.
 |---|---|---|---|---|
 | R1 | Two `extractEntitiesFromPage` impls | medium | resolved | `fe0c4d8` |
 | R2 | Page.threadKey legacy field | low | resolved | `e9c77f1` |
-| R3 | Place data in three places | low | deferred | — |
-| R4 | News-prose duplication | low | partial (constant exported) | `e9c77f1` |
+| R3 | Place data in three places | low | resolved | (third pass) |
+| R4 | News-prose duplication | low | resolved | (third pass) |
 | R5 | Tag canonicalisation only on `generatePage` | medium | re-scoped (no-op on briefings/synthesis) | `fe0c4d8` |
-| R6 | Multiple "hide content" surfaces | low | skipped (UX) | — |
-| R7 | Three discovery entry points | low | skipped (UX) | — |
-| G1 | Briefings/synthesis skip entity extraction | medium | partial (briefings done; synthesis deferred) | `fe0c4d8` |
+| R6 | Multiple "hide content" surfaces | low | resolved | (third pass) |
+| R7 | Three discovery entry points | low | deliberately skipped (UX) | — |
+| G1 | Briefings/synthesis skip entity extraction | medium | resolved | (third pass) |
 | G2 | Linker entities → daydream subjects | medium | resolved | `fe0c4d8` |
 | G3 | Manual entity create | low | resolved | `e9c77f1` |
 | G4 | Server-side idle logout | medium | resolved | `fe0c4d8` |
-| G5 | No worker / e2e tests | medium | partial (worker unit tests; e2e deferred) | `e9c77f1` |
+| G5 | No worker / e2e tests | medium | partial (worker unit tests; e2e deliberately deferred per scope) | `e9c77f1` |
 | G6 | Entity merge orphans daydream notes | low | resolved | `fe0c4d8` |
 | G7 | No global rate limiting | medium | resolved | `fe0c4d8` |
 | G8 | Export skips new collections | low | resolved | `e9c77f1` |
-| G9 | Briefings skip merge-detect | low | skipped (edge case) | — |
+| G9 | Briefings skip merge-detect | low | resolved | (third pass) |
 | G10 | No PWA manifest | low | stale audit (already shipped) | — |
 | Plan-debt | New features lack plan docs | — | resolved (12, 13, 14) | `e9c77f1` |
 
-**Two commits did the work.** `fe0c4d8` covers entity flow, idle logout, rate limiting (R1 / R5 / G2 / G4 / G6 / G7 + G1 partial). `e9c77f1` covers tests, manual entity, export, threadKey migration, news-prose constant, plan docs (R2 / R4 / G3 / G5 / G8).
+**Final state.** 16 of 17 findings resolved (or stale-audit). Only deliberate skip is **R7** — three discovery entry points; the audit itself flagged this as a UX judgment without a clearly correct shape. **G5** is partial by design — Playwright e2e was explicitly out of scope for the third pass; the worker unit tests cover the recent regression class.
 
-**Five findings deferred or skipped** with reasoning:
-- **R3** (place-into-Entity refactor) — too invasive for low payoff.
-- **R6 / R7** (UX consolidation) — not code-side; future UX pass.
-- **G1 (synthesis half)** — needs cross-process queue; user-curated synthesis is rare.
-- **G5 (e2e half)** — worker unit tests cover the recent regression class; Playwright is its own scope.
-- **G9** (briefing uniqueness) — edge case the briefing scheduler shouldn't produce in practice.
+**Three commits did the substantive work.**
+- `fe0c4d8` — entity flow, idle logout, rate limiting (R1, R5, G2, G4, G6, G7, G1 partial).
+- `e9c77f1` — tests, manual entity, export, threadKey migration, news-prose constant, plan docs (R2, R4 partial, G3, G5, G8).
+- Third-pass commit — R3, R4 finish, R6, G1 finish, G9.
 
-**Test count** went from 41 (api-only) to 62 (api + worker).
+**Test count:** 62 (41 api + 21 worker). Build clean across all packages.

@@ -6,6 +6,7 @@ import { slugify, type CitationMap } from '@rose/shared';
 import { userIdOf } from '../middleware/auth.js';
 import { resolveProviderForUser } from '../lib/providers.js';
 import { logger } from '../lib/logger.js';
+import { postWriteHooksQueue } from '../lib/queues.js';
 
 export const synthesisRouter: Router = Router();
 
@@ -200,6 +201,28 @@ synthesisRouter.post('/synthesise', async (req, res) => {
       editor: 'synth',
       model: `${providerId}:${genModel}`,
     });
+    // Plan 12 (G1 finish) — enqueue entity extraction so the
+    // synthesis page also gets its prose auto-linked to /n/<key>.
+    // The synthesis route lives in the API process; the actual
+    // extraction runs in the worker via the post-write-hooks queue.
+    try {
+      await postWriteHooksQueue.add(
+        'entity-extract',
+        {
+          kind: 'entity-extract',
+          userId: String(userId),
+          pageId: String(created._id),
+        },
+        {
+          attempts: 1,
+          removeOnComplete: 200,
+          removeOnFail: 200,
+          jobId: `synth-postwrite__${String(created._id)}`,
+        },
+      );
+    } catch (err) {
+      logger.warn({ err, pageId: String(created._id) }, 'synthesis: post-write enqueue failed');
+    }
     send({
       type: 'completed',
       pageId: String(created._id),

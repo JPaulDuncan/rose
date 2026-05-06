@@ -21,6 +21,15 @@ export const QUEUE_NAMES = {
   librarySync: 'rose.library-sync',
   libraryEmbed: 'rose.library-embed',
   tagDigest: 'rose.tag-digest',
+  /**
+   * Plan 12 follow-up — generic post-write hooks for pages written
+   * outside the standard `generatePage` flow (synthesis, future
+   * imports). Today the only handler is "extract entities + push to
+   * daydream subjects", which the worker pulls off the queue and
+   * runs through the same `runPostWriteEntityExtraction` helper as
+   * inline post-persist.
+   */
+  postWriteHooks: 'rose.post-write-hooks',
 } as const;
 
 export type QueueName = (typeof QUEUE_NAMES)[keyof typeof QUEUE_NAMES];
@@ -46,5 +55,6 @@ export const daydreamQueue = new Queue(QUEUE_NAMES.daydream, connection);
 export const librarySyncQueue = new Queue(QUEUE_NAMES.librarySync, connection);
 export const libraryEmbedQueue = new Queue(QUEUE_NAMES.libraryEmbed, connection);
 export const tagDigestQueue = new Queue(QUEUE_NAMES.tagDigest, connection);
+export const postWriteHooksQueue = new Queue(QUEUE_NAMES.postWriteHooks, connection);
 
 export const generatePageEvents = new QueueEvents(QUEUE_NAMES.generatePage, connection);
