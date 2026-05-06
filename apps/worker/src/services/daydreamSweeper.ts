@@ -18,7 +18,7 @@ const daydreamQueue = new Queue('rose.daydream', { connection: redis });
  * Returns true when the pipeline is genuinely idle for daydream's
  * purposes — generate-page and embed-page have no waiting/active
  * jobs. We deliberately don't gate on the daydream queue itself
- * (the worker concurrency=1 already serialises) or the sync
+ * (the worker concurrency=1 already serializes) or the sync
  * queues (those are I/O-bound, not LLM-bound).
  */
 async function pipelineIdle(): Promise<boolean> {

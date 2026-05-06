@@ -59,7 +59,7 @@ function rebuildAbstract(
  * polite-pool email via `ctx.options.openalexMailto` when set.
  *
  * Confidence is derived from OpenAlex's own `relevance_score`,
- * normalised against the top hit so we don't over-claim relative
+ * normalized against the top hit so we don't over-claim relative
  * to other adapters. A high citation count is treated as a small
  * extra credibility bump.
  */

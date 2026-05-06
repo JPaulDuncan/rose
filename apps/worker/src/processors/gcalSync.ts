@@ -133,7 +133,7 @@ export function startGcalSyncWorker() {
           do {
             const res = await calendar.events.list({ ...baseParams, pageToken });
             for (const e of res.data.items ?? []) {
-              if (e.status === 'cancelled') {
+              if (e.status === 'canceled') {
                 if (e.id) {
                   const r = await CalendarEvent.deleteOne({
                     userId,

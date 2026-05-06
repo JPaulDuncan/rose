@@ -270,7 +270,7 @@ export async function evaluateRules(
   // in the addTags set.
   for (const t of v.removeTags) v.addTags.delete(t);
 
-  // Calling code uses the synthesised brand domain elsewhere; stash
+  // Calling code uses the synthesized brand domain elsewhere; stash
   // it on the verdict for free for actions like assign.category that
   // might want it. (Currently no consumer; leaving for future.)
   void senderDomainTag;

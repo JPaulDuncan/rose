@@ -28,7 +28,7 @@ function cosine(a: number[], b: number[]): number {
   return na && nb ? dot / (Math.sqrt(na) * Math.sqrt(nb)) : 0;
 }
 
-/** Pick a 1.5KB-ish window of contentMd centred on the most relevant
+/** Pick a 1.5KB-ish window of contentMd centered on the most relevant
  *  paragraph. Cheap heuristic — the paragraph with the highest count
  *  of question keywords wins. Falls back to the first 1.5KB. */
 function bestWindow(content: string, queryTokens: string[], targetLen = 1500): string {
@@ -164,7 +164,7 @@ function queryTokens(q: string): string[] {
   )];
 }
 
-/** Render the retrieved page windows as a labelled prompt block. */
+/** Render the retrieved page windows as a labeled prompt block. */
 function renderContext(hits: Hit[], q: string): { text: string; citations: Record<string, { pageId: string; slug: string; title: string; score: number }> } {
   const tokens = queryTokens(q);
   const blocks: string[] = [];
@@ -195,7 +195,7 @@ async function chatTemplate(userId: Types.ObjectId): Promise<string> {
   if (userDefault) return userDefault.template;
   const system = await Instruction.findOne({ userId, scope: 'chat', isSystem: true });
   if (system) return system.template;
-  return `Answer the question over the user's wiki using the labelled context below.
+  return `Answer the question over the user's wiki using the labeled context below.
 
 CONTEXT
 {{context}}

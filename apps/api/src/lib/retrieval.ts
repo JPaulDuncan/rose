@@ -29,7 +29,7 @@ export function queryTokens(q: string): string[] {
   ];
 }
 
-/** Pick a contentLen-character window centred on the most relevant
+/** Pick a contentLen-character window centered on the most relevant
  *  paragraph. The paragraph with the most query-token hits wins; we
  *  expand outward from there until we hit the budget. */
 export function bestWindow(content: string, tokens: string[], targetLen = 1500): string {
@@ -151,7 +151,7 @@ export async function retrievePages(
   return [...fused.values()].sort((a, b) => b.score - a.score).slice(0, limit);
 }
 
-/** Render the retrieved windows as a labelled prompt block + the
+/** Render the retrieved windows as a labeled prompt block + the
  *  citation map ({pN: …}). */
 export function renderContextBlock(
   hits: Hit[],

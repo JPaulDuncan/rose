@@ -245,7 +245,7 @@ entitiesRouter.get('/:key', async (req, res) => {
 
 /**
  * Update displayName / aliases / type on an entity row. Aliases the
- * caller pastes are normalised through the same kebab helper as
+ * caller pastes are normalized through the same kebab helper as
  * canonical keys; collisions with another entity's key are
  * rejected (use Merge).
  */
@@ -272,17 +272,17 @@ entitiesRouter.patch('/:key', async (req, res) => {
     update.type = body.type;
   }
   if (Array.isArray(body.aliases)) {
-    const normalised = [
+    const normalized = [
       ...new Set(
         body.aliases
           .map((a) => normalizeTagKey(String(a)))
           .filter((a) => a && a !== key),
       ),
     ];
-    if (normalised.length) {
+    if (normalized.length) {
       const collision = await Entity.findOne({
         userId,
-        key: { $ne: key, $in: normalised },
+        key: { $ne: key, $in: normalized },
       })
         .select('key')
         .lean();
@@ -294,7 +294,7 @@ entitiesRouter.patch('/:key', async (req, res) => {
         return;
       }
     }
-    update.aliases = normalised;
+    update.aliases = normalized;
   }
   const result = await Entity.findOneAndUpdate(
     { userId, key },

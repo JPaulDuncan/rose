@@ -5,7 +5,6 @@ import {
   Search,
   Home as HomeIcon,
   Calendar as CalendarIcon,
-  Activity,
   Settings,
   Sun,
   Moon,
@@ -43,12 +42,11 @@ const PRIMARY_NAV: NavItem[] = [
   { to: '/chat', label: 'Ask', icon: Sparkles, key: 'g a' },
   { to: '/search', label: 'Search', icon: Search, key: '/' },
   { to: '/calendar', label: 'Calendar', icon: CalendarIcon, key: 'g c' },
-  { to: '/codex', label: 'Codex', icon: BookOpen, key: 'g x' },
+  { to: '/browse', label: 'Browse', icon: BookOpen, key: 'g b' },
 ];
 
 const SECONDARY_NAV: NavItem[] = [
   { to: '/library', label: 'Library', icon: BookOpen, key: 'g l' },
-  { to: '/streams', label: 'Streams', icon: Activity, key: 'g t' },
   // Plan 12 (R6) — single landing page that surfaces totals across
   // quarantine + spam + promotions. The dedicated routes still exist
   // for bulk actions (and keep their hotkeys), but the user has one
@@ -75,8 +73,10 @@ export function Shell({ children }: { children: ReactNode }) {
     'g i': () => navigate('/settings/ingest'),
     'g a': () => navigate('/chat'),
     'g c': () => navigate('/calendar'),
-    'g t': () => navigate('/streams'),
-    'g x': () => navigate('/codex'),
+    'g b': () => navigate('/browse'),
+    // Old hotkeys kept as muscle-memory shortcuts to specific Browse tabs.
+    'g t': () => navigate('/browse?tab=streams'),
+    'g x': () => navigate('/browse?tab=categories'),
     'g l': () => navigate('/library'),
     'g q': () => navigate('/quarantine'),
     'g p': () => navigate('/promotions'),

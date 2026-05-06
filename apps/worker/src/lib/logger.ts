@@ -3,7 +3,7 @@ import { env } from './env.js';
 
 /**
  * Worker logger. In development we crank the level to `debug` and
- * serialise full error stacks so silent failures (a swallowed
+ * serialize full error stacks so silent failures (a swallowed
  * try/catch, a BullMQ retry that fails on every attempt) actually
  * surface in the terminal. Operators can override with LOG_LEVEL.
  */

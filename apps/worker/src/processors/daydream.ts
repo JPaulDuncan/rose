@@ -181,7 +181,7 @@ function adapterOptions(
 /**
  * The system prompt is the load-bearing piece for prompt-injection
  * defense. External snippet content arrives in the user message
- * labelled as data; the model is told to treat any embedded
+ * labeled as data; the model is told to treat any embedded
  * instructions as text-to-ignore.
  */
 const SYSTEM_PROMPT = `You are a librarian writing a short encyclopedic background entry.
@@ -426,7 +426,7 @@ async function markFailed(
 
 /**
  * Research one subject end-to-end: fetch snippets from each enabled
- * adapter, synthesise via the user's gen provider, persist note.
+ * adapter, synthesize via the user's gen provider, persist note.
  * Returns true if a note was successfully written.
  */
 async function researchSubject(

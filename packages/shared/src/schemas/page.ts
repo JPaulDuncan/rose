@@ -93,7 +93,7 @@ export type PageMergeDraft = z.infer<typeof PageMergeDraft>;
  * Output shape for the `extract.entities` instruction. The LLM
  * returns up to 12 named entities (people, works, organizations)
  * along with short alternate forms the page itself uses. The worker
- * normalises each name into a kebab `normKey` and persists onto
+ * normalizes each name into a kebab `normKey` and persists onto
  * Page.entities + the per-user Entity collection.
  */
 export const EntityExtraction = z.object({

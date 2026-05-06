@@ -32,7 +32,7 @@ async function templateFor(userId: Types.ObjectId): Promise<string | null> {
 
 /**
  * Extract named entities from a page via one LLM call. Returns the
- * normalised list (deduped, kebab-keyed). Best-effort: any failure
+ * normalized list (deduped, kebab-keyed). Best-effort: any failure
  * downstream — provider unavailable, JSON parse, Zod validation —
  * yields an empty array so this step can never block page persistence.
  *
@@ -112,7 +112,7 @@ export async function extractEntitiesFromPage(
 
     // Upsert the registry row so the directory page and the
     // auto-linker have a stable backing store. Aliases the LLM
-    // emitted are normalised through the same kebab function as the
+    // emitted are normalized through the same kebab function as the
     // primary key. We $addToSet so existing aliases survive a
     // re-extraction without wiping the user's prior data.
     const aliasKeys = (e.aliases ?? [])

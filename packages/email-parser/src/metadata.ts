@@ -129,7 +129,7 @@ function extractLinks(text: string, html: string | null): EmailLink[] {
  *      words ("please", "thanks", "thank", "hello", "hi", "regards",
  *      "okay", "cheers") that have no business being a topic.
  *
- * Lower-cased lookup; callers normalise before checking.
+ * Lower-cased lookup; callers normalize before checking.
  */
 const STOPWORDS = new Set(
   (

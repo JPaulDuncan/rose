@@ -17,7 +17,7 @@ const STOP = new Set([
 /**
  * Lowercase, split on non-word, drop stopwords, and dedup per document.
  * We deliberately use a *binary* representation (each token counted once
- * per document) — multinomial Bayes on word freq favours long emails too
+ * per document) — multinomial Bayes on word freq favors long emails too
  * heavily, which is exactly what spammers send.
  */
 export function tokenizeForBayes(text: string): string[] {

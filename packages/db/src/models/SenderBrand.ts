@@ -13,7 +13,7 @@ import { Schema, model, type InferSchemaType, type HydratedDocument, Types } fro
  * `Sender` row when both exist. Writes route accordingly: any
  * field that Rose can learn from public signals (favicon for
  * domain, sender's own marketing URLs, the LLM brief) goes here;
- * anything tied to a user's behaviour (email counts, spam-mark
+ * anything tied to a user's behavior (email counts, spam-mark
  * threshold, stripAds toggle) stays on the per-user row.
  *
  * `forgottenBriefBy[]` mirrors `DaydreamNote.forgottenBy` — a user

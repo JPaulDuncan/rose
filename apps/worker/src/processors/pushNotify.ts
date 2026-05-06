@@ -35,7 +35,7 @@ export async function pushToUser(
   userId: Types.ObjectId,
   notification: PushJobData['notification'],
 ): Promise<{ sent: number; removed: number }> {
-  // Make sure VAPID is initialised. No-op when env keys present.
+  // Make sure VAPID is initialized. No-op when env keys present.
   getVapidKeys();
   const subs = await PushSubscription.find({ userId }).lean();
   let sent = 0;

@@ -53,7 +53,7 @@ async function senderBrandsForPage(
  * API layer so we can attach the map to GET /api/pages responses
  * without round-tripping through the worker. Returns an exhaustive
  * map (one entry per input) — falls back to title-cased canonical
- * for tags the user hasn't customised yet.
+ * for tags the user hasn't customized yet.
  */
 async function tagDisplayNamesFor(
   userId: Types.ObjectId,

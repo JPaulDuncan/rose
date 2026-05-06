@@ -41,12 +41,12 @@ async function uniqueSlug(userId: Types.ObjectId, base: string): Promise<string>
 }
 
 /**
- * Synthesise a user-selected set of wiki pages into a meta-entry.
+ * Synthesize a user-selected set of wiki pages into a meta-entry.
  * Streams tokens; on completion persists a new Page with
  * groupingMode='synthesis' + synthesisOf[] populated so the source
  * pages are reachable from the result.
  */
-synthesisRouter.post('/synthesise', async (req, res) => {
+synthesisRouter.post('/synthesize', async (req, res) => {
   const userId = new Types.ObjectId(userIdOf(req));
   const body = (req.body ?? {}) as {
     pageIds?: string[];
@@ -94,7 +94,7 @@ synthesisRouter.post('/synthesise', async (req, res) => {
   res.flushHeaders();
   const send = (data: unknown) => res.write(`data: ${JSON.stringify(data)}\n\n`);
 
-  // Build the labelled context block.
+  // Build the labeled context block.
   const citations: CitationMap = {};
   const entries = pages
     .map((p, i) => {

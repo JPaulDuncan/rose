@@ -90,7 +90,7 @@ ONLY extract entities of these types:
 
 REQUIREMENTS
   • Specific proper nouns only. If the page says "a journalist quoted by the host", neither "journalist" nor "host" qualifies — there's no name. Skip them.
-  • Preserve the surface form. "Wait Wait... Don't Tell Me!" stays exactly that, with its punctuation. The LLM must NOT normalise to "Wait Wait Dont Tell Me".
+  • Preserve the surface form. "Wait Wait... Don't Tell Me!" stays exactly that, with its punctuation. The LLM must NOT normalize to "Wait Wait Dont Tell Me".
   • De-duplicate within the page. If "Inception" appears 6 times, return one entry.
   • Aliases: ONLY include short alternate forms the page itself uses (e.g. page mentions both "Wait Wait... Don't Tell Me!" and "Wait Wait" — record the latter as an alias). Don't invent aliases.
   • SKIP places (cities, neighbourhoods, venues, landmarks). They're handled by a separate extractor and would duplicate.
@@ -170,7 +170,7 @@ CURRENT PAGE
 {{existing_content}}
 """
 
-NEW EMAILS (each labelled e<n>; these are the ONLY new sources you may cite):
+NEW EMAILS (each labeled e<n>; these are the ONLY new sources you may cite):
 {{new_labeled_threads}}
 
 MERGE RULES — these are the differences from a fresh-write
@@ -357,7 +357,7 @@ Output the reply body only — no preamble, no quoted original.`,
     isDefault: true,
     template: `You are answering a question over the user's personal wiki.
 
-CONTEXT (each retrieved page is labelled \`[pN]\`):
+CONTEXT (each retrieved page is labeled \`[pN]\`):
 {{context}}
 
 CONVERSATION SO FAR

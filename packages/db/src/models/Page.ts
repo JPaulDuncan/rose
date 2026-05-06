@@ -40,7 +40,7 @@ const pageSchema = new Schema(
     /**
      * For pages produced by synthesis or briefings — tracks the source
      * pages that fed into them. Surfaced in the UI as "drew from" and
-     * lets us offer a "re-synthesise" action when the underlying pages
+     * lets us offer a "re-synthesize" action when the underlying pages
      * change.
      */
     synthesisOf: { type: [Schema.Types.ObjectId], default: [] },
@@ -184,7 +184,7 @@ const pageSchema = new Schema(
     /**
      * Discriminator for who wrote the current revision:
      *   'llm'   — produced by generatePage from contributing emails
-     *   'synth' — produced by /api/pages/synthesise from other pages
+     *   'synth' — produced by /api/pages/synthesize from other pages
      *   'briefing' — produced by the weekly briefing worker
      *   'human' — saved manually via the editor (PATCH /api/pages)
      * Null = legacy rows from before this field was added.

@@ -16,9 +16,9 @@ describe('normalizeCategoryName', () => {
       '  email   marketing  ',
       'Email-Marketing!',
     ];
-    const normalised = new Set(variants.map(normalizeCategoryName));
-    expect(normalised.size).toBe(1);
-    expect([...normalised][0]).toBe('email marketing');
+    const normalized = new Set(variants.map(normalizeCategoryName));
+    expect(normalized.size).toBe(1);
+    expect([...normalized][0]).toBe('email marketing');
   });
 
   it('handles unicode and digits', () => {

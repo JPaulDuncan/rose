@@ -8,7 +8,7 @@ import { isNominalTag, filterNominalTags, singularize } from '@rose/email-parser
  * heuristic topic extractor sees them as capitalised proper-noun-
  * looking phrases. The shared isNominalTag / filterNominalTags
  * helpers keep this junk off pages, and these tests pin the
- * behaviour so a regression shows up loudly.
+ * behavior so a regression shows up loudly.
  */
 describe('isNominalTag', () => {
   it('accepts plausible noun tags', () => {

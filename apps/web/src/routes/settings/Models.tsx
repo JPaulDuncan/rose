@@ -166,7 +166,7 @@ function SystemStatsCard() {
   const memPct = memTotal > 0 ? Math.round((memUsed / memTotal) * 100) : 0;
   const isContainerLimited = data.host.memory.cgroupLimitBytes != null;
 
-  // 1m load average normalised to per-core so 100% means "fully loaded".
+  // 1m load average normalized to per-core so 100% means "fully loaded".
   const load1m = data.host.cpu.loadAvg[0] ?? 0;
   const cpuPct = Math.min(
     999,

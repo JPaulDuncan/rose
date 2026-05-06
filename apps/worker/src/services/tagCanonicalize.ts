@@ -21,17 +21,17 @@ import { logger } from '../lib/logger.js';
  * single `find()` and zero LLM calls.
  *
  * Failure mode: if the LLM call or its JSON validation fails, the
- * function logs and returns the raw normalised tags unchanged —
+ * function logs and returns the raw normalized tags unchanged —
  * canonicalisation is a polish step, never load-bearing.
  */
 export async function canonicalizeTags(
   userId: Types.ObjectId,
   rawTags: string[],
 ): Promise<string[]> {
-  const normalised = [
+  const normalized = [
     ...new Set(rawTags.map((t) => normalizeTagKey(t)).filter((t) => t.length > 0)),
   ];
-  if (normalised.length === 0) return [];
+  if (normalized.length === 0) return [];
 
   // Direct canonical or alias hit. Cheap; covers the steady state
   // where every tag is already known. If every tag resolves we
@@ -39,8 +39,8 @@ export async function canonicalizeTags(
   const directHits = await TagCanonical.find({
     userId,
     $or: [
-      { canonical: { $in: normalised } },
-      { aliases: { $in: normalised } },
+      { canonical: { $in: normalized } },
+      { aliases: { $in: normalized } },
     ],
   })
     .select('canonical aliases')
@@ -48,12 +48,12 @@ export async function canonicalizeTags(
 
   const resolved = new Map<string, string>();
   for (const row of directHits) {
-    if (normalised.includes(row.canonical)) resolved.set(row.canonical, row.canonical);
+    if (normalized.includes(row.canonical)) resolved.set(row.canonical, row.canonical);
     for (const a of row.aliases ?? []) {
-      if (normalised.includes(a)) resolved.set(a, row.canonical);
+      if (normalized.includes(a)) resolved.set(a, row.canonical);
     }
   }
-  const unknown = normalised.filter((t) => !resolved.has(t));
+  const unknown = normalized.filter((t) => !resolved.has(t));
   if (unknown.length === 0) {
     return [...new Set(resolved.values())];
   }
@@ -118,7 +118,7 @@ export async function canonicalizeTags(
 
   // Apply the LLM's mappings. For any emitted tag the LLM didn't
   // map (defensive — the prompt requires every tag to appear), we
-  // synthesise a fresh canonical from the tag itself.
+  // synthesize a fresh canonical from the tag itself.
   const llmMap = new Map<string, { canonical: string; displayName: string; isNew: boolean }>();
   for (const m of parsed.mappings) {
     const tagKey = normalizeTagKey(m.tag);

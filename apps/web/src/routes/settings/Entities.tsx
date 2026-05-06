@@ -326,7 +326,7 @@ function EntityRowEditor({
               placeholder="wait-wait, ww-dtm"
             />
             <span className="mt-1 block text-[11px] text-ink-500">
-              Future page extractions whose entity normalises to any
+              Future page extractions whose entity normalizes to any
               alias here will fold into <code>{row.key}</code>.
             </span>
           </label>

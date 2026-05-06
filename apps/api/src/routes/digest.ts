@@ -156,7 +156,7 @@ digestRouter.get('/', async (req, res) => {
     null;
 
   // ── Top stories (above-the-fold "Top Stories" hero block) ─────────
-  // Lead + 3 ranked secondaries. Ranking favours high priority, then
+  // Lead + 3 ranked secondaries. Ranking favors high priority, then
   // notification streams (which often surface real incidents), then
   // pages with the richest content (most contributing emails / words).
   // We exclude the lead from the secondaries list and pull from the

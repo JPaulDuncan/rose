@@ -13,20 +13,20 @@ export function FavoriteButton({ pageId }: { pageId: string }) {
   const [favorited, setFavorited] = useState<boolean | null>(null);
 
   useEffect(() => {
-    let cancelled = false;
+    let canceled = false;
     api
       .post<{ states: Record<string, { favorited: boolean }> }>('/api/page-state/lookup', {
         pageIds: [pageId],
       })
       .then((r) => {
-        if (cancelled) return;
+        if (canceled) return;
         setFavorited(!!r.states[pageId]?.favorited);
       })
       .catch(() => {
-        if (!cancelled) setFavorited(false);
+        if (!canceled) setFavorited(false);
       });
     return () => {
-      cancelled = true;
+      canceled = true;
     };
   }, [api, pageId]);
 

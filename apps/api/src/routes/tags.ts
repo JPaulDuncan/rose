@@ -45,7 +45,7 @@ tagsRouter.get('/canonicals', async (req, res) => {
     aggregateTagCounts(userId),
   ]);
 
-  // Compose: every canonical row + a synthesised "uncanonical"
+  // Compose: every canonical row + a synthesized "uncanonical"
   // entry per emergent tag the user has on pages but no canonical
   // for. Both shapes match so the UI can render them in one list.
   const known = new Set(canonicals.map((c) => c.canonical));
@@ -84,7 +84,7 @@ tagsRouter.get('/canonicals', async (req, res) => {
 
 /**
  * Update displayName and / or aliases on a canonical. Aliases the
- * user pastes are normalised through `normalizeTagKey` so "Job
+ * user pastes are normalized through `normalizeTagKey` so "Job
  * Postings" or "Job_Postings" all collapse to "job-postings". An
  * alias collision with a different canonical is rejected — the
  * caller should merge instead.

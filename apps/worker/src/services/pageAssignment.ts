@@ -169,7 +169,7 @@ export async function findPageForEmail(email: EmailDoc): Promise<Assignment> {
  * anchor for cross-sender consolidation. The rules tilt toward
  * proper-noun-y, multi-word phrases:
  *   • length ≥ 3 chars
- *   • contains a space OR is title-cased OR is a recognised hashtag
+ *   • contains a space OR is title-cased OR is a recognized hashtag
  *
  * "iran" alone won't qualify; "war in iran" will. "Job opportunities"
  * (two words) qualifies; "jobs" alone doesn't. This is deliberately

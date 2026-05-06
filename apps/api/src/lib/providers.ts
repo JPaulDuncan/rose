@@ -9,7 +9,7 @@ import { decryptJson } from './crypto.js';
 import { env } from './env.js';
 
 /** Optional sampler overrides plumbed in from the user's settings.
- *  Each field is null/undefined when the user hasn't customised it,
+ *  Each field is null/undefined when the user hasn't customized it,
  *  in which case the call site should fall back to its baked-in
  *  per-task default (e.g. 0.2 for JSON-mode wiki generation). */
 export type GenerationParamOverrides = {

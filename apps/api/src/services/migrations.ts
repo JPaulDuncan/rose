@@ -296,7 +296,7 @@ export async function migrateSenderBrandsToGlobal(): Promise<void> {
  *   • `logoLocked: true` rows have their `logoUrl` copied to
  *     `logoUrlOverride` so the user keeps seeing their pinned logo.
  *   • Any `name` that differs from the brand-global default ends
- *     up on `nameOverride` so user-customised display names
+ *     up on `nameOverride` so user-customized display names
  *     ("Dad" instead of "john.smith.42@gmail.com") survive.
  *   • Hand-curated summaries (summaryLocked rows) were already
  *     promoted onto SenderBrand by `migrateSenderBrandsToGlobal`'s

@@ -4,15 +4,15 @@ import { Sparkles, X, ExternalLink } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useAuth } from '../lib/auth';
 
-type LabelledPage = { label: string; _id: string; slug: string; title: string };
+type LabeledPage = { label: string; _id: string; slug: string; title: string };
 
 /**
- * Streaming drawer that synthesises a user-selected set of wiki
- * entries into a single meta-page. Hits POST /api/pages/synthesise
+ * Streaming drawer that synthesizes a user-selected set of wiki
+ * entries into a single meta-page. Hits POST /api/pages/synthesize
  * over SSE and shows tokens live; on completion offers a link to the
  * new page.
  */
-export function SynthesiseDrawer({
+export function SynthesizeDrawer({
   pageIds,
   defaultTitle,
   onClose,
@@ -27,7 +27,7 @@ export function SynthesiseDrawer({
   const [title, setTitle] = useState(defaultTitle ?? '');
   const [streaming, setStreaming] = useState(false);
   const [buffer, setBuffer] = useState('');
-  const [pages, setPages] = useState<LabelledPage[]>([]);
+  const [pages, setPages] = useState<LabeledPage[]>([]);
   const [created, setCreated] = useState<{ slug: string; pageId: string } | null>(null);
 
   async function run() {
@@ -39,7 +39,7 @@ export function SynthesiseDrawer({
     setBuffer('');
     setCreated(null);
     try {
-      const res = await fetch('/api/pages/synthesise', {
+      const res = await fetch('/api/pages/synthesize', {
         method: 'POST',
         credentials: 'include',
         headers: {
@@ -71,7 +71,7 @@ export function SynthesiseDrawer({
             continue;
           }
           if (payload.type === 'pages') {
-            setPages(payload.pages as LabelledPage[]);
+            setPages(payload.pages as LabeledPage[]);
           } else if (payload.type === 'token') {
             buf += (payload.delta as string) ?? '';
             setBuffer(buf);
@@ -106,7 +106,7 @@ export function SynthesiseDrawer({
           <div className="flex items-center gap-2 text-sm">
             <Sparkles className="h-4 w-4 text-rose-500" />
             <span className="font-semibold">
-              Synthesise {pageIds.length} entries into one
+              Synthesize {pageIds.length} entries into one
             </span>
           </div>
           <button type="button" className="btn-ghost" onClick={onClose}>
@@ -144,7 +144,7 @@ export function SynthesiseDrawer({
                 onClick={run}
                 disabled={pageIds.length < 2}
               >
-                <Sparkles className="h-3.5 w-3.5" /> Synthesise
+                <Sparkles className="h-3.5 w-3.5" /> Synthesize
               </button>
             </div>
           </>

@@ -83,7 +83,7 @@ export default function SearchPage() {
   const saveSearch = useMutation({
     mutationFn: async () => {
       const name = window.prompt('Save this search as:', debounced.slice(0, 40)) ?? '';
-      if (!name.trim()) throw new Error('cancelled');
+      if (!name.trim()) throw new Error('canceled');
       return api.post<{ id: string; name: string }>('/api/me/saved-searches', {
         name: name.trim(),
         query: debounced,
@@ -98,7 +98,7 @@ export default function SearchPage() {
       qc.invalidateQueries({ queryKey: ['saved-searches'] });
     },
     onError: (e: Error) => {
-      if (e.message !== 'cancelled') toast.error(e.message);
+      if (e.message !== 'canceled') toast.error(e.message);
     },
   });
 

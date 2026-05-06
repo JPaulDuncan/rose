@@ -127,8 +127,7 @@ export async function createServer(): Promise<Express> {
   app.use('/api/webhooks', requireAuth, webhooksRouter);
   app.use('/api/push', requireAuth, pushRouter);
   // Mount synthesis under /api/pages so the URL stays
-  // /api/pages/synthesise per the plan, alongside the existing pages
-  // CRUD.
+  // /api/pages/synthesize alongside the existing pages CRUD.
   app.use('/api/pages', requireAuth, synthesisRouter);
   app.use('/api/pages', requireAuth, pageStateRouter);
   app.use('/api/page-state', requireAuth, pageStateLookupRouter);

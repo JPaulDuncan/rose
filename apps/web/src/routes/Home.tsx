@@ -186,7 +186,6 @@ export default function HomePage() {
 
         <aside className="space-y-6 lg:col-span-1">
           <UpcomingEvents />
-          <FeaturedTagsWidget featuredTags={data.featuredTags} />
           <Sidebar
             topSenders={data.topSenders}
             topTopics={data.topTopics}
@@ -279,7 +278,7 @@ function Stat({
 
 /**
  * The label that sits above a headline in real online newsrooms — small
- * caps, letter-spaced, sometimes coloured (red for breaking, neutral for
+ * caps, letter-spaced, sometimes colored (red for breaking, neutral for
  * analysis). Driven by the page's flags + priority + primary tag, with
  * a stable precedence so the same page always gets the same eyebrow.
  */
@@ -1121,127 +1120,6 @@ function FeatureLead({ page }: { page: DigestPage }) {
         </p>
       </div>
     </Link>
-  );
-}
-
-function FeaturedTagsWidget({ featuredTags }: { featuredTags: string[] }) {
-  const api = useApi();
-  const qc = useQueryClient();
-  const [input, setInput] = useState('');
-
-  const { data: directory } = useQuery({
-    queryKey: ['tag-directory'],
-    queryFn: () => api.get<{ tags: { tag: string; pageCount: number }[] }>('/api/tags'),
-  });
-
-  const add = useMutation({
-    mutationFn: async (tag: string) =>
-      api.post<{ tags: string[] }>('/api/featured-tags', { tag }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['digest'] });
-      setInput('');
-    },
-    onError: (e: Error) => toast.error(e.message),
-  });
-  const remove = useMutation({
-    mutationFn: async (tag: string) =>
-      api.del<{ tags: string[] }>(`/api/featured-tags/${encodeURIComponent(tag)}`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['digest'] }),
-  });
-
-  const suggestions =
-    directory?.tags
-      ?.filter((d) => !featuredTags.includes(d.tag))
-      ?.slice(0, 8) ?? [];
-
-  return (
-    <div className="card">
-      <div className="mb-3 flex items-center gap-2 text-xs uppercase tracking-widest text-ink-500">
-        <Star className="h-3.5 w-3.5" /> Featured topics
-      </div>
-      <p className="mb-2 text-xs text-ink-500">
-        Pin the tags you care about. Each becomes a section in your edition.
-      </p>
-
-      {featuredTags.length > 0 && (
-        <div className="mb-3 flex flex-wrap gap-1.5">
-          {featuredTags.map((t) => (
-            <span
-              key={t}
-              className="inline-flex items-center gap-1 rounded-full bg-rose-100 px-2 py-0.5 text-xs font-medium text-rose-800 dark:bg-rose-950/40 dark:text-rose-200"
-            >
-              #{t}
-              <button
-                type="button"
-                onClick={() => remove.mutate(t)}
-                aria-label={`Unpin ${t}`}
-                className="-mr-1 ml-0.5 rounded-full p-0.5 hover:bg-rose-200 dark:hover:bg-rose-900/60"
-              >
-                <X className="h-3 w-3" />
-              </button>
-            </span>
-          ))}
-        </div>
-      )}
-
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          const v = input.trim().toLowerCase();
-          if (!v) return;
-          if (featuredTags.includes(v)) {
-            toast.error('Already featured');
-            return;
-          }
-          add.mutate(v);
-        }}
-        className="flex gap-1"
-      >
-        <input
-          className="input text-xs"
-          list="featured-tag-suggestions"
-          placeholder="add a tag…"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-        />
-        <datalist id="featured-tag-suggestions">
-          {suggestions.map((s) => (
-            <option key={s.tag} value={s.tag}>
-              {s.pageCount} page{s.pageCount === 1 ? '' : 's'}
-            </option>
-          ))}
-        </datalist>
-        <button
-          className="btn-primary text-xs"
-          type="submit"
-          disabled={add.isPending || !input.trim()}
-          aria-label="Pin tag"
-        >
-          <Plus className="h-3.5 w-3.5" />
-        </button>
-      </form>
-
-      {suggestions.length > 0 && featuredTags.length < 3 && (
-        <div className="mt-3">
-          <div className="mb-1 text-[10px] uppercase tracking-widest text-ink-400">
-            Suggestions
-          </div>
-          <div className="flex flex-wrap gap-1">
-            {suggestions.slice(0, 6).map((s) => (
-              <button
-                key={s.tag}
-                type="button"
-                onClick={() => add.mutate(s.tag)}
-                className="pill text-[10px] hover:bg-rose-100 hover:text-rose-800 dark:hover:bg-rose-950/40 dark:hover:text-rose-300"
-                title={`${s.pageCount} pages`}
-              >
-                #{s.tag}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
   );
 }
 

@@ -18,11 +18,10 @@ const HomePage = lazy(() => import('./routes/Home'));
 const PageView = lazy(() => import('./routes/Page'));
 const SearchPage = lazy(() => import('./routes/Search'));
 const CalendarPage = lazy(() => import('./routes/Calendar'));
-const StreamsPage = lazy(() => import('./routes/Streams'));
+const BrowsePage = lazy(() => import('./routes/Browse'));
 const TagPage = lazy(() => import('./routes/Tag'));
 const EntityPage = lazy(() => import('./routes/Entity'));
 const EmailView = lazy(() => import('./routes/Email'));
-const CodexPage = lazy(() => import('./routes/Codex'));
 const SenderPage = lazy(() => import('./routes/Sender'));
 const QuarantinePage = lazy(() => import('./routes/Quarantine'));
 const PromotionsPage = lazy(() => import('./routes/Promotions'));
@@ -107,8 +106,11 @@ export default function App() {
         <Route path="/n/:key" element={<EntityPage />} />
         <Route path="/search" element={<SearchPage />} />
         <Route path="/calendar" element={<CalendarPage />} />
-        <Route path="/streams" element={<StreamsPage />} />
-        <Route path="/codex" element={<CodexPage />} />
+        <Route path="/browse" element={<BrowsePage />} />
+        {/* Old discovery surfaces folded into /browse — keep redirects so
+            existing bookmarks land on the right tab. */}
+        <Route path="/streams" element={<Navigate to="/browse?tab=streams" replace />} />
+        <Route path="/codex" element={<Navigate to="/browse?tab=categories" replace />} />
         <Route path="/s/:brandKey" element={<SenderPage />} />
         <Route path="/quarantine" element={<QuarantinePage />} />
         <Route path="/promotions" element={<PromotionsPage />} />

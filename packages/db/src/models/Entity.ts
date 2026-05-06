@@ -1,7 +1,7 @@
 import { Schema, model, type InferSchemaType, type HydratedDocument } from 'mongoose';
 
 /**
- * Named entity types the registry recognises. `person`, `work`, and
+ * Named entity types the registry recognizes. `person`, `work`, and
  * `organization` come from the linker-driven `extract.entities`
  * step. `place` rows are written by the place-extraction step
  * (post-geocoding) so /n/<key> can route uniformly without
@@ -50,7 +50,7 @@ const entitySchema = new Schema(
     displayName: { type: String, required: true },
     type: { type: String, enum: ENTITY_TYPES, required: true, index: true },
     /** Other surface forms that should fold into this entity. Stored
-     *  in normalised kebab form. */
+     *  in normalized kebab form. */
     aliases: { type: [String], default: [], index: true },
     /** Rolling count of pages currently carrying this entity. Lazy;
      *  best-effort signal for sorting in the directory UI. */

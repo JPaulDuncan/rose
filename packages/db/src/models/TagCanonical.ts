@@ -52,7 +52,7 @@ const tagCanonicalSchema = new Schema(
     displayName: { type: String, default: '' },
     /**
      * Other surface forms that map to this canonical. Persisted in
-     * normalised kebab form so a quick `aliases: { $in: [...] }`
+     * normalized kebab form so a quick `aliases: { $in: [...] }`
      * lookup resolves "remote-work" / "fully-remote" /
      * "wfh" → the same canonical.
      */
