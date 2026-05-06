@@ -35,6 +35,7 @@ import { dispatchWebhookEvent } from './webhookDeliver.js';
 import { evaluatePageNotifications } from './pushNotify.js';
 import { describePageImages } from '../services/describeImages.js';
 import { extractPlacesFromPage, hashContent } from '../services/extractPlaces.js';
+import { extractEntitiesFromPage } from '../services/extractEntities.js';
 import { geocode, normalizePlaceKey } from '../lib/geocode.js';
 import { canonicalizeTags } from '../services/tagCanonicalize.js';
 import { findMergeSuggestions } from '../services/mergeDetect.js';
@@ -302,6 +303,35 @@ async function runPlacesExtraction(
   page.places = next as typeof page.places;
   page.placesExtractedFromHash = hash;
   page.markModified('places');
+  await page.save();
+}
+
+/**
+ * Run the named-entity extractor on the freshly-saved page if its
+ * contentMd has changed since the last successful run. Idempotent
+ * on the same content hash (mirrors `runPlacesExtraction`). Always
+ * best-effort — failures inside `extractEntitiesFromPage` already
+ * yield an empty list.
+ */
+async function runEntityExtraction(
+  userId: Types.ObjectId,
+  page: PageDoc,
+): Promise<void> {
+  const hash = hashContent(page.contentMd ?? '');
+  if (hash && page.entitiesExtractedFromHash === hash) return;
+  const extracted = await extractEntitiesFromPage(userId, page);
+  // Replace wholesale — if the page no longer mentions an entity it
+  // shouldn't keep the link. The Entity collection row stays
+  // (other pages may still reference it); only the page-level
+  // membership is rewritten.
+  page.entities = extracted.map((e) => ({
+    name: e.name.slice(0, 200),
+    normKey: e.normKey,
+    type: e.type,
+    displayName: e.displayName,
+  })) as typeof page.entities;
+  page.entitiesExtractedFromHash = hash;
+  page.markModified('entities');
   await page.save();
 }
 
@@ -1144,6 +1174,17 @@ export function startGeneratePageWorker() {
             logger.warn(
               { err: (err as Error).message, pageId: String(pageId) },
               'places extraction step failed',
+            );
+          }
+          // Named-entity extraction — people, works, organizations.
+          // Drives auto-linking in prose and the /n/<key> entity
+          // page. Idempotent on the contentMd hash; best-effort.
+          try {
+            await runEntityExtraction(userId, pageObj);
+          } catch (err) {
+            logger.warn(
+              { err: (err as Error).message, pageId: String(pageId) },
+              'entity extraction step failed',
             );
           }
         }

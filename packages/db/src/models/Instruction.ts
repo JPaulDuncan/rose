@@ -21,6 +21,7 @@ const instructionSchema = new Schema(
         'synthesis',
         'tag-digest',
         'places',
+        'entities',
         'consolidate',
         'tag-canon',
       ],

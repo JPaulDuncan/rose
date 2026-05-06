@@ -255,6 +255,38 @@ const pageSchema = new Schema(
      * so we can skip the LLM call when the page body hasn't moved.
      */
     placesExtractedFromHash: { type: String, default: null },
+    /**
+     * Named entities extracted from the page body — people, works
+     * (movies, shows, books, songs, articles), and organizations.
+     * Each entry is rendered as a clickable link in the prose
+     * (auto-linker matches `displayName` and any persisted aliases)
+     * and surfaced in the right-rail "Mentions" card. Routing target
+     * is `/n/<normKey>` regardless of type.
+     */
+    entities: {
+      type: [
+        new Schema(
+          {
+            name: { type: String, required: true, maxlength: 200 },
+            /** Kebab-case lookup key, used as the URL slug. */
+            normKey: { type: String, required: true, maxlength: 200, index: true },
+            type: {
+              type: String,
+              enum: ['person', 'work', 'organization'],
+              required: true,
+            },
+            /** Display form preserved from the LLM output ("Wait
+             *  Wait... Don't Tell Me!"). Falls back to `name`. */
+            displayName: { type: String, default: '' },
+          },
+          { _id: false },
+        ),
+      ],
+      default: [],
+    },
+    /** Content-hash gate for entity extraction; same idempotent
+     *  pattern as `placesExtractedFromHash`. */
+    entitiesExtractedFromHash: { type: String, default: null },
     daydreamSubjects: {
       type: [
         new Schema(

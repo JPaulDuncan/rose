@@ -1,0 +1,48 @@
+import { Schema, model, type InferSchemaType, type HydratedDocument } from 'mongoose';
+
+/**
+ * Named entity types the extractor recognises. Kept narrow on
+ * purpose — every type adds prompt complexity and surface area for
+ * false positives. Places live in Page.places (with geocoding) but
+ * are still linkable through the same /n/:key route, so the entity
+ * page handles them as first-class even though they're not in this
+ * Entity collection.
+ */
+export const ENTITY_TYPES = ['person', 'work', 'organization'] as const;
+export type EntityType = (typeof ENTITY_TYPES)[number];
+
+/**
+ * Per-user named-entity registry. One row per (userId, key) so the
+ * /n/:key route, the auto-linker, and the future Settings →
+ * Entities tab can all share a fast lookup. `aliases` lets the LLM
+ * fold "Wait Wait" into the same row as "Wait Wait... Don't Tell
+ * Me!" without spawning two pages.
+ */
+const entitySchema = new Schema(
+  {
+    userId: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+    /** Stable kebab-case lookup key. Used as the URL slug
+     *  (`/n/<key>`) and as the value the auto-linker matches
+     *  against. */
+    key: { type: String, required: true },
+    /** Human-readable form rendered in prose ("Wait Wait... Don't
+     *  Tell Me!"). The original casing + punctuation the LLM
+     *  emitted. */
+    displayName: { type: String, required: true },
+    type: { type: String, enum: ENTITY_TYPES, required: true, index: true },
+    /** Other surface forms that should fold into this entity. Stored
+     *  in normalised kebab form. */
+    aliases: { type: [String], default: [], index: true },
+    /** Rolling count of pages currently carrying this entity. Lazy;
+     *  best-effort signal for sorting in the directory UI. */
+    pageCount: { type: Number, default: 0 },
+    lastSeenAt: { type: Date, default: () => new Date() },
+  },
+  { timestamps: true },
+);
+
+entitySchema.index({ userId: 1, key: 1 }, { unique: true });
+entitySchema.index({ userId: 1, type: 1, pageCount: -1 });
+
+export type EntityDoc = HydratedDocument<InferSchemaType<typeof entitySchema>>;
+export const Entity = model('Entity', entitySchema);

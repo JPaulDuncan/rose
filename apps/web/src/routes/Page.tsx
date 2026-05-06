@@ -30,6 +30,9 @@ import {
   MapPin as MapPinIcon,
   GitMerge,
   X as XIcon,
+  User as UserIcon,
+  Film,
+  Building2,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import ReactMarkdown from 'react-markdown';
@@ -94,6 +97,15 @@ type PageDoc = {
     displayName: string | null;
     geocodedAt: string | null;
     failed: boolean;
+  }[];
+  /** Named entities — people, works, organizations — extracted
+   *  from the page body. Each gets auto-linked in prose to
+   *  `/n/<normKey>` and surfaced in the right-rail Mentions card. */
+  entities?: {
+    name: string;
+    normKey: string;
+    type: 'person' | 'work' | 'organization';
+    displayName: string;
   }[];
   spamScore?: number;
   flags?: {
@@ -344,6 +356,8 @@ export default function PageView() {
                 citations={page.citations ?? {}}
                 tags={page.tags ?? []}
                 topics={page.topics ?? []}
+                entities={page.entities ?? []}
+                places={page.places ?? []}
               />
             </article>
             <SourcesSection
@@ -358,6 +372,7 @@ export default function PageView() {
               body scrolls past them. */}
           <aside className="space-y-4 lg:sticky lg:top-4 lg:self-start">
             <PlacesCard places={page.places ?? []} />
+            <MentionsCard entities={page.entities ?? []} />
             <TopicsBlock topics={page.topics ?? []} />
             <ImagesBlock
               images={page.pageImages ?? []}
@@ -465,46 +480,119 @@ const CITATION_RE = /\[((?:e\d+\s*,\s*)*e\d+)\]/g;
  * and list items get walked for citation tokens. The rest of the markdown
  * (headings, lists, code, tables) goes through unchanged.
  */
+/**
+ * One match record produced by the auto-linker's compiled regex.
+ * The `route` decides what page we link to; `target` is the slug
+ * to URL-encode.
+ */
+type LinkSpec = {
+  /** Lowercased phrase used as the regex alternative. */
+  phrase: string;
+  route: 'tag' | 'entity';
+  target: string;
+  /** What we render the link as when caller displays it (currently
+   *  unused — we render the matched text verbatim, matching the
+   *  prior tag behaviour, but kept around for future "show
+   *  displayName instead" tweaks). */
+  display?: string;
+  /** Tooltip override. */
+  title?: string;
+};
+
+/**
+ * Auto-link compiled regex + lookup. The lookup is keyed on the
+ * lowercased matched phrase (with optional trailing 's' stripped)
+ * so plural matching for tags continues to work without crossing
+ * over into entity matching.
+ */
+type Linker = {
+  re: RegExp;
+  lookup: Map<string, LinkSpec>;
+};
+
+function buildLinker(args: {
+  tags?: string[];
+  topics?: string[];
+  entities?: PageDoc['entities'];
+  places?: PageDoc['places'];
+}): Linker | null {
+  const lookup = new Map<string, LinkSpec>();
+  const phrases = new Set<string>();
+  const add = (rawPhrase: string, spec: LinkSpec) => {
+    const phrase = rawPhrase.trim().toLowerCase();
+    if (!phrase || phrase.length < 3) return;
+    if (lookup.has(phrase)) return; // first one wins; entities are added before tags
+    lookup.set(phrase, spec);
+    phrases.add(phrase);
+  };
+  // Entities first so a tag that happens to share a phrase with an
+  // entity defers to the more specific link target. Places get
+  // routed through /n/<normKey> too — the entity page knows how to
+  // render places (map + page list).
+  for (const e of args.entities ?? []) {
+    add(e.displayName || e.name, {
+      phrase: (e.displayName || e.name).toLowerCase(),
+      route: 'entity',
+      target: e.normKey,
+      title: `Open ${e.displayName || e.name}`,
+    });
+  }
+  for (const p of args.places ?? []) {
+    add(p.name, {
+      phrase: p.name.toLowerCase(),
+      route: 'entity',
+      target: p.normKey,
+      title: `Open ${p.name}`,
+    });
+  }
+  for (const t of [...new Set([...(args.tags ?? []), ...(args.topics ?? [])])]) {
+    add(t, {
+      phrase: t.trim().toLowerCase(),
+      route: 'tag',
+      target: t.trim().toLowerCase(),
+      title: `See all #${t.trim().toLowerCase()}`,
+    });
+  }
+  if (phrases.size === 0) return null;
+  // Longest-first so "Wait Wait... Don't Tell Me!" beats "Wait
+  // Wait" if both somehow show up. Each entry is regex-escaped.
+  const sorted = [...phrases].sort((a, b) => b.length - a.length);
+  const escaped = sorted.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  // `s?` keeps the existing pluralisation tolerance for tags
+  // ("promotion" → matches "promotions"). Stripped on lookup so
+  // entity matches stay exact.
+  const re = new RegExp(`\\b(${escaped.join('|')})s?\\b`, 'gi');
+  return { re, lookup };
+}
+
 function MarkdownWithCitations({
   md,
   citations,
   tags,
   topics,
+  entities,
+  places,
 }: {
   md: string;
   citations: Record<string, Citation>;
   tags?: string[];
   topics?: string[];
+  entities?: PageDoc['entities'];
+  places?: PageDoc['places'];
 }) {
-  // Pre-build a single regex from the page's own tags + topics for
-  // auto-linking. Sorted longest-first so "machine learning" beats
-  // "machine" when both are present. Each entry is escaped for
-  // regex use; word boundaries enforce whole-word matches so
-  // "promotional" doesn't trigger a link to "promotion".
-  const linkable = (() => {
-    const merged = [...new Set([...(tags ?? []), ...(topics ?? [])])]
-      .map((t) => t.trim().toLowerCase())
-      .filter((t) => t.length >= 3)
-      .sort((a, b) => b.length - a.length);
-    if (merged.length === 0) return null;
-    const escaped = merged.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
-    // \b at word boundaries; allow plural form ("promotion" matches
-    // "promotions" too) since the persisted tag is singular and the
-    // body prose still says the natural plural.
-    return new RegExp(`\\b(${escaped.join('|')})s?\\b`, 'gi');
-  })();
+  const linker = buildLinker({ tags, topics, entities, places });
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
       components={{
         // ReactMarkdown passes raw text strings to this hook. We split on the
-        // citation regex AND on tag mentions, emitting a mix of plain text +
-        // citation chips + tag-link <Link>s.
+        // citation regex AND on auto-link mentions (tags / entities / places),
+        // emitting a mix of plain text + citation chips + <Link>s.
         p: ({ children }) => (
-          <p>{transformChildren(children, citations, linkable)}</p>
+          <p>{transformChildren(children, citations, linker)}</p>
         ),
         li: ({ children }) => (
-          <li>{transformChildren(children, citations, linkable)}</li>
+          <li>{transformChildren(children, citations, linker)}</li>
         ),
       }}
     >
@@ -514,31 +602,54 @@ function MarkdownWithCitations({
 }
 
 /**
- * Walk a text segment, splitting on the linkable-tags regex, and
- * convert whole-word mentions into <Link to="/t/<tag>">. The
- * persisted tag is the singular form; we accept the plural form in
- * the body and link both to the same tag page.
+ * Walk a text segment, splitting on the unified linker regex, and
+ * convert whole-word mentions into <Link>s. Tags route to /t/<key>
+ * (with the existing trailing-`s` plural tolerance); entities and
+ * places route to /n/<normKey>. Lookup strips a trailing 's' before
+ * checking — that way "promotions" matches the "promotion" tag but
+ * not the "Promotion" entity.
  */
-function autoLinkTagMentions(text: string, re: RegExp | null): React.ReactNode[] {
-  if (!re || !text) return [text];
+function autoLinkMentions(text: string, linker: Linker | null): React.ReactNode[] {
+  if (!linker || !text) return [text];
   const out: React.ReactNode[] = [];
   let lastIdx = 0;
-  // matchAll with a /g regex; reset lastIndex isn't required here.
-  for (const match of text.matchAll(re)) {
+  for (const match of text.matchAll(linker.re)) {
     const start = match.index ?? 0;
     if (start > lastIdx) out.push(text.slice(lastIdx, start));
     const word = match[0];
-    const tag = match[1]!.toLowerCase();
-    out.push(
-      <Link
-        key={`tl-${start}`}
-        to={`/t/${encodeURIComponent(tag)}`}
-        className="text-rose-700 underline-offset-2 hover:underline dark:text-rose-300"
-        title={`See all #${tag}`}
-      >
-        {word}
-      </Link>,
-    );
+    const phraseLc = match[1]!.toLowerCase();
+    // Try the exact phrase first, then the de-pluralised form.
+    const spec =
+      linker.lookup.get(phraseLc) ??
+      (phraseLc.endsWith('s') ? linker.lookup.get(phraseLc.slice(0, -1)) : undefined);
+    if (!spec) {
+      // No spec for this exact match (shouldn't happen given how
+      // the regex was built, but be defensive). Fall through to
+      // emitting the raw text.
+      out.push(word);
+    } else if (spec.route === 'tag') {
+      out.push(
+        <Link
+          key={`lt-${start}`}
+          to={`/t/${encodeURIComponent(spec.target)}`}
+          className="text-rose-700 underline-offset-2 hover:underline dark:text-rose-300"
+          title={spec.title ?? `See all #${spec.target}`}
+        >
+          {word}
+        </Link>,
+      );
+    } else {
+      out.push(
+        <Link
+          key={`le-${start}`}
+          to={`/n/${encodeURIComponent(spec.target)}`}
+          className="text-rose-700 underline-offset-2 hover:underline decoration-dotted dark:text-rose-300"
+          title={spec.title ?? word}
+        >
+          {word}
+        </Link>,
+      );
+    }
     lastIdx = start + match[0].length;
   }
   if (lastIdx < text.length) out.push(text.slice(lastIdx));
@@ -548,7 +659,7 @@ function autoLinkTagMentions(text: string, re: RegExp | null): React.ReactNode[]
 function transformChildren(
   children: React.ReactNode,
   citations: Record<string, Citation>,
-  linkable: RegExp | null,
+  linker: Linker | null,
 ): React.ReactNode {
   return Array.from(toArray(children)).flatMap((child, idx) => {
     if (typeof child !== 'string') return [child];
@@ -558,9 +669,9 @@ function transformChildren(
       const start = match.index ?? 0;
       if (start > lastIdx) {
         // The text segment between the previous citation and this
-        // one gets passed through the tag-auto-linker before being
+        // one gets passed through the auto-linker before being
         // flushed; the citation chip itself is opaque.
-        parts.push(...autoLinkTagMentions(child.slice(lastIdx, start), linkable));
+        parts.push(...autoLinkMentions(child.slice(lastIdx, start), linker));
       }
       const labels = match[1]!.split(',').map((s) => s.trim()).filter((s) => /^e\d+$/.test(s));
       parts.push(
@@ -569,9 +680,9 @@ function transformChildren(
       lastIdx = start + match[0].length;
     }
     if (lastIdx < child.length) {
-      parts.push(...autoLinkTagMentions(child.slice(lastIdx), linkable));
+      parts.push(...autoLinkMentions(child.slice(lastIdx), linker));
     }
-    return parts.length ? parts : autoLinkTagMentions(child, linkable);
+    return parts.length ? parts : autoLinkMentions(child, linker);
   });
 }
 
@@ -1423,6 +1534,75 @@ function PlacesCard({ places }: { places: NonNullable<PageDoc['places']> }) {
           </li>
         ))}
       </ul>
+    </section>
+  );
+}
+
+/**
+ * Right-rail card listing the named entities the page mentions —
+ * grouped by type (People, Works, Organizations) with per-type
+ * icons. Each entry links to `/n/<normKey>`. Places live in their
+ * own card above (with map); they're routable through the same
+ * /n/:key URL but rendered separately so the card layout stays
+ * predictable.
+ */
+function MentionsCard({
+  entities,
+}: {
+  entities: NonNullable<PageDoc['entities']>;
+}) {
+  if (!entities.length) return null;
+  const groups: Record<'person' | 'work' | 'organization', typeof entities> = {
+    person: [],
+    work: [],
+    organization: [],
+  };
+  for (const e of entities) {
+    if (groups[e.type]) groups[e.type].push(e);
+  }
+  const order: Array<{
+    key: 'person' | 'work' | 'organization';
+    label: string;
+    Icon: typeof UserIcon;
+  }> = [
+    { key: 'person', label: 'People', Icon: UserIcon },
+    { key: 'work', label: 'Works', Icon: Film },
+    { key: 'organization', label: 'Organizations', Icon: Building2 },
+  ];
+  const total = entities.length;
+  return (
+    <section className="card mt-6">
+      <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold">
+        <UserIcon className="h-4 w-4 text-rose-500" />
+        Mentions ({total})
+      </h2>
+      <div className="space-y-3 text-sm">
+        {order.map(({ key, label, Icon }) => {
+          const arr = groups[key];
+          if (arr.length === 0) return null;
+          return (
+            <div key={key}>
+              <div className="mb-1 flex items-center gap-1.5 text-[10px] uppercase tracking-widest text-ink-500">
+                <Icon className="h-3 w-3" />
+                {label}
+              </div>
+              <ul className="space-y-1">
+                {arr.map((e) => (
+                  <li key={e.normKey}>
+                    <Link
+                      to={`/n/${encodeURIComponent(e.normKey)}`}
+                      className="block truncate text-rose-700 hover:underline dark:text-rose-300"
+                      title={e.displayName || e.name}
+                    >
+                      {e.displayName || e.name}
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          );
+        })}
+      </div>
     </section>
   );
 }

@@ -20,6 +20,7 @@ const SearchPage = lazy(() => import('./routes/Search'));
 const CalendarPage = lazy(() => import('./routes/Calendar'));
 const StreamsPage = lazy(() => import('./routes/Streams'));
 const TagPage = lazy(() => import('./routes/Tag'));
+const EntityPage = lazy(() => import('./routes/Entity'));
 const EmailView = lazy(() => import('./routes/Email'));
 const CodexPage = lazy(() => import('./routes/Codex'));
 const SenderPage = lazy(() => import('./routes/Sender'));
@@ -100,6 +101,7 @@ export default function App() {
         <Route path="/p/:slug" element={<PageView />} />
         <Route path="/e/:id" element={<EmailView />} />
         <Route path="/t/:tag" element={<TagPage />} />
+        <Route path="/n/:key" element={<EntityPage />} />
         <Route path="/search" element={<SearchPage />} />
         <Route path="/calendar" element={<CalendarPage />} />
         <Route path="/streams" element={<StreamsPage />} />

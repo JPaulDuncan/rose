@@ -83,6 +83,45 @@ Respond with JSON only, matching exactly:
 {"title": "...", "summary": "...", "contentMd": "...", "tags": ["..."], "suggestedCategory": "..." | null}`,
   },
   {
+    name: 'extract.entities',
+    scope: 'entities',
+    description:
+      'Extract specific named entities from a wiki page so each can be linked to a dedicated /n/<key> page. Targets people, creative works (movies, shows, books, songs, articles), and organizations. Skips generic phrases ("the developer", "the company") — only proper nouns get extracted.',
+    variables: ['page_title', 'page_summary', 'page_body'],
+    isDefault: true,
+    template: `Identify the specific NAMED entities mentioned in the wiki page below. For each, return the form the page actually uses (preserve original casing + punctuation), what kind of thing it is, and any short alternate forms the page also uses.
+
+ONLY extract entities of these types:
+  • person — specific individuals named (authors, hosts, characters, public figures). e.g. "Bill Walsh", "Amy Adams". NOT "the author", "a developer".
+  • work — creative works named: movies, TV / radio shows, books, songs, articles, podcasts, games. e.g. "Inception", "Wait Wait... Don't Tell Me!", "The Pragmatic Programmer". NOT "the show", "his latest book".
+  • organization — companies, institutions, teams, brands. e.g. "NPR", "Pixar", "Anthropic". NOT "the company", "his employer".
+
+REQUIREMENTS
+  • Specific proper nouns only. If the page says "a journalist quoted by the host", neither "journalist" nor "host" qualifies — there's no name. Skip them.
+  • Preserve the surface form. "Wait Wait... Don't Tell Me!" stays exactly that, with its punctuation. The LLM must NOT normalise to "Wait Wait Dont Tell Me".
+  • De-duplicate within the page. If "Inception" appears 6 times, return one entry.
+  • Aliases: ONLY include short alternate forms the page itself uses (e.g. page mentions both "Wait Wait... Don't Tell Me!" and "Wait Wait" — record the latter as an alias). Don't invent aliases.
+  • SKIP places (cities, neighbourhoods, venues, landmarks). They're handled by a separate extractor and would duplicate.
+  • SKIP the user's own tags / topics — those already round-trip via the tag system. Only emit truly named-entity-shaped strings.
+  • Cap at 12 entities total. If more candidates exist, prefer those mentioned multiple times or central to the page's lede.
+
+PAGE METADATA
+  Title: {{page_title}}
+  Summary: {{page_summary}}
+
+PAGE BODY
+"""
+{{page_body}}
+"""
+
+Respond with JSON only, matching exactly:
+{
+  "entities": [
+    { "name": "<surface form>", "type": "person" | "work" | "organization", "aliases": ["<short alt form>", ...] }
+  ]
+}`,
+  },
+  {
     name: 'tag.canonicalize',
     scope: 'tag-canon',
     description:

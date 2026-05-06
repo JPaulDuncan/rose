@@ -89,6 +89,26 @@ export type PageMergeDraft = z.infer<typeof PageMergeDraft>;
  * existing canonical or as a brand-new one with a title-cased
  * displayName.
  */
+/**
+ * Output shape for the `extract.entities` instruction. The LLM
+ * returns up to 12 named entities (people, works, organizations)
+ * along with short alternate forms the page itself uses. The worker
+ * normalises each name into a kebab `normKey` and persists onto
+ * Page.entities + the per-user Entity collection.
+ */
+export const EntityExtraction = z.object({
+  entities: z
+    .array(
+      z.object({
+        name: z.string().trim().min(1).max(160),
+        type: z.enum(['person', 'work', 'organization']),
+        aliases: z.array(z.string().trim().min(1).max(160)).max(6).default([]),
+      }),
+    )
+    .max(20),
+});
+export type EntityExtraction = z.infer<typeof EntityExtraction>;
+
 export const TagCanonicalization = z.object({
   mappings: z
     .array(
