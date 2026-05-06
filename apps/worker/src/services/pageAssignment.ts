@@ -21,6 +21,16 @@ const SOURCE_TOPIC_THRESHOLD = 0.78;
 /** Lower threshold for "automated" senders whose templated content
  *  has lower variance and benefits from looser matching. */
 const AUTOMATED_TOPIC_THRESHOLD = 0.65;
+/**
+ * Cross-sender topic match runs *after* sender-based grouping fails.
+ * Wrong merges here are particularly destructive (a recruiter spam
+ * email getting consolidated into your real apartment search), so
+ * the threshold is intentionally stricter than within-sender
+ * clustering. Combined with the structural gates (multi-word topic,
+ * tag overlap, multi-sender or pre-existing topic page) this puts
+ * the false-positive rate where it needs to be.
+ */
+const CROSS_SENDER_TOPIC_THRESHOLD = 0.82;
 
 /**
  * Senders that are clearly automated notification streams. We match against
@@ -148,7 +158,147 @@ export async function findPageForEmail(email: EmailDoc): Promise<Assignment> {
   if (best && best.sim >= threshold) {
     return { mode: 'source-topic', page: best.page, similarity: best.sim };
   }
+
+  // 4. Cross-sender topic match. Only runs when the sender-based path
+  //    above produced no hit. Looks for an existing topic-mode page (or
+  //    a sender page with ≥2 distinct senders, which we promote in
+  //    place) whose centroid is close enough AND whose anchor topic /
+  //    tags overlap the email's. The structural gates kill the obvious
+  //    false-positive paths up front so we never even compute cosine
+  //    on candidates that would never qualify.
+  const crossSender = await findCrossSenderTopicMatch(email, emb.vec);
+  if (crossSender) return crossSender;
+
   return { mode: 'new', page: null };
+}
+
+/**
+ * Decide whether a multi-token topic is "specific" enough to use as an
+ * anchor for cross-sender consolidation. The rules tilt toward
+ * proper-noun-y, multi-word phrases:
+ *   • length ≥ 3 chars
+ *   • contains a space OR is title-cased OR is a recognised hashtag
+ *
+ * "iran" alone won't qualify; "war in iran" will. "Job opportunities"
+ * (two words) qualifies; "jobs" alone doesn't. This is deliberately
+ * conservative — bare single-word topics are the source of most
+ * false-positive cross-sender merges.
+ */
+function isSpecificTopic(t: string): boolean {
+  const s = t.trim();
+  if (s.length < 3) return false;
+  if (s.includes(' ')) return true;
+  // Single-word topic must look proper-noun-y. Persisted tags are
+  // lowercase, so we accept compound tokens (kebab, snake) and pass
+  // anything ≥ 6 chars as "specific enough" — short single tokens
+  // ("ai", "war", "tax") are too generic to anchor a topic page.
+  if (/[-_]/.test(s)) return true;
+  return s.length >= 6;
+}
+
+/**
+ * Cross-sender topic match (step 4 of the assignment ladder). Runs
+ * scoped to the user, off the email's primary topic + tags. Returns
+ * null on any of the structural gate failures so the cosine math
+ * stays cheap.
+ */
+async function findCrossSenderTopicMatch(
+  email: EmailDoc,
+  emailVec: number[],
+): Promise<Assignment | null> {
+  const userId = email.userId as Types.ObjectId;
+  const fromAddr = email.from?.address?.toLowerCase();
+
+  // Gate 1 — the email itself must have a "specific" top topic. If
+  // we can't even name what this email is about with confidence, we
+  // certainly can't merge it into a multi-sender topic page. The
+  // Email model carries `topics` (extracted at parse time); page-
+  // level tags only come into play after the page is generated.
+  const emailTopics = ((email.topics as string[] | undefined) ?? [])
+    .map((t) => t.trim().toLowerCase())
+    .filter(Boolean);
+  const specific = emailTopics.find(isSpecificTopic);
+  if (!specific) return null;
+
+  // Gate 2 — find candidate pages: either explicit topic pages
+  // anchored on the matching topic / alias / tag, OR existing
+  // sender-grouped pages that already span multiple senders and
+  // whose centroid we can compare. The first set is the steady-state
+  // path (Iran war page already exists, new BBC email lands on it);
+  // the second is the bootstrap path (a NYT-anchored sender page
+  // gets *promoted* to a topic page when BBC writes about the same
+  // story for the first time).
+  const topicCandidates = await Page.find({
+    userId,
+    $or: [
+      { groupingMode: 'topic', primaryTopic: { $in: [specific, ...emailTopics] } },
+      {
+        groupingMode: 'topic',
+        topicAliases: { $in: [specific, ...emailTopics] },
+      },
+      { groupingMode: 'topic', tags: { $in: emailTopics } },
+      { groupingMode: 'topic', topics: { $in: emailTopics } },
+    ],
+  })
+    .select('+topicCentroid')
+    .limit(20);
+
+  // Bootstrap candidates: existing sender-grouped pages with ≥2
+  // senders, whose tags or topics overlap, and which the new email
+  // is *not* already attributable to via sender. We also exclude
+  // pages flagged as notification streams (those should keep
+  // collapsing per-sender). Tag/topic overlap uses the email's
+  // topic list — this is the cheap structural pre-filter that
+  // keeps the cosine math out of the hot path for unrelated pages.
+  const bootstrapCandidates = await Page.find({
+    userId,
+    groupingMode: { $in: ['source-topic', 'thread'] },
+    'flags.isNotificationStream': { $ne: true },
+    $expr: { $gte: [{ $size: { $ifNull: ['$senderAddresses', []] } }, 2] },
+    ...(fromAddr ? { senderAddresses: { $ne: fromAddr } } : {}),
+    $or: [
+      { tags: { $in: emailTopics.length ? emailTopics : ['__never__'] } },
+      { topics: { $in: emailTopics.length ? emailTopics : ['__never__'] } },
+    ],
+  })
+    .select('+topicCentroid')
+    .limit(20);
+
+  const candidates = [...topicCandidates, ...bootstrapCandidates];
+  if (candidates.length === 0) return null;
+
+  // Gate 3 — for each candidate, require at least one tag/topic
+  // overlap (cheap structural check) AND embedding similarity above
+  // the cross-sender threshold. We pick the highest-similarity hit;
+  // ties go to topic pages over bootstrap pages because the explicit
+  // topic anchor is a stronger signal than a 2-sender accident.
+  let best: { page: PageDoc; sim: number; isTopic: boolean } | null = null;
+  for (const c of candidates) {
+    const cTags = ((c.tags as string[] | undefined) ?? []).map((t) => t.toLowerCase());
+    const cTopics = ((c.topics as string[] | undefined) ?? []).map((t) => t.toLowerCase());
+    const overlap =
+      emailTopics.some((t) => cTags.includes(t)) ||
+      emailTopics.some((t) => cTopics.includes(t)) ||
+      (c.primaryTopic ? emailTopics.includes(c.primaryTopic.toLowerCase()) : false);
+    if (!overlap) continue;
+
+    const centroid = c.topicCentroid as number[] | null | undefined;
+    if (!centroid || centroid.length !== emailVec.length) continue;
+    const sim = cosine(centroid, emailVec);
+    if (sim < CROSS_SENDER_TOPIC_THRESHOLD) continue;
+
+    const isTopic = c.groupingMode === 'topic';
+    if (
+      !best ||
+      sim > best.sim ||
+      (sim === best.sim && isTopic && !best.isTopic)
+    ) {
+      best = { page: c, sim, isTopic };
+    }
+  }
+
+  if (!best) return null;
+  return { mode: 'topic', page: best.page };
 }
 
 /** Average embeddings of every email currently on the page, ignoring missing vectors. */

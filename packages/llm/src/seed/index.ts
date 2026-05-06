@@ -83,6 +83,53 @@ Respond with JSON only, matching exactly:
 {"title": "...", "summary": "...", "contentMd": "...", "tags": ["..."], "suggestedCategory": "..." | null}`,
   },
   {
+    name: 'consolidate.topic',
+    scope: 'consolidate',
+    description:
+      'Merges new emails into an existing long-running topic page without rewriting it from scratch. Used for cross-sender topic pages (e.g. "War in Iran", "Job Opportunities") that evolve as new dispatches arrive from different senders.',
+    variables: [
+      'page_title',
+      'page_summary',
+      'existing_content',
+      'new_labeled_threads',
+      'new_email_count',
+      'sender_summary',
+      'extra_instructions',
+    ],
+    isDefault: true,
+    template: `You are the beat reporter maintaining a long-running story page that evolves as new dispatches arrive from multiple senders. The page already exists — your job is to FOLD IN the {{new_email_count}} new email(s) below WITHOUT rewriting the whole article.
+SENDERS contributing across the full page:
+{{sender_summary}}
+
+CURRENT PAGE
+- Title: {{page_title}}
+- Summary: {{page_summary}}
+- Body (markdown):
+"""
+{{existing_content}}
+"""
+
+NEW EMAILS (each labelled e<n>; these are the ONLY new sources you may cite):
+{{new_labeled_threads}}
+
+MERGE RULES — these are the differences from a fresh-write
+1. Preserve the structure and voice of the existing body. Do NOT rewrite paragraphs unless a new email genuinely contradicts or supersedes them. The user may have hand-edited paragraphs; treat existing prose as authoritative.
+2. The lede paragraph leads with the latest development. If the new emails contain a more recent development than the current lede, rewrite the lede (only the lede). Otherwise leave it.
+3. Update the italic "Updated <date> — <one sentence>" line at the top of the body to reflect the most recent new dispatch.
+4. New material goes into the body the same way a beat reporter folds in a wire update: a sentence or two added to the relevant paragraph if it's a continuation; a fresh paragraph if it's a distinct angle; a new H2 section only if the new emails open a genuinely new sub-story.
+5. Citations: every NEW factual claim must cite the new email's label (e.g. [e1], [e2]). NEVER invent labels for emails not in the new-email list. Existing citations in the body remain as-is.
+6. Title: keep it stable. Only change the title if the new emails reveal the page was misnamed (e.g. "Iran tensions" → "Iran-Israel war"). When you do change it, prefer the broader, longer-lived noun phrase.
+7. Summary: ≤ 280 chars, written like a news lede that reflects the latest development across the full page.
+8. Tags: union of the existing tags with whatever the new emails add. Same noun-only / proper-noun-only rule as before — drop verbs, courtesy words, status words.
+9. topicAliases: if the new emails phrase the underlying story differently than the existing title (e.g. body says "Iran-Israel conflict" while title says "War in Iran"), include the alternate phrasings as lowercase strings here so future emails using either phrasing route to this page.
+
+OUTPUT — JSON only, matching exactly:
+{"title": "...", "summary": "...", "contentMd": "...", "tags": ["..."], "topicAliases": ["..."], "suggestedCategory": "..." | null}
+
+ADDITIONAL INSTRUCTIONS FROM USER:
+{{extra_instructions}}`,
+  },
+  {
     name: 'link.suggest',
     scope: 'link',
     description: 'Given a candidate page and similar pages, suggests which to link.',

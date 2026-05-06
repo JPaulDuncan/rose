@@ -52,6 +52,38 @@ const pageSchema = new Schema(
      */
     primaryTopic: { type: String, default: null, index: true },
     /**
+     * Synonyms / alternate phrasings the LLM has emitted for the same
+     * underlying story (e.g. "Iran war", "Iran-Israel conflict"). Used
+     * by the cross-sender topic matcher so a follow-up email mentioning
+     * "Iran-Israel conflict" still routes to the existing "War in Iran"
+     * page. Lowercased.
+     */
+    topicAliases: { type: [String], default: [], index: true },
+    /**
+     * Snapshot of `sourceEmailIds` at the moment the LLM last (re)wrote
+     * `contentMd`. Incremental generation diffs the live list against
+     * this to discover which emails are genuinely new since the last
+     * pass — the merge prompt only sees those, not the whole corpus.
+     */
+    lastGeneratedFromEmailIds: { type: [Schema.Types.ObjectId], default: [] },
+    /**
+     * Generation strategy:
+     *   'rebuild'    — regenerate `contentMd` from all sources every
+     *                  time. Cheap, idempotent. Default for thread,
+     *                  source-template, and source-topic pages.
+     *   'incremental' — feed the LLM the existing `contentMd` plus only
+     *                   the new emails. Used for cross-sender topic
+     *                   pages so a long-running story page evolves
+     *                   without rewriting the whole article (which
+     *                   would also clobber the user's manual edits).
+     */
+    generationMode: {
+      type: String,
+      enum: ['rebuild', 'incremental'],
+      default: 'rebuild',
+      index: true,
+    },
+    /**
      * Average of source-email embeddings — used to decide whether a new
      * email is on-topic enough to merge here. Deselect by default; cosine
      * comparison happens at assignment time.

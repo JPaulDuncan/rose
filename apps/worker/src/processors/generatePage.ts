@@ -17,7 +17,7 @@ import {
   extractJson,
   renderTemplate,
 } from '@rose/llm';
-import { PageGenerationDraft, slugify, type CitationMap } from '@rose/shared';
+import { PageGenerationDraft, PageMergeDraft, slugify, type CitationMap } from '@rose/shared';
 import { stripAdSectionsStrict, filterNominalTags } from '@rose/email-parser';
 import { redis } from '../lib/redis.js';
 import { logger } from '../lib/logger.js';
@@ -48,7 +48,7 @@ type GenerateJobData = { emailId: string; userId: string };
 
 async function getInstructionTemplate(
   userId: Types.ObjectId,
-  scope: 'generate' | 'categorize',
+  scope: 'generate' | 'categorize' | 'consolidate',
 ): Promise<string> {
   const userDefault = await Instruction.findOne({ userId, scope, isDefault: true });
   if (userDefault) return userDefault.template;
@@ -86,6 +86,13 @@ function groupByThread(emails: EmailDoc[]): EmailDoc[][] {
 function renderLabeledThreads(
   emails: EmailDoc[],
   stripAdsFor: (address: string | undefined | null) => boolean = () => false,
+  /**
+   * Optional label-number offset. Defaults to 0 (labels start at e1).
+   * Incremental generation passes the highest existing label so new
+   * emails get e<N+1>, e<N+2>, … and don't collide with citation
+   * markers already present in the existing contentMd.
+   */
+  startN: number = 0,
 ): {
   text: string;
   labels: { label: string; email: EmailDoc }[];
@@ -93,7 +100,7 @@ function renderLabeledThreads(
   const groups = groupByThread(emails);
   const labels: { label: string; email: EmailDoc }[] = [];
   const blocks: string[] = [];
-  let n = 0;
+  let n = startN;
   groups.forEach((group, gi) => {
     const subject = group[0]?.subject || '(no subject)';
     const dateRange = (() => {
@@ -397,16 +404,41 @@ export function startGeneratePageWorker() {
         pageEmails = [triggerEmail];
       }
 
-      const generateTemplate = await getInstructionTemplate(userId, 'generate');
-      if (!generateTemplate) throw new Error('No generation instruction available');
-
       const categories = await Category.find({ userId }).select('name').lean();
       const stream = isNotificationStream(pageEmails);
-      const { selected: promptEmails, elidedSummary } = selectEmailsForPrompt(pageEmails);
 
-      // Build the per-address strip-ads predicate from Sender records —
-      // brands the user has explicitly toggled get the aggressive
-      // ad-strip pass before their bodies enter the prompt.
+      // Decide rebuild vs incremental. Incremental kicks in when the
+      // assignment landed on a topic-mode page that already has
+      // substantive content AND we have a snapshot of which emails
+      // were in the prior pass — then we can identify just the new
+      // dispatches and merge them into the existing prose. First-time
+      // promotion to topic mode (or pages without a prior snapshot)
+      // falls through to rebuild, which establishes the baseline that
+      // the *next* pass will merge into.
+      const priorSnapshot = new Set<string>(
+        ((assignment.page?.lastGeneratedFromEmailIds ?? []) as Types.ObjectId[]).map((x) =>
+          String(x),
+        ),
+      );
+      const newEmails = assignment.page
+        ? pageEmails.filter((e) => !priorSnapshot.has(String(e._id)))
+        : pageEmails;
+      const useIncremental =
+        assignment.mode === 'topic' &&
+        !!assignment.page &&
+        priorSnapshot.size > 0 &&
+        newEmails.length > 0 &&
+        newEmails.length < pageEmails.length &&
+        (assignment.page.contentMd ?? '').length >= 200;
+
+      // Pick which corpus the prompt sees. Incremental shows only the
+      // new emails (the existing contentMd carries the older context);
+      // rebuild shows everything (with elision for very large pages).
+      const corpus = useIncremental ? newEmails : pageEmails;
+      const { selected: promptEmails, elidedSummary } = useIncremental
+        ? { selected: corpus, elidedSummary: '' }
+        : selectEmailsForPrompt(corpus);
+
       const promptAddrs = [
         ...new Set(
           promptEmails
@@ -428,9 +460,22 @@ export function startGeneratePageWorker() {
       );
       const stripAdsFor = (addr: string | undefined | null) =>
         !!(addr && stripAddrs.has(addr.toLowerCase()));
+      // Continue label numbering past the highest existing citation
+      // when merging into an existing topic page; rebuild always
+      // starts at e1.
+      const existingCitationKeys = useIncremental
+        ? Object.keys((assignment.page?.citations ?? {}) as Record<string, unknown>)
+        : [];
+      const labelOffset = useIncremental
+        ? existingCitationKeys.reduce((max, k) => {
+            const m = /^e(\d+)$/.exec(k);
+            return m ? Math.max(max, Number(m[1])) : max;
+          }, 0)
+        : 0;
       const { text: labeledThreads, labels } = renderLabeledThreads(
         promptEmails,
         stripAdsFor,
+        labelOffset,
       );
       const distinctThreadKeys = new Set(
         pageEmails.map((e) => e.threadKey ?? `__loose:${String(e._id)}`),
@@ -439,17 +484,39 @@ export function startGeneratePageWorker() {
         ? `\nNOTIFICATION STREAM DETECTED: ${Math.round(stream.ratio * 100)}% of these messages share the same subject template. Treat this page as a long-running notification stream — write a stable, dashboard-style summary instead of a per-message description. Required H2 sections: "Overview" (what this stream is and how often it fires), "Recent Activity" (a tight bullet list of the most recent occurrences with timestamp + the one-line distinguishing detail per item — citing each), and "Patterns" (any common themes you observe across instances). Do NOT enumerate every message individually.`
         : '';
       const elidedNote = elidedSummary ? `\nNOTE: ${elidedSummary}` : '';
-      const prompt = renderTemplate(generateTemplate, {
-        labeled_threads: labeledThreads,
-        thread_count: String(distinctThreadKeys.size),
-        email_count: String(pageEmails.length),
-        sender_summary: describeSenders(pageEmails),
-        extra_instructions:
-          'Available categories: ' +
-          (categories.map((c) => c.name).join(', ') || '(none)') +
-          streamGuidance +
-          elidedNote,
-      });
+
+      let prompt: string;
+      if (useIncremental) {
+        const consolidateTemplate = await getInstructionTemplate(userId, 'consolidate');
+        if (!consolidateTemplate) throw new Error('No consolidate instruction available');
+        const existingPage = assignment.page!;
+        prompt = renderTemplate(consolidateTemplate, {
+          page_title: existingPage.title ?? '',
+          page_summary: existingPage.summary ?? '',
+          existing_content: existingPage.contentMd ?? '',
+          new_labeled_threads: labeledThreads,
+          new_email_count: String(newEmails.length),
+          sender_summary: describeSenders(pageEmails),
+          extra_instructions:
+            'Available categories: ' +
+            (categories.map((c) => c.name).join(', ') || '(none)') +
+            streamGuidance,
+        });
+      } else {
+        const generateTemplate = await getInstructionTemplate(userId, 'generate');
+        if (!generateTemplate) throw new Error('No generation instruction available');
+        prompt = renderTemplate(generateTemplate, {
+          labeled_threads: labeledThreads,
+          thread_count: String(distinctThreadKeys.size),
+          email_count: String(pageEmails.length),
+          sender_summary: describeSenders(pageEmails),
+          extra_instructions:
+            'Available categories: ' +
+            (categories.map((c) => c.name).join(', ') || '(none)') +
+            streamGuidance +
+            elidedNote,
+        });
+      }
 
       const { provider, model: genModel, providerId, params: userParams } =
         await resolveProviderForUser(userId, 'generation');
@@ -596,7 +663,14 @@ export function startGeneratePageWorker() {
           'generate-page: provider call complete',
         );
         try {
-          draft = PageGenerationDraft.parse(extractJson(buffered));
+          // Incremental path expects PageMergeDraft (adds topicAliases).
+          // If the LLM forgets the field, PageMergeDraft.default([])
+          // tolerates the omission. If the JSON is otherwise malformed
+          // both schemas throw; the rebuild path stays on
+          // PageGenerationDraft so the merge contract is opt-in.
+          draft = useIncremental
+            ? PageMergeDraft.parse(extractJson(buffered))
+            : PageGenerationDraft.parse(extractJson(buffered));
         } catch (err) {
           // Log the FULL raw output, not a truncated slice — when a
           // wiki page silently fails to materialise this is almost
@@ -639,9 +713,14 @@ export function startGeneratePageWorker() {
         }
       }
 
-      // Build citation map from labels actually cited.
+      // Build citation map from labels actually cited. For
+      // incremental merges, start with the page's existing citations
+      // so old [eN] markers in the preserved prose still resolve, then
+      // overlay any new citations the merge prompt emitted.
       const usedLabels = extractCitedLabels(draft.contentMd);
-      const citations: CitationMap = {};
+      const citations: CitationMap = useIncremental
+        ? { ...((assignment.page?.citations ?? {}) as CitationMap) }
+        : {};
       for (const { label, email: e } of labels) {
         if (!usedLabels.has(label)) continue;
         citations[label] = {
@@ -855,6 +934,33 @@ export function startGeneratePageWorker() {
         page.generationModel = `${providerId}:${genModel}`;
         page.generatedAt = new Date();
         page.generatedBy = 'llm';
+        // Topic-mode pages run incrementally going forward; everything
+        // else stays on rebuild. Once a page is in topic mode the
+        // assignment ladder routes future emails here, and the next
+        // pass diffs against `lastGeneratedFromEmailIds` to extract
+        // just the new dispatches.
+        page.generationMode = page.groupingMode === 'topic' ? 'incremental' : 'rebuild';
+        page.lastGeneratedFromEmailIds = sourceEmailIds;
+        // Merge any LLM-suggested topic aliases into the persisted set.
+        // Lowercased, deduped, capped — the UI uses these for the
+        // assignment ladder so an unbounded list would slow lookups.
+        if (useIncremental && (draft as PageMergeDraft).topicAliases) {
+          const incoming = ((draft as PageMergeDraft).topicAliases ?? [])
+            .map((a) => a.trim().toLowerCase())
+            .filter(Boolean);
+          const merged = new Set<string>([
+            ...((page.topicAliases as string[] | undefined) ?? []),
+            ...incoming,
+          ]);
+          page.topicAliases = [...merged].slice(0, 20);
+        }
+        // Anchor the topic on whatever the merge produced (or the
+        // first topic if rebuild). Stays stable across passes; only
+        // overwritten when not yet set.
+        if (!page.primaryTopic) {
+          const candidate = (topics[0] ?? page.tags?.[0] ?? null);
+          page.primaryTopic = candidate ? candidate.toLowerCase() : null;
+        }
         page.topicCentroid = await recomputeCentroid(page);
         await page.save();
         pageId = page._id;
@@ -918,6 +1024,10 @@ export function startGeneratePageWorker() {
           generationModel: `${providerId}:${genModel}`,
           generatedAt: new Date(),
           generatedBy: 'llm',
+          // First write seeds the snapshot so the next pass can run
+          // incremental once the page is in topic mode.
+          generationMode: newGroupingMode === 'topic' ? 'incremental' : 'rebuild',
+          lastGeneratedFromEmailIds: sourceEmailIds,
         });
         pageId = created._id;
         created.topicCentroid = await recomputeCentroid(created);

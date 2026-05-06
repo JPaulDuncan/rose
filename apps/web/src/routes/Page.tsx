@@ -58,6 +58,11 @@ type PageDoc = {
   senderAddresses?: string[];
   subjectTemplates?: string[];
   groupingMode?: 'thread' | 'source-topic' | 'topic' | 'manual' | 'briefing' | 'synthesis';
+  /** Plan: long-running topic pages run incrementally — new emails
+   *  get folded into the existing prose instead of rewriting it. */
+  generationMode?: 'rebuild' | 'incremental';
+  primaryTopic?: string | null;
+  topicAliases?: string[];
   citations?: Record<string, Citation>;
   sourceEmailIds?: string[];
   synthesisOf?: string[];
@@ -1064,13 +1069,19 @@ function Attribution({ page }: { page: PageDoc }) {
     page.flags?.isNotificationStream === true ||
     (templateCount > 0 && emailCount >= 3 && templateCount <= 2);
   const mode = page.groupingMode ?? 'thread';
+  // Topic pages span multiple senders by design; the strip should
+  // surface that distinctly so the reader knows what they're looking
+  // at is a long-running consolidated story, not a single thread.
+  const isTopic = mode === 'topic';
   const modeLabel = isStream
     ? 'Notification stream'
-    : mode === 'thread'
-      ? 'Grouped by thread'
-      : mode === 'source-topic'
-        ? 'Grouped by sender + topic'
-        : 'Manually edited';
+    : isTopic
+      ? 'Topic page'
+      : mode === 'thread'
+        ? 'Grouped by thread'
+        : mode === 'source-topic'
+          ? 'Grouped by sender + topic'
+          : 'Manually edited';
 
   // Pull the first/last citation date as a cheap "from … to …" range.
   const citations = Object.values(page.citations ?? {});
@@ -1091,24 +1102,42 @@ function Attribution({ page }: { page: PageDoc }) {
     <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-ink-200 bg-ink-50 px-3 py-2 text-xs dark:border-ink-800 dark:bg-ink-900">
       <span
         className={
-          isStream
+          isStream || isTopic
             ? 'rounded bg-rose-100 px-1.5 py-0.5 font-medium text-rose-700 dark:bg-rose-950/50 dark:text-rose-300'
             : 'font-medium text-ink-600 dark:text-ink-300'
         }
       >
         {modeLabel}
       </span>
-      {emailCount > 0 && (
+      {/* Topic pages summarise as "X messages from Y senders" because
+          the spread of senders is the whole point. Other modes show
+          the thread count instead. */}
+      {emailCount > 0 && isTopic ? (
         <span className="text-ink-500">
-          · {emailCount} message{emailCount === 1 ? '' : 's'}
-          {threadCount > 0 && (
-            <>
-              {' '}across {threadCount} thread{threadCount === 1 ? '' : 's'}
-            </>
-          )}
+          · {emailCount} message{emailCount === 1 ? '' : 's'} from{' '}
+          {senders.length} sender{senders.length === 1 ? '' : 's'}
         </span>
+      ) : (
+        emailCount > 0 && (
+          <span className="text-ink-500">
+            · {emailCount} message{emailCount === 1 ? '' : 's'}
+            {threadCount > 0 && (
+              <>
+                {' '}across {threadCount} thread{threadCount === 1 ? '' : 's'}
+              </>
+            )}
+          </span>
+        )
       )}
       {dateRange && <span className="text-ink-500">· {dateRange}</span>}
+      {isTopic && page.generationMode === 'incremental' && (
+        <span
+          className="text-ink-500"
+          title="New emails on this topic are folded into the existing prose rather than rewriting it from scratch."
+        >
+          · evolving
+        </span>
+      )}
       {senders.length > 0 && (
         <span className="flex flex-wrap items-center gap-1 text-ink-500">
           · From{' '}

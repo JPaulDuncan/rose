@@ -69,3 +69,15 @@ export const PageGenerationDraft = z.object({
   suggestedCategory: z.string().nullable().default(null),
 });
 export type PageGenerationDraft = z.infer<typeof PageGenerationDraft>;
+
+/**
+ * Output shape for the `consolidate.topic` instruction — same as
+ * PageGenerationDraft plus `topicAliases`. Used when the worker is
+ * folding new emails into an existing long-running topic page (the
+ * cross-sender consolidation path) so the LLM can flag alternate
+ * phrasings of the underlying story for future routing.
+ */
+export const PageMergeDraft = PageGenerationDraft.extend({
+  topicAliases: z.array(z.string().trim().toLowerCase().min(2).max(80)).max(10).default([]),
+});
+export type PageMergeDraft = z.infer<typeof PageMergeDraft>;
