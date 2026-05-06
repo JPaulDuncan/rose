@@ -8,6 +8,7 @@ import {
   SourceTestRequest,
   type ImapConfig,
   type RssConfig,
+  type WebsiteConfig,
 } from '@rose/shared';
 import { userIdOf } from '../middleware/auth.js';
 import { validateBody } from '../middleware/validate.js';
@@ -18,6 +19,7 @@ import {
   imapSyncQueue,
   gmailSyncQueue,
   rssSyncQueue,
+  websiteSyncQueue,
   slackSyncQueue,
   discordSyncQueue,
   gcalSyncQueue,
@@ -40,12 +42,14 @@ sourcesRouter.get('/:id', async (req, res) => {
     res.status(404).json({ error: 'not_found', message: 'Source not found' });
     return;
   }
-  let config: Partial<ImapConfig> | RssConfig | null = null;
+  let config: Partial<ImapConfig> | RssConfig | WebsiteConfig | null = null;
   if (src.type === 'imap' && src.encryptedConfig) {
     const decrypted = decryptJson<ImapConfig>(src.encryptedConfig);
     config = { ...decrypted, password: '' };
   } else if (src.type === 'rss' && src.encryptedConfig) {
     config = decryptJson<RssConfig>(src.encryptedConfig);
+  } else if (src.type === 'website' && src.encryptedConfig) {
+    config = decryptJson<WebsiteConfig>(src.encryptedConfig);
   }
   const obj = src.toObject();
   delete (obj as { encryptedConfig?: unknown }).encryptedConfig;
@@ -196,6 +200,31 @@ sourcesRouter.post('/', validateBody(SourceCreateRequest), async (req, res) => {
     return;
   }
 
+  if (body.type === 'website') {
+    const interval = body.config.pollIntervalMinutes;
+    const cfg: WebsiteConfig = { url: body.config.url, pollIntervalMinutes: interval };
+    const src = await Source.create({
+      userId,
+      type: 'website',
+      name: body.name,
+      encryptedConfig: encryptJson(cfg),
+      pollIntervalMinutes: interval,
+      websiteUrl: cfg.url,
+    });
+    const payload = { sourceId: src._id.toString(), userId: userId.toString() };
+    await websiteSyncQueue.add('sync', payload, {
+      repeat: { every: interval * 60_000 },
+      jobId: `website:${src._id.toString()}`,
+    });
+    await websiteSyncQueue.add('sync', payload, {
+      attempts: 3,
+      removeOnComplete: 50,
+      removeOnFail: 50,
+    });
+    res.status(201).json(src);
+    return;
+  }
+
   if (body.type === 'gcal') {
     const interval = body.config.pollIntervalMinutes;
     const src = await Source.create({
@@ -260,6 +289,11 @@ sourcesRouter.post('/:id/sync', async (req, res) => {
     res.status(202).json({ jobId: job.id });
     return;
   }
+  if (src.type === 'website') {
+    const job = await websiteSyncQueue.add('sync', payload, opts);
+    res.status(202).json({ jobId: job.id });
+    return;
+  }
   res.status(400).json({
     error: 'invalid_request',
     message: `Source type "${src.type}" does not support manual sync`,
@@ -320,6 +354,68 @@ async function testRss(url: string): Promise<
   }
 }
 
+/**
+ * Stateless preview: fetch the URL, run Readability, return the page title and
+ * a short snippet so the user can confirm the parser picks up real content
+ * before saving the source.
+ */
+async function testWebsite(url: string): Promise<
+  | { ok: true; pageTitle: string; snippet: string; finalUrl: string }
+  | { ok: false; message: string }
+> {
+  try {
+    const res = await fetch(url, {
+      headers: {
+        'User-Agent': 'Rose/1.0 (+https://rose.local)',
+        Accept: 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.5',
+      },
+      redirect: 'follow',
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!res.ok) {
+      return { ok: false, message: `Page responded ${res.status} ${res.statusText}` };
+    }
+    const ct = (res.headers.get('content-type') ?? '').toLowerCase();
+    if (!ct.includes('text/html') && !ct.includes('application/xhtml+xml')) {
+      return { ok: false, message: `Unsupported content-type: ${ct || 'unknown'}` };
+    }
+    const html = await res.text();
+    // Lightweight preview: pull <title> + a stripped-text snippet without
+    // dragging Readability/linkedom into the API bundle. The worker runs
+    // the full extractor when it actually syncs.
+    const titleMatch = html.match(/<title[^>]*>([^<]{1,200})<\/title>/i);
+    const ogTitleMatch = html.match(
+      /<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']{1,200})["']/i,
+    );
+    const ogDescMatch = html.match(
+      /<meta[^>]+name=["']description["'][^>]+content=["']([^"']{1,500})["']/i,
+    );
+    const title = (
+      ogTitleMatch?.[1] ??
+      titleMatch?.[1] ??
+      url
+    )
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
+      .trim()
+      .slice(0, 200);
+    const stripped = html
+      .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+      .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    const snippet = (ogDescMatch?.[1] ?? stripped).trim().slice(0, 280);
+    if (!snippet) return { ok: false, message: 'No readable content extracted' };
+    return { ok: true, pageTitle: title, snippet, finalUrl: res.url };
+  } catch (err) {
+    return { ok: false, message: (err as Error).message || 'Failed to fetch page' };
+  }
+}
+
 sourcesRouter.post('/test', validateBody(SourceTestRequest), async (req, res) => {
   const body = req.body as typeof SourceTestRequest._type;
   if (body.type === 'imap') {
@@ -329,6 +425,11 @@ sourcesRouter.post('/test', validateBody(SourceTestRequest), async (req, res) =>
   }
   if (body.type === 'rss') {
     const result = await testRss(body.config.url);
+    res.status(result.ok ? 200 : 400).json(result);
+    return;
+  }
+  if (body.type === 'website') {
+    const result = await testWebsite(body.config.url);
     res.status(result.ok ? 200 : 400).json(result);
     return;
   }
@@ -454,7 +555,24 @@ sourcesRouter.patch('/:id', validateBody(SourceUpdateRequest), async (req, res) 
   const oldInterval = src.pollIntervalMinutes ?? 5;
   let newInterval = oldInterval;
 
-  if (body.rssConfig && src.type === 'rss' && src.encryptedConfig) {
+  if (body.websiteConfig && src.type === 'website' && src.encryptedConfig) {
+    const current = decryptJson<WebsiteConfig>(src.encryptedConfig);
+    const merged: WebsiteConfig = {
+      url: body.websiteConfig.url ?? current.url,
+      pollIntervalMinutes:
+        body.websiteConfig.pollIntervalMinutes ?? current.pollIntervalMinutes,
+    };
+    src.encryptedConfig = encryptJson(merged);
+    if (merged.url !== current.url) {
+      // URL changed — caches are no longer meaningful.
+      src.websiteEtag = null;
+      src.websiteLastModified = null;
+      src.websiteContentHash = null;
+      src.websiteTitle = null;
+      src.websiteUrl = merged.url;
+    }
+    newInterval = merged.pollIntervalMinutes;
+  } else if (body.rssConfig && src.type === 'rss' && src.encryptedConfig) {
     const current = decryptJson<RssConfig>(src.encryptedConfig);
     const merged: RssConfig = {
       url: body.rssConfig.url ?? current.url,
@@ -499,6 +617,7 @@ sourcesRouter.patch('/:id', validateBody(SourceUpdateRequest), async (req, res) 
     (src.type === 'imap' ||
       src.type === 'gmail' ||
       src.type === 'rss' ||
+      src.type === 'website' ||
       src.type === 'slack' ||
       src.type === 'discord' ||
       src.type === 'gcal')
@@ -510,11 +629,13 @@ sourcesRouter.patch('/:id', validateBody(SourceUpdateRequest), async (req, res) 
           ? gmailSyncQueue
           : src.type === 'rss'
             ? rssSyncQueue
-            : src.type === 'slack'
-              ? slackSyncQueue
-              : src.type === 'discord'
-                ? discordSyncQueue
-                : gcalSyncQueue;
+            : src.type === 'website'
+              ? websiteSyncQueue
+              : src.type === 'slack'
+                ? slackSyncQueue
+                : src.type === 'discord'
+                  ? discordSyncQueue
+                  : gcalSyncQueue;
     const repeatKey = `${src.type}:${src._id.toString()}`;
     await queue.removeRepeatableByKey(repeatKey).catch((err: Error) => {
       logger.warn({ err, repeatKey }, 'failed to remove old repeatable');
@@ -547,6 +668,10 @@ sourcesRouter.delete('/:id', async (req, res) => {
     await gmailSyncQueue.removeRepeatableByKey(`gmail:${src._id.toString()}`).catch(() => null);
   if (src.type === 'rss')
     await rssSyncQueue.removeRepeatableByKey(`rss:${src._id.toString()}`).catch(() => null);
+  if (src.type === 'website')
+    await websiteSyncQueue
+      .removeRepeatableByKey(`website:${src._id.toString()}`)
+      .catch(() => null);
   if (src.type === 'slack')
     await slackSyncQueue.removeRepeatableByKey(`slack:${src._id.toString()}`).catch(() => null);
   if (src.type === 'discord')

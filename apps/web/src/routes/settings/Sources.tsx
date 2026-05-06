@@ -12,6 +12,7 @@ import {
   XCircle,
   Clock,
   Rss,
+  Globe,
   Hash,
   MessageCircle,
   CalendarDays,
@@ -21,7 +22,16 @@ import { useApi } from '../../lib/api';
 
 type Source = {
   _id: string;
-  type: 'imap' | 'webhook' | 'gmail' | 'upload' | 'rss' | 'slack' | 'discord' | 'gcal';
+  type:
+    | 'imap'
+    | 'webhook'
+    | 'gmail'
+    | 'upload'
+    | 'rss'
+    | 'slack'
+    | 'discord'
+    | 'gcal'
+    | 'website';
   name: string;
   status: string;
   pollIntervalMinutes?: number;
@@ -29,6 +39,8 @@ type Source = {
   lastError?: string | null;
   rssFeedUrl?: string | null;
   rssFeedTitle?: string | null;
+  websiteUrl?: string | null;
+  websiteTitle?: string | null;
 };
 
 type RssConfig = {
@@ -64,7 +76,26 @@ type ImapConfig = {
   pollIntervalMinutes: number;
 };
 
-type SourceWithConfig = Source & { config: ImapConfig | RssConfig | null };
+type WebsiteConfig = {
+  url: string;
+  pollIntervalMinutes: number;
+};
+
+type WebsiteFormValues = {
+  name: string;
+  url: string;
+  pollIntervalMinutes: number;
+};
+
+const DEFAULT_WEBSITE: WebsiteFormValues = {
+  name: '',
+  url: '',
+  pollIntervalMinutes: 360,
+};
+
+type SourceWithConfig = Source & {
+  config: ImapConfig | RssConfig | WebsiteConfig | null;
+};
 
 type ImapFormValues = ImapConfig & { name: string };
 
@@ -92,6 +123,8 @@ export default function SourcesSettings() {
     | { kind: 'edit-imap'; id: string }
     | { kind: 'create-rss' }
     | { kind: 'edit-rss'; id: string }
+    | { kind: 'create-website' }
+    | { kind: 'edit-website'; id: string }
     | { kind: 'create-slack' }
     | { kind: 'create-discord' }
     | { kind: 'create-gcal' }
@@ -176,6 +209,9 @@ export default function SourcesSettings() {
         <button className="btn-secondary" onClick={() => setForm({ kind: 'create-rss' })}>
           <Rss className="h-4 w-4" /> Add RSS feed
         </button>
+        <button className="btn-secondary" onClick={() => setForm({ kind: 'create-website' })}>
+          <Globe className="h-4 w-4" /> Watch a website
+        </button>
         <button className="btn-secondary" onClick={() => setForm({ kind: 'create-slack' })}>
           <Hash className="h-4 w-4" /> Connect Slack
         </button>
@@ -240,6 +276,27 @@ export default function SourcesSettings() {
           }}
         />
       )}
+      {form?.kind === 'create-website' && (
+        <WebsiteForm
+          mode="create"
+          initial={DEFAULT_WEBSITE}
+          onCancel={() => setForm(null)}
+          onSubmit={(values) => {
+            const { name, ...config } = values;
+            create.mutate({ type: 'website', name, config });
+          }}
+        />
+      )}
+      {form?.kind === 'edit-website' && (
+        <EditWebsiteForm
+          id={form.id}
+          onCancel={() => setForm(null)}
+          onSubmit={(values) => {
+            const { name, ...websiteConfig } = values;
+            update.mutate({ id: form.id, body: { name, websiteConfig } });
+          }}
+        />
+      )}
       {form?.kind === 'create-slack' && (
         <SlackForm
           onCancel={() => setForm(null)}
@@ -292,6 +349,19 @@ export default function SourcesSettings() {
                       </a>
                     </div>
                   )}
+                  {s.type === 'website' && s.websiteUrl && (
+                    <div className="truncate text-xs text-ink-500">
+                      <a
+                        href={s.websiteUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="hover:underline"
+                      >
+                        {s.websiteTitle ? `${s.websiteTitle} — ` : ''}
+                        {s.websiteUrl}
+                      </a>
+                    </div>
+                  )}
                   <div className="flex flex-wrap items-center gap-x-2 text-xs text-ink-500">
                     <span>{s.status}</span>
                     <span>·</span>
@@ -299,7 +369,10 @@ export default function SourcesSettings() {
                       last sync{' '}
                       {s.lastSyncAt ? new Date(s.lastSyncAt).toLocaleString() : 'never'}
                     </span>
-                    {(s.type === 'imap' || s.type === 'gmail' || s.type === 'rss') && (
+                    {(s.type === 'imap' ||
+                      s.type === 'gmail' ||
+                      s.type === 'rss' ||
+                      s.type === 'website') && (
                       <>
                         <span>·</span>
                         <button
@@ -343,7 +416,20 @@ export default function SourcesSettings() {
                       <Pencil className="h-4 w-4" />
                     </button>
                   )}
-                  {(s.type === 'imap' || s.type === 'gmail' || s.type === 'rss') && (
+                  {s.type === 'website' && (
+                    <button
+                      className="btn-ghost"
+                      onClick={() => setForm({ kind: 'edit-website', id: s._id })}
+                      aria-label="Edit"
+                      title="Edit"
+                    >
+                      <Pencil className="h-4 w-4" />
+                    </button>
+                  )}
+                  {(s.type === 'imap' ||
+                    s.type === 'gmail' ||
+                    s.type === 'rss' ||
+                    s.type === 'website') && (
                     <button
                       className="btn-ghost"
                       onClick={() => syncNow.mutate(s._id)}
@@ -935,6 +1021,194 @@ function RssForm({
         </button>
         <button type="submit" className="btn-primary">
           {mode === 'create' ? 'Add feed' : 'Save changes'}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+function EditWebsiteForm({
+  id,
+  onCancel,
+  onSubmit,
+}: {
+  id: string;
+  onCancel: () => void;
+  onSubmit: (values: WebsiteFormValues) => void;
+}) {
+  const api = useApi();
+  const { data, isLoading } = useQuery({
+    queryKey: ['source', id],
+    queryFn: () => api.get<SourceWithConfig>(`/api/sources/${id}`),
+  });
+  if (isLoading || !data) {
+    return <div className="card text-sm text-ink-500">Loading website…</div>;
+  }
+  const cfg = data.config as WebsiteConfig | null;
+  if (!cfg || !('url' in cfg) || 'historicalBackfillDays' in cfg) {
+    return <div className="card text-sm text-ink-500">This source isn’t editable here.</div>;
+  }
+  const initial: WebsiteFormValues = {
+    name: data.name,
+    url: cfg.url,
+    pollIntervalMinutes: cfg.pollIntervalMinutes,
+  };
+  return <WebsiteForm mode="edit" initial={initial} onCancel={onCancel} onSubmit={onSubmit} />;
+}
+
+function WebsiteForm({
+  mode,
+  initial,
+  onCancel,
+  onSubmit,
+}: {
+  mode: 'create' | 'edit';
+  initial: WebsiteFormValues;
+  onCancel: () => void;
+  onSubmit: (values: WebsiteFormValues) => void;
+}) {
+  const api = useApi();
+  const [values, setValues] = useState<WebsiteFormValues>(initial);
+  const [testResult, setTestResult] = useState<
+    | { state: 'idle' }
+    | { state: 'pending' }
+    | { state: 'ok'; pageTitle: string; snippet: string; finalUrl: string }
+    | { state: 'fail'; message: string }
+  >({ state: 'idle' });
+
+  useEffect(() => {
+    setValues(initial);
+    setTestResult({ state: 'idle' });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initial.url, mode]);
+
+  function set<K extends keyof WebsiteFormValues>(key: K, val: WebsiteFormValues[K]) {
+    setValues((v) => ({ ...v, [key]: val }));
+  }
+
+  async function runTest() {
+    if (!values.url) {
+      toast.error('Enter a URL first');
+      return;
+    }
+    setTestResult({ state: 'pending' });
+    try {
+      const result = await api.post<
+        | { ok: true; pageTitle: string; snippet: string; finalUrl: string }
+        | { ok: false; message: string }
+      >('/api/sources/test', { type: 'website', config: { url: values.url } });
+      if (result.ok) {
+        setTestResult({
+          state: 'ok',
+          pageTitle: result.pageTitle,
+          snippet: result.snippet,
+          finalUrl: result.finalUrl,
+        });
+        toast.success(`Connected to "${result.pageTitle}"`);
+        if (mode === 'create' && !values.name) {
+          set('name', result.pageTitle);
+        }
+      } else {
+        setTestResult({ state: 'fail', message: result.message });
+        toast.error(result.message);
+      }
+    } catch (err) {
+      const msg = (err as Error).message;
+      setTestResult({ state: 'fail', message: msg });
+      toast.error(msg);
+    }
+  }
+
+  return (
+    <form
+      className="card space-y-4"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (!values.name) {
+          toast.error('Give the website a display name');
+          return;
+        }
+        onSubmit(values);
+      }}
+    >
+      <h3 className="font-semibold">
+        {mode === 'create' ? 'Watch a website' : `Edit "${initial.name}"`}
+      </h3>
+      <p className="text-xs text-ink-500">
+        Rose re-fetches the page on the schedule below, extracts the readable
+        article text, and only generates a wiki page when the content has
+        actually changed since the last poll.
+      </p>
+
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <Field label="Page URL" hint="The page to monitor.">
+          <input
+            className="input"
+            value={values.url}
+            onChange={(e) => set('url', e.target.value)}
+            placeholder="https://example.com/news"
+            required
+          />
+        </Field>
+        <Field label="Display name" hint="Shown in the sources list.">
+          <input
+            className="input"
+            value={values.name}
+            onChange={(e) => set('name', e.target.value)}
+            required
+          />
+        </Field>
+        <Field
+          label="Poll interval (minutes)"
+          hint="Minimum 15. Default 360 (every 6 hours)."
+        >
+          <input
+            className="input"
+            type="number"
+            min={15}
+            max={1440}
+            value={values.pollIntervalMinutes}
+            onChange={(e) => set('pollIntervalMinutes', Number(e.target.value))}
+            required
+          />
+        </Field>
+      </div>
+
+      {testResult.state === 'ok' && (
+        <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-2 text-sm text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-200">
+          <div className="flex items-start gap-2">
+            <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
+            <div>
+              <div className="font-medium">{testResult.pageTitle}</div>
+              <div className="mt-1 line-clamp-3 text-xs">{testResult.snippet}</div>
+            </div>
+          </div>
+        </div>
+      )}
+      {testResult.state === 'fail' && (
+        <div className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 p-2 text-sm text-red-800 dark:border-red-800 dark:bg-red-950/30 dark:text-red-200">
+          <XCircle className="mt-0.5 h-4 w-4 shrink-0" />
+          <div>{testResult.message}</div>
+        </div>
+      )}
+
+      <div className="flex justify-end gap-2">
+        <button type="button" className="btn-ghost" onClick={onCancel}>
+          Cancel
+        </button>
+        <button
+          type="button"
+          className="btn-secondary"
+          onClick={runTest}
+          disabled={testResult.state === 'pending'}
+        >
+          <PlugZap
+            className={`h-4 w-4 ${testResult.state === 'pending' ? 'animate-pulse' : ''}`}
+          />
+          Test page
+        </button>
+        <button type="submit" className="btn-primary">
+          {mode === 'create' ? 'Watch page' : 'Save changes'}
         </button>
       </div>
     </form>

@@ -5,7 +5,7 @@ const sourceSchema = new Schema(
     userId: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
     type: {
       type: String,
-      enum: ['imap', 'webhook', 'gmail', 'rss', 'slack', 'discord', 'gcal'],
+      enum: ['imap', 'webhook', 'gmail', 'rss', 'slack', 'discord', 'gcal', 'website'],
       required: true,
     },
     name: { type: String, required: true },
@@ -26,6 +26,14 @@ const sourceSchema = new Schema(
     /** RSS feed metadata captured on first successful fetch (display only). */
     rssFeedTitle: { type: String, default: null },
     rssFeedUrl: { type: String, default: null },
+    /** Website-source caches. URL is duplicated from encryptedConfig so
+     *  the sources list can show it without decrypting. ContentHash lets
+     *  us skip page generation when the readable text hasn't changed. */
+    websiteUrl: { type: String, default: null },
+    websiteTitle: { type: String, default: null },
+    websiteContentHash: { type: String, default: null },
+    websiteEtag: { type: String, default: null },
+    websiteLastModified: { type: String, default: null },
     /** Outbound SMTP overrides for IMAP sources — derived host
      *  defaults work for most providers (smtp.<domain>:465 secure)
      *  but the user can override per-source. */

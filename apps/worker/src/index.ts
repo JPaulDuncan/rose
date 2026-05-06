@@ -7,6 +7,7 @@ import { startEmbedPageWorker } from './processors/embedPage.js';
 import { startImapSyncWorker } from './processors/imapSync.js';
 import { startGmailSyncWorker } from './processors/gmailSync.js';
 import { startRssSyncWorker } from './processors/rssSync.js';
+import { startWebsiteSyncWorker } from './processors/websiteSync.js';
 import { startSlackSyncWorker } from './processors/slackSync.js';
 import { startDiscordSyncWorker } from './processors/discordSync.js';
 import { startGcalSyncWorker } from './processors/gcalSync.js';
@@ -39,6 +40,7 @@ async function bootstrap() {
   startImapSyncWorker();
   startGmailSyncWorker();
   startRssSyncWorker();
+  startWebsiteSyncWorker();
   startSlackSyncWorker();
   startDiscordSyncWorker();
   startGcalSyncWorker();

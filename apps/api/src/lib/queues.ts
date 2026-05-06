@@ -8,6 +8,7 @@ export const QUEUE_NAMES = {
   imapSync: 'rose.imap-sync',
   gmailSync: 'rose.gmail-sync',
   rssSync: 'rose.rss-sync',
+  websiteSync: 'rose.website-sync',
   summarizeSender: 'rose.summarize-sender',
   fetchAndParse: 'rose.fetch-and-parse',
   sendOutbound: 'rose.send-outbound',
@@ -42,6 +43,7 @@ export const embedPageQueue = new Queue(QUEUE_NAMES.embedPage, connection);
 export const imapSyncQueue = new Queue(QUEUE_NAMES.imapSync, connection);
 export const gmailSyncQueue = new Queue(QUEUE_NAMES.gmailSync, connection);
 export const rssSyncQueue = new Queue(QUEUE_NAMES.rssSync, connection);
+export const websiteSyncQueue = new Queue(QUEUE_NAMES.websiteSync, connection);
 export const summarizeSenderQueue = new Queue(QUEUE_NAMES.summarizeSender, connection);
 export const fetchAndParseQueue = new Queue(QUEUE_NAMES.fetchAndParse, connection);
 export const sendOutboundQueue = new Queue(QUEUE_NAMES.sendOutbound, connection);

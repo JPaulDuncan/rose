@@ -8,6 +8,7 @@ export const SourceType = z.enum([
   'slack',
   'discord',
   'gcal',
+  'website',
 ]);
 export type SourceType = z.infer<typeof SourceType>;
 
@@ -73,6 +74,19 @@ export const DiscordConfig = z.object({
 });
 export type DiscordConfig = z.infer<typeof DiscordConfig>;
 
+export const WebsiteConfig = z.object({
+  url: z.string().url(),
+  /** How often the worker re-fetches the page. Default: every 6 hours. */
+  pollIntervalMinutes: z.number().int().min(15).max(1440).default(360),
+});
+export type WebsiteConfig = z.infer<typeof WebsiteConfig>;
+
+export const WebsiteUpdateConfig = z.object({
+  url: z.string().url().optional(),
+  pollIntervalMinutes: z.number().int().min(15).max(1440).optional(),
+});
+export type WebsiteUpdateConfig = z.infer<typeof WebsiteUpdateConfig>;
+
 export const GcalConfig = z.object({
   /** Set on initial connect; the worker exchanges it once for a
    *  refresh token, then clears it. */
@@ -108,6 +122,7 @@ export const SourceCreateRequest = z.discriminatedUnion('type', [
   z.object({ type: z.literal('slack'), name: z.string().min(1), config: SlackConfig }),
   z.object({ type: z.literal('discord'), name: z.string().min(1), config: DiscordConfig }),
   z.object({ type: z.literal('gcal'), name: z.string().min(1), config: GcalConfig }),
+  z.object({ type: z.literal('website'), name: z.string().min(1), config: WebsiteConfig }),
 ]);
 export type SourceCreateRequest = z.infer<typeof SourceCreateRequest>;
 
@@ -140,8 +155,9 @@ export const SourceUpdateRequest = z.object({
   name: z.string().min(1).optional(),
   config: ImapUpdateConfig.optional(),
   rssConfig: RssUpdateConfig.optional(),
+  websiteConfig: WebsiteUpdateConfig.optional(),
   status: z.enum(['active', 'paused']).optional(),
-  /** Top-level interval — accepted for any pollable source (IMAP / Gmail / RSS). */
+  /** Top-level interval — accepted for any pollable source (IMAP / Gmail / RSS / Website). */
   pollIntervalMinutes: z.number().int().min(1).max(1440).optional(),
 });
 export type SourceUpdateRequest = z.infer<typeof SourceUpdateRequest>;
@@ -150,6 +166,7 @@ export type SourceUpdateRequest = z.infer<typeof SourceUpdateRequest>;
 export const SourceTestRequest = z.discriminatedUnion('type', [
   z.object({ type: z.literal('imap'), config: ImapConfig }),
   z.object({ type: z.literal('rss'), config: z.object({ url: z.string().url() }) }),
+  z.object({ type: z.literal('website'), config: z.object({ url: z.string().url() }) }),
   z.object({
     type: z.literal('slack'),
     config: z.object({ token: z.string().min(10) }),
@@ -167,6 +184,11 @@ export const SourceTestResponse = z.object({
   /** Sample of feed entry titles when testing an RSS source. */
   feedTitle: z.string().optional(),
   sampleItems: z.array(z.object({ title: z.string(), link: z.string().nullable() })).optional(),
+  /** Page title + snippet when testing a website source. */
+  pageTitle: z.string().optional(),
+  snippet: z.string().optional(),
+  /** Resolved URL after redirects (website test). */
+  finalUrl: z.string().optional(),
   /** Slack/Discord workspace info + channels list. */
   workspaceName: z.string().optional(),
   channels: z
