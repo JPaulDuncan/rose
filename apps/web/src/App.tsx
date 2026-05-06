@@ -48,6 +48,7 @@ const MapsSettingsPage = lazy(() => import('./routes/settings/Maps'));
 const TagsSettingsPage = lazy(() => import('./routes/settings/Tags'));
 const EntitiesSettingsPage = lazy(() => import('./routes/settings/Entities'));
 const LibrarySettingsPage = lazy(() => import('./routes/settings/Library'));
+const AdminSettingsPage = lazy(() => import('./routes/settings/Admin'));
 
 /**
  * Generic chunk-loading fallback. Plain text rather than a spinner so
@@ -134,6 +135,7 @@ export default function App() {
           <Route path="tags" element={<TagsSettingsPage />} />
           <Route path="entities" element={<EntitiesSettingsPage />} />
           <Route path="library" element={<LibrarySettingsPage />} />
+          <Route path="admin" element={<AdminSettingsPage />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>

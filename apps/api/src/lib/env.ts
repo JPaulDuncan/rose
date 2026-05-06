@@ -30,6 +30,16 @@ export const env = {
    * 5 minutes — matches the SPA default.
    */
   IDLE_TIMEOUT_MINUTES: Number(process.env.IDLE_TIMEOUT_MINUTES ?? 5),
+  /**
+   * Email of the user with operator-mode access — sees the
+   * Settings → Admin tab and can wipe corpora via
+   * /api/admin/reset. Compared case-insensitively against
+   * `User.email`. Defaults to `jpaulduncan@gmail.com`; set to
+   * empty string to disable the admin surface entirely.
+   */
+  ADMIN_EMAIL: (process.env.ADMIN_EMAIL ?? 'jpaulduncan@gmail.com')
+    .trim()
+    .toLowerCase(),
   VAPID_PUBLIC_KEY: process.env.VAPID_PUBLIC_KEY ?? '',
   VAPID_PRIVATE_KEY: process.env.VAPID_PRIVATE_KEY ?? '',
   VAPID_SUBJECT: process.env.VAPID_SUBJECT ?? 'mailto:admin@rose.local',

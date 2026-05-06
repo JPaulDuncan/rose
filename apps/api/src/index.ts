@@ -22,6 +22,7 @@ import { streamsRouter } from './routes/streams.js';
 import { tagsRouter } from './routes/tags.js';
 import { entitiesRouter } from './routes/entities.js';
 import { hiddenRouter } from './routes/hidden.js';
+import { adminRouter } from './routes/admin.js';
 import { spamRouter } from './routes/spam.js';
 import { featuredTagsRouter } from './routes/featuredTags.js';
 import { weatherRouter } from './routes/weather.js';
@@ -101,6 +102,7 @@ export async function createServer(): Promise<Express> {
   app.use('/api/tags', requireAuth, tagsRouter);
   app.use('/api/entities', requireAuth, entitiesRouter);
   app.use('/api/hidden', requireAuth, hiddenRouter);
+  app.use('/api/admin', requireAuth, adminRouter);
   app.use('/api/spam', requireAuth, spamRouter);
   app.use('/api/featured-tags', requireAuth, featuredTagsRouter);
   app.use('/api/weather', requireAuth, weatherRouter);

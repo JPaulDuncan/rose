@@ -32,6 +32,7 @@ first for the plan to make sense.
 | 13 | [Cross-sender consolidation + merge detect](./13-cross-sender-consolidation.md) (✓ shipped) | 4 | embeddings (✓), assignment ladder (✓) |
 | 14 | [Idle logout (client + server)](./14-idle-logout.md) (✓ shipped) | 2 | Redis (✓) |
 | 15 | [Shared knowledge: daydream / sender briefs / logos](./15-shared-knowledge.md) (✓ shipped) | 4 | DaydreamNote (✓), Sender (✓) |
+| 16 | [Admin reset](./16-admin-reset.md) (✓ shipped) | 2 | env (✓) |
 
 ## Build-order recommendation
 
