@@ -28,6 +28,9 @@ first for the plan to make sense.
 | 09 | [Daydream — idle research enrichment](./09-daydream.md) | 3 | LLM provider (✓), workers (✓), safeFetch (✓) |
 | 10 | [Discovery — search without a search engine](./10-discovery.md) | 4 | Daydream (✓), webFetch (✓), embeddings (✓) |
 | 11 | [Maps — events + wiki places (Tier A)](./11-maps.md) | 3 | webFetch (✓), Nominatim (✓), entity extraction (✓) |
+| 12 | [Tag canonicalisation + named entities](./12-tags-and-entities.md) (✓ shipped) | 3 | LLM provider (✓), embeddings (✓) |
+| 13 | [Cross-sender consolidation + merge detect](./13-cross-sender-consolidation.md) (✓ shipped) | 4 | embeddings (✓), assignment ladder (✓) |
+| 14 | [Idle logout (client + server)](./14-idle-logout.md) (✓ shipped) | 2 | Redis (✓) |
 
 ## Build-order recommendation
 
