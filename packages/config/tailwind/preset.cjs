@@ -38,6 +38,9 @@ module.exports = {
       boxShadow: {
         soft: '0 1px 2px rgba(15,16,20,0.06), 0 4px 12px rgba(15,16,20,0.06)',
       },
+      maxWidth: {
+        '8xl': '88rem',
+      },
       keyframes: {
         'fade-in': { from: { opacity: 0 }, to: { opacity: 1 } },
         'slide-up': {
