@@ -10,6 +10,7 @@ import {
   User,
   Sender,
   Entity,
+  uniqueSlug,
   type EmailDoc,
   type PageDoc,
 } from '@rose/db';
@@ -1029,13 +1030,7 @@ export function startGeneratePageWorker() {
           model: `${providerId}:${genModel}`,
         });
       } else {
-        const baseSlug = slugify(draft.title);
-        slug = baseSlug;
-        let n = 1;
-        while (await Page.findOne({ userId, slug })) {
-          n += 1;
-          slug = `${baseSlug}-${n}`;
-        }
+        slug = await uniqueSlug(userId, slugify(draft.title));
         const isRss = triggerEmail.kind === 'rss';
         const newGroupingMode: 'thread' | 'topic' | 'source-topic' = isRss
           ? 'topic'

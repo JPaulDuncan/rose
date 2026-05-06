@@ -1,21 +1,18 @@
 import { Router } from 'express';
 import { Types } from 'mongoose';
-import { Entity, Page, DaydreamNote, normalizeTagKey, ENTITY_TYPES } from '@rose/db';
+import {
+  Entity,
+  Page,
+  DaydreamNote,
+  normalizeTagKey,
+  ENTITY_TYPES,
+  daydreamSubjectKey,
+} from '@rose/db';
 import { userIdOf } from '../middleware/auth.js';
 import { daydreamQueue } from '../lib/queues.js';
 import { llmForceLimiter } from '../middleware/rateLimit.js';
 
 export const entitiesRouter: Router = Router();
-
-/**
- * Daydream stores notes keyed on `(userId, kind, subjectKey)`
- * where `subjectKey` is the lowercased name with whitespace
- * collapsed — NOT the kebab URL key. Mirroring the worker-side
- * helper here so the entity page can find its note.
- */
-function daydreamSubjectKey(displayName: string): string {
-  return (displayName ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
-}
 
 /**
  * Lightweight directory of every entity the user has, sorted by
@@ -426,14 +423,10 @@ entitiesRouter.post('/:key/merge', async (req, res) => {
   // resolves on /n/<target>). Same `kind: 'entity'` row, source
   // displayName-derived subjectKey.
   if (sourceRow?.displayName) {
-    const orphanedKey = sourceRow.displayName
-      .trim()
-      .toLowerCase()
-      .replace(/\s+/g, ' ');
     await DaydreamNote.deleteOne({
       userId,
       kind: 'entity',
-      subjectKey: orphanedKey,
+      subjectKey: daydreamSubjectKey(sourceRow.displayName),
     });
   }
 
@@ -527,11 +520,11 @@ entitiesRouter.delete('/:key', async (req, res) => {
   const row = await Entity.findOne({ userId, key }).select('displayName').lean();
   await Entity.deleteOne({ userId, key });
   if (row?.displayName) {
-    const subjectKey = row.displayName
-      .trim()
-      .toLowerCase()
-      .replace(/\s+/g, ' ');
-    await DaydreamNote.deleteOne({ userId, kind: 'entity', subjectKey });
+    await DaydreamNote.deleteOne({
+      userId,
+      kind: 'entity',
+      subjectKey: daydreamSubjectKey(row.displayName),
+    });
   }
   let affected = 0;
   if (purge) {

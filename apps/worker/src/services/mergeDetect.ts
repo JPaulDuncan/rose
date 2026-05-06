@@ -4,6 +4,7 @@ import { SYSTEM_PROMPT_BASE, extractJson, renderTemplate } from '@rose/llm';
 import { z } from 'zod';
 import { resolveProviderForUser, applyParamOverrides } from '../lib/providers.js';
 import { logger } from '../lib/logger.js';
+import { cosine } from '../lib/vec.js';
 
 /**
  * Maximum candidates to run through the LLM dedupe check. The
@@ -28,19 +29,6 @@ const DedupeOutput = z.object({
   confidence: z.number().min(0).max(1).default(0),
   reason: z.string().max(280).default(''),
 });
-
-function cosine(a: number[], b: number[]): number {
-  if (!a.length || a.length !== b.length) return 0;
-  let dot = 0;
-  let na = 0;
-  let nb = 0;
-  for (let i = 0; i < a.length; i++) {
-    dot += a[i]! * b[i]!;
-    na += a[i]! * a[i]!;
-    nb += b[i]! * b[i]!;
-  }
-  return na && nb ? dot / (Math.sqrt(na) * Math.sqrt(nb)) : 0;
-}
 
 /**
  * Look for pages that the just-saved `page` might be a duplicate of.

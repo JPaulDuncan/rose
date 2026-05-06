@@ -19,11 +19,9 @@ export function hostnameAdapterLabel(url: string): string {
 }
 
 /**
- * Daydream subject-key normalisation. Whitespace-collapsed lowercase
- * displayName form (NOT kebab) — the daydream system uses this so
- * notes are reusable across surfaces (page, /n/<key> entity page,
- * Settings → Daydream recent activity).
+ * Daydream subject-key normalisation. Plan 13 (D2) moved the body
+ * to `@rose/db::daydreamSubjectKey`; re-exported here under the
+ * legacy name so existing worker imports keep compiling. Prefer
+ * `daydreamSubjectKey` for new code.
  */
-export function normaliseSubjectKey(s: string): string {
-  return (s ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
-}
+export { daydreamSubjectKey as normaliseSubjectKey } from '@rose/db';

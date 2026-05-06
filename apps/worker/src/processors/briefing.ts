@@ -5,6 +5,7 @@ import {
   Page,
   PageRevision,
   Instruction,
+  uniqueSlug,
   type PageDoc,
 } from '@rose/db';
 import { renderTemplate, SYSTEM_PROMPT_BASE } from '@rose/llm';
@@ -14,6 +15,7 @@ import { logger } from '../lib/logger.js';
 import { resolveProviderForUser, applyParamOverrides } from '../lib/providers.js';
 import { runPostWriteEntityExtraction } from '../services/extractEntities.js';
 import { hashContent } from '../services/extractPlaces.js';
+import { cosine } from '../lib/vec.js';
 
 const QUEUE = 'rose.briefing';
 
@@ -58,24 +60,6 @@ function isDue(
     if (ms < 12 * 3600 * 1000) return false;
   }
   return true;
-}
-
-/**
- * Cosine similarity between page topic centroids — good enough for a
- * cheap k-means pass. Returns 0 when either centroid is missing or
- * dimensions don't match.
- */
-function cosine(a: number[], b: number[]): number {
-  if (!a.length || a.length !== b.length) return 0;
-  let dot = 0;
-  let na = 0;
-  let nb = 0;
-  for (let i = 0; i < a.length; i++) {
-    dot += a[i]! * b[i]!;
-    na += a[i]! * a[i]!;
-    nb += b[i]! * b[i]!;
-  }
-  return na && nb ? dot / (Math.sqrt(na) * Math.sqrt(nb)) : 0;
 }
 
 /**
@@ -148,18 +132,7 @@ async function templateFor(userId: Types.ObjectId): Promise<string> {
   return system?.template ?? '';
 }
 
-async function uniqueSlugForUser(
-  userId: Types.ObjectId,
-  base: string,
-): Promise<string> {
-  let slug = base;
-  let n = 1;
-  while (await Page.findOne({ userId, slug })) {
-    n += 1;
-    slug = `${base}-${n}`;
-  }
-  return slug;
-}
+// Slug-collision loop lives in `@rose/db::uniqueSlug` (plan 13 D3).
 
 async function generateBriefingForUser(
   userId: Types.ObjectId,
@@ -251,7 +224,7 @@ async function generateBriefingForUser(
   const baseSlug = slugify(
     `briefing-${new Date().toISOString().slice(0, 10)}-${periodLabel}`,
   );
-  const slug = await uniqueSlugForUser(userId, baseSlug);
+  const slug = await uniqueSlug(userId, baseSlug);
   const title =
     periodLabel === 'weekly'
       ? `Briefing · Week of ${new Date().toLocaleDateString(undefined, {

@@ -2,6 +2,7 @@ import { Types } from 'mongoose';
 import { Email, Page, type EmailDoc, type PageDoc } from '@rose/db';
 import { resolveProviderForUser } from '../lib/providers.js';
 import { logger } from '../lib/logger.js';
+import { cosine } from '../lib/vec.js';
 
 export type AssignmentMode =
   | 'thread'
@@ -46,21 +47,9 @@ export function isAutomatedSender(addr: string | undefined | null): boolean {
   return AUTOMATED_LOCAL_RE.test(local);
 }
 
-/** Cosine similarity between two same-length numeric vectors.
- *  Returns 0 for empty / mismatched-length inputs.
- *  Exported so the worker test suite can assert it directly. */
-export function cosine(a: number[], b: number[]): number {
-  if (!a.length || a.length !== b.length) return 0;
-  let dot = 0,
-    na = 0,
-    nb = 0;
-  for (let i = 0; i < a.length; i++) {
-    dot += a[i]! * b[i]!;
-    na += a[i]! * a[i]!;
-    nb += b[i]! * b[i]!;
-  }
-  return na && nb ? dot / (Math.sqrt(na) * Math.sqrt(nb)) : 0;
-}
+// `cosine` lives in `../lib/vec.ts` (plan 13 D1). Re-exported so
+// existing import sites (and the test suite) keep compiling.
+export { cosine } from '../lib/vec.js';
 
 /**
  * Cache an embedding on the email document so retries don't re-pay for it.

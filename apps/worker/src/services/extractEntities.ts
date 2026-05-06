@@ -3,6 +3,7 @@ import {
   Entity,
   Instruction,
   normalizeTagKey,
+  daydreamSubjectKey,
   type PageDoc,
   type EntityType,
 } from '@rose/db';
@@ -201,7 +202,7 @@ export async function runPostWriteEntityExtraction(
   }>).slice();
   const seen = new Set(existingSubjects.map((s) => `${s.kind}__${s.subjectKey}`));
   for (const e of extracted) {
-    const subjectKey = e.displayName.trim().toLowerCase().replace(/\s+/g, ' ');
+    const subjectKey = daydreamSubjectKey(e.displayName);
     const dedupKey = `entity__${subjectKey}`;
     if (seen.has(dedupKey)) continue;
     seen.add(dedupKey);

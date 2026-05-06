@@ -1,21 +1,20 @@
 import { Types } from 'mongoose';
-import { Page } from '@rose/db';
+import { uniqueSlug as uniqueSlugCore } from '@rose/db';
 import { PageRevision } from '@rose/db';
 import { slugify } from '@rose/shared';
 
+/**
+ * Adapter over `@rose/db::uniqueSlug` that accepts a raw title and
+ * runs `slugify` first. The api callers used this convenience shape
+ * before plan 13 (D3); preserved so they don't have to slugify at
+ * every callsite.
+ */
 export async function uniqueSlug(
   userId: Types.ObjectId,
   base: string,
   excludePageId?: Types.ObjectId,
 ): Promise<string> {
-  let slug = slugify(base);
-  let n = 1;
-  while (true) {
-    const conflict = await Page.findOne({ userId, slug });
-    if (!conflict || (excludePageId && conflict._id.equals(excludePageId))) return slug;
-    n += 1;
-    slug = `${slugify(base)}-${n}`;
-  }
+  return uniqueSlugCore(userId, slugify(base), { excludePageId });
 }
 
 export async function recordRevision(

@@ -16,6 +16,21 @@ export const ENTITY_TYPES = ['person', 'work', 'organization', 'place'] as const
 export type EntityType = (typeof ENTITY_TYPES)[number];
 
 /**
+ * Daydream subject-key normalisation: whitespace-collapsed lowercase
+ * displayName form (NOT kebab). The daydream subsystem uses this so
+ * notes are reusable across surfaces (page Background panel, /n/<key>
+ * entity page, Settings → Daydream recent activity).
+ *
+ * Plan 13 (D2) folded `apps/worker/src/lib/sourceLabel.ts`'s
+ * `normaliseSubjectKey`, the `daydreamSubjectKey` helper in
+ * `apps/api/src/routes/entities.ts`, and two inline call sites in
+ * the same file into this single export.
+ */
+export function daydreamSubjectKey(displayName: string | null | undefined): string {
+  return (displayName ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+/**
  * Per-user named-entity registry. One row per (userId, key) so the
  * /n/:key route, the auto-linker, and the future Settings →
  * Entities tab can all share a fast lookup. `aliases` lets the LLM

@@ -54,5 +54,6 @@ export {
   titleCaseTag,
 } from './models/TagCanonical.js';
 export type { TagCanonicalDoc } from './models/TagCanonical.js';
-export { Entity, ENTITY_TYPES } from './models/Entity.js';
+export { Entity, ENTITY_TYPES, daydreamSubjectKey } from './models/Entity.js';
 export type { EntityDoc, EntityType } from './models/Entity.js';
+export { uniqueSlug } from './util/uniqueSlug.js';
