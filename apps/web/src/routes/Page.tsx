@@ -328,7 +328,11 @@ export default function PageView() {
       </div>
 
       {mode === 'view' ? (
-        <div className="mt-2 grid gap-6 lg:grid-cols-[7fr_3fr]">
+        // `minmax(0, …fr)` rather than `7fr_3fr` is load-bearing — bare
+        // `fr` resolves to `minmax(auto, 1fr)` which lets a long
+        // unbreakable token (a tracking URL, an image filename) in
+        // the rail override the ratio and squeeze the article column.
+        <div className="mt-2 grid gap-6 lg:grid-cols-[minmax(0,7fr)_minmax(0,3fr)]">
           {/* Left column (~70%) — hero, body, sources, background, provenance.
               The hero floats inside the article so text wraps newspaper-
               style around its native dimensions. */}
@@ -1567,6 +1571,7 @@ function groupByHost(links: LinkRow[]): { host: string; total: number; rows: Lin
 }
 
 function LinkLi({ link }: { link: LinkRow }) {
+  const label = link.text || link.url;
   return (
     <li className="flex items-start gap-2">
       <ExternalLink className="mt-0.5 h-3.5 w-3.5 shrink-0 text-ink-400" />
@@ -1577,7 +1582,7 @@ function LinkLi({ link }: { link: LinkRow }) {
         className="min-w-0 flex-1 truncate text-rose-600 hover:underline dark:text-rose-400"
         title={link.url}
       >
-        {link.text || link.url}
+        {truncateLinkLabel(label)}
       </a>
       {link.count > 1 && (
         <span
@@ -1589,6 +1594,23 @@ function LinkLi({ link }: { link: LinkRow }) {
       )}
     </li>
   );
+}
+
+/**
+ * Hard character cap for link labels rendered in the right-rail
+ * Links list. CSS `truncate` (overflow-ellipsis) handles the
+ * common case once column widths are constrained, but a
+ * pathologically long token (a 400-character tracking URL with no
+ * spaces) can still nudge the grid track wider before the ellipsis
+ * kicks in. Capping at 48 chars (46 visible + space + ellipsis)
+ * guarantees the rail stays at its allocated width regardless of
+ * input.
+ */
+function truncateLinkLabel(s: string, max = 48): string {
+  if (!s) return s;
+  if (s.length <= max) return s;
+  // 46 + space + single-char ellipsis = 48
+  return s.slice(0, max - 2) + ' …';
 }
 
 function LinksBlock({ links }: { links: LinkRow[] }) {
