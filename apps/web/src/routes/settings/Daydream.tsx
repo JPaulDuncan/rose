@@ -4,6 +4,7 @@ import { Sparkles, Globe, RotateCw, ExternalLink, Trash2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import type { DaydreamSettings as DaydreamSettingsT } from '@rose/shared';
 import { useApi } from '../../lib/api';
+import { adapterLabel } from '../../lib/sourceLabel';
 
 type RecentNote = {
   _id: string;
@@ -634,7 +635,7 @@ export default function DaydreamSettings() {
                           className="inline-flex items-center gap-1 hover:text-rose-600"
                         >
                           <Globe className="h-2.5 w-2.5" />
-                          {s.adapter}
+                          {adapterLabel(s.adapter, s.url)}
                           <ExternalLink className="h-2.5 w-2.5" />
                         </a>
                       ))}

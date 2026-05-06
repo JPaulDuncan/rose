@@ -93,6 +93,29 @@ function normaliseSubjectKey(s: string): string {
 }
 
 /**
+ * Derive a short adapter label from a URL when the snippet wasn't
+ * tagged with one — e.g. "en.wikipedia.org" → "wikipedia",
+ * "openalex.org" → "openalex". Strips leading "www." and the TLD.
+ * Returns the literal "source" only when the URL is unparseable,
+ * because "unknown source" is what we're trying to stop showing.
+ */
+function hostnameOrUnknown(url: string): string {
+  try {
+    let host = new URL(url).hostname.toLowerCase().replace(/^www\./, '');
+    // Drop language subdomain on wikipedia / wikidata / wiktionary.
+    host = host.replace(/^(?:en|es|fr|de|ja|zh)\./, '');
+    // "openalex.org" → "openalex". Keep multi-part TLDs like
+    // ".co.uk" as the second-to-last label so "example.co.uk"
+    // becomes "example".
+    const parts = host.split('.');
+    if (parts.length >= 2) return parts[parts.length - 2]!;
+    return host || 'source';
+  } catch {
+    return 'source';
+  }
+}
+
+/**
  * Build the enabled adapter list from a user's daydream settings.
  * Some adapters (LinkGraph) need per-user state, so this takes the
  * userId — adapters that don't care just ignore it.
@@ -323,14 +346,19 @@ async function upsertNote(
   kind: 'topic' | 'sender' | 'tag' | 'entity',
   subjectKey: string,
   out: DaydreamSynthesisOutput,
-  snippets: DaydreamSnippet[],
+  snippets: Array<DaydreamSnippet & { adapterId?: string }>,
   modelLabel: string,
   refreshAfterDays: number,
 ): Promise<void> {
   const usedSet = new Set(out.usedSources);
   const sources = snippets
     .map((s, i) => ({
-      adapter: s.url.includes('wikipedia.org') ? 'wikipedia' : 'unknown',
+      // Prefer the adapter id captured at fetch time. If a snippet
+      // somehow arrives without one (legacy callers, future
+      // adapters that bypass `researchSubject`) fall back to the
+      // URL hostname so the UI never has to render the literal
+      // word "unknown".
+      adapter: s.adapterId || hostnameOrUnknown(s.url),
       url: s.url,
       title: s.title,
       fetchedAt: s.fetchedAt,
@@ -422,7 +450,12 @@ async function researchSubject(
   }
   const lang = cfg.sources?.wikipedia?.lang ?? 'en';
   const opts = adapterOptions(cfg);
-  const snippets: DaydreamSnippet[] = [];
+  // Pair the snippet with the adapter id that produced it so the
+  // attribution chips in the UI can say "via wikidata" / "via
+  // openalex" instead of the generic "unknown" the prior code
+  // emitted (it tried to back-derive from URL and only matched
+  // wikipedia.org).
+  const snippets: Array<DaydreamSnippet & { adapterId: string }> = [];
   await Promise.all(
     adapters.map(async (a) => {
       try {
@@ -435,7 +468,7 @@ async function researchSubject(
         // size. Synthesis prompt sees up to N adapters' top hits, not
         // top-K from one source.
         const top = got.sort((x, y) => y.confidence - x.confidence)[0];
-        if (top) snippets.push(top);
+        if (top) snippets.push({ ...top, adapterId: a.id });
       } catch (err) {
         logger.warn({ err, adapter: a.id, display }, 'daydream: adapter failed');
       }

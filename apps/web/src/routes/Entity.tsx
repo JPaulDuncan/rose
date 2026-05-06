@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useApi } from '../lib/api';
+import { adapterLabel } from '../lib/sourceLabel';
 import { MapInset } from '../components/MapInset';
 
 type EntityType = 'person' | 'work' | 'organization' | 'place' | null;
@@ -390,7 +391,7 @@ function BackgroundBrief({
                   className="inline-flex items-center gap-1 rounded bg-ink-100 px-1.5 py-0.5 hover:text-rose-600 dark:bg-ink-800"
                   title={s.title || s.url}
                 >
-                  via {s.adapter}
+                  via {adapterLabel(s.adapter, s.url)}
                   <ExternalLink className="h-2.5 w-2.5" />
                 </a>
               ))}
