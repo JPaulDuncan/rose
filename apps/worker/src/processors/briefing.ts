@@ -244,6 +244,9 @@ async function generateBriefingForUser(
     tags: ['briefing', periodTag],
     topics: ['briefing'],
     priority: 'normal',
+    // Briefings are always "as of now" — no source email date to
+    // pull from, so the article date matches the briefing's runtime.
+    articleDate: new Date(),
     groupingMode: 'briefing',
     synthesisOf: pool.map((p) => p._id),
     sourceEmailIds: [],

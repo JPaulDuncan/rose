@@ -32,6 +32,7 @@ type Entry = {
   primaryTopic: string | null;
   messageCount: number;
   updatedAt: string;
+  articleDate?: string | null;
 };
 type Chapter = {
   _id: string;
@@ -67,6 +68,7 @@ type Stream = {
   heroImageUrl: string | null;
   messageCount: number;
   updatedAt: string;
+  articleDate?: string | null;
 };
 type TimelineEntry = {
   emailId: string;
@@ -203,7 +205,11 @@ function PinnedTab() {
       }
     }
     for (const [, arr] of m) {
-      arr.sort((a, b) => +new Date(b.updatedAt) - +new Date(a.updatedAt));
+      arr.sort(
+        (a, b) =>
+          +new Date(b.articleDate ?? b.updatedAt) -
+          +new Date(a.articleDate ?? a.updatedAt),
+      );
     }
     return m;
   }, [codex]);
@@ -539,7 +545,7 @@ function EntryRow({ entry }: { entry: Entry }) {
           {entry.messageCount} {entry.messageCount === 1 ? 'message' : 'messages'}
         </span>
         <span>
-          {new Date(entry.updatedAt).toLocaleDateString(undefined, {
+          {new Date(entry.articleDate ?? entry.updatedAt).toLocaleDateString(undefined, {
             month: 'short',
             day: 'numeric',
           })}

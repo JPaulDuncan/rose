@@ -99,7 +99,7 @@ digestRouter.get('/', async (req, res) => {
   // Pull contentMd just long enough to compute word count + pull quote,
   // then drop it before responding so the wire payload stays small.
   const rawPages = await Page.find(filter)
-    .sort({ updatedAt: -1 })
+    .sort({ articleDate: -1, updatedAt: -1 })
     .select('-embedding -topicCentroid')
     .lean();
   const allPages: DigestPage[] = rawPages.map((p) => {
@@ -274,7 +274,7 @@ digestRouter.get('/', async (req, res) => {
       $or: [{ tags: tag }, { topics: tag }],
     };
     const matching = (await Page.find(tagFilter)
-      .sort({ updatedAt: -1 })
+      .sort({ articleDate: -1, updatedAt: -1 })
       .limit(8)
       .select('-contentMd -embedding -topicCentroid')
       .lean()) as unknown as DigestPage[];

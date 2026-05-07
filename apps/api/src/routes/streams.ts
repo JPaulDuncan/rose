@@ -45,7 +45,7 @@ streamsRouter.get('/', async (req, res) => {
     'flags.userMarkedSpam': { $ne: true },
     'flags.hasLikelySpam': { $ne: true },
   })
-    .sort({ updatedAt: -1 })
+    .sort({ articleDate: -1, updatedAt: -1 })
     .select('-contentMd -embedding -topicCentroid')
     .lean()) as unknown as StreamPage[];
 

@@ -181,6 +181,20 @@ synthesisRouter.post('/synthesize', async (req, res) => {
       tags: ['synthesis'],
       topics: ['synthesis'],
       priority: 'normal',
+      // Synthesis articles use the most recent contributing page's
+      // articleDate so the synthesized story sorts under the date of
+      // the latest source it drew from.
+      articleDate: ((): Date => {
+        let max = 0;
+        for (const p of pages) {
+          const t =
+            (p as { articleDate?: Date | null }).articleDate?.getTime() ??
+            (p as { updatedAt?: Date }).updatedAt?.getTime() ??
+            0;
+          if (t > max) max = t;
+        }
+        return max > 0 ? new Date(max) : new Date();
+      })(),
       groupingMode: 'synthesis',
       synthesisOf: pages.map((p) => p._id),
       sourceEmailIds: [],

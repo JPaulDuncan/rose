@@ -44,6 +44,7 @@ type DigestPage = {
   primaryTopic?: string | null;
   updatedAt: string;
   createdAt: string;
+  articleDate?: string | null;
   version: number;
   wordCount?: number;
   pullQuote?: string | null;
@@ -470,15 +471,19 @@ function BreakingCarousel({ pages }: { pages: DigestPage[] }) {
   const breaking = pages
     .filter((p) => {
       if (p.priority !== 'high') return false;
-      const upd = p.updatedAt ? new Date(p.updatedAt).getTime() : 0;
+      // Article date wins over updatedAt — a high-priority email
+      // received yesterday should still surface as "breaking" for
+      // 24h after its actual receipt, not 24h after we generated it.
+      const when = p.articleDate ?? p.updatedAt;
+      const upd = when ? new Date(when).getTime() : 0;
       if (upd < cutoff) return false;
       if (seen.has(p._id)) return false;
       seen.add(p._id);
       return true;
     })
     .sort((a, b) => {
-      const at = new Date(a.updatedAt ?? 0).getTime();
-      const bt = new Date(b.updatedAt ?? 0).getTime();
+      const at = new Date(a.articleDate ?? a.updatedAt ?? 0).getTime();
+      const bt = new Date(b.articleDate ?? b.updatedAt ?? 0).getTime();
       return bt - at;
     })
     .slice(0, 12);
@@ -545,7 +550,7 @@ function BreakingCarousel({ pages }: { pages: DigestPage[] }) {
             <div className="p-3">
               <div className="flex items-center gap-1.5 text-[9px] uppercase tracking-widest text-red-600 dark:text-red-400">
                 <span className="inline-block h-1 w-1 rounded-full bg-red-500" />
-                {p.updatedAt ? timeAgo(p.updatedAt) : 'just now'}
+                {timeAgo(p.articleDate ?? p.updatedAt)}
               </div>
               <h4 className="mt-1.5 font-serif text-base font-bold leading-snug group-hover:text-rose-700 dark:group-hover:text-rose-300">
                 {p.title}
@@ -775,7 +780,7 @@ function PageCard({ page }: { page: DigestPage }) {
           </button>
         ))}
         <span className="ml-auto text-ink-400">
-          {timeAgo(page.updatedAt)}
+          {timeAgo(page.articleDate ?? page.updatedAt)}
         </span>
       </div>
       </div>

@@ -29,9 +29,9 @@ codexRouter.get('/', async (req, res) => {
       ],
     })
       .select(
-        'slug title summary heroImageUrl tags topics categoryId updatedAt sourceEmailIds senderAddresses groupingMode primaryTopic',
+        'slug title summary heroImageUrl tags topics categoryId updatedAt articleDate sourceEmailIds senderAddresses groupingMode primaryTopic',
       )
-      .sort({ updatedAt: -1 })
+      .sort({ articleDate: -1, updatedAt: -1 })
       .lean(),
     Category.find({ userId }).sort({ name: 1 }).lean(),
     // Plan 15 — per-user counters live on Sender; brand-global

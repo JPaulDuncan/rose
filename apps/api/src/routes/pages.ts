@@ -140,8 +140,12 @@ pagesRouter.get('/', async (req, res) => {
   const tag = req.query.tag as string | undefined;
   const filter: Record<string, unknown> = { userId };
   if (tag) filter.tags = tag;
+  // Newspaper-style sort: latest article date first, falling back to
+  // updatedAt for pages that haven't been migrated yet (articleDate
+  // null). The compound sort only kicks in when articleDate is null;
+  // otherwise the secondary key is the natural tiebreaker.
   const pages = await Page.find(filter)
-    .sort({ updatedAt: -1 })
+    .sort({ articleDate: -1, updatedAt: -1 })
     .limit(limit)
     .select('-contentMd')
     .lean();
@@ -226,6 +230,53 @@ pagesRouter.delete('/:id', async (req, res) => {
   await PageRevision.deleteMany({ pageId: req.params.id });
   res.json({ ok: true });
 });
+
+const PrioritySetRequest = z.object({
+  /** `auto` clears the override and lets the next generation pass
+   *  re-derive priority from email headers. Explicit values lock the
+   *  page at that priority until reset. */
+  priority: z.enum(['high', 'normal', 'low', 'auto']),
+});
+
+/**
+ * Manual priority override. Editing the priority is a UI affordance
+ * — power users want to bump newsletter clusters to "high" or knock
+ * a noisy notification stream down to "low" without waiting for the
+ * heuristic to catch up. Setting `priorityOverride: true` gates the
+ * generation worker from clobbering this on the next pass.
+ */
+pagesRouter.post(
+  '/:id/priority',
+  validateBody(PrioritySetRequest),
+  async (req, res) => {
+    const userId = new Types.ObjectId(userIdOf(req));
+    if (!Types.ObjectId.isValid(req.params.id ?? '')) {
+      res.status(400).json({ error: 'invalid_request' });
+      return;
+    }
+    const page = await Page.findOne({ _id: req.params.id, userId });
+    if (!page) {
+      res.status(404).json({ error: 'not_found' });
+      return;
+    }
+    const body = req.body as { priority: 'high' | 'normal' | 'low' | 'auto' };
+    if (body.priority === 'auto') {
+      page.priorityOverride = false;
+      // Don't change the visible priority — the next generation pass
+      // will re-derive from email headers; until then, keep the
+      // user's last view stable.
+    } else {
+      page.priority = body.priority;
+      page.priorityOverride = true;
+    }
+    await page.save();
+    res.json({
+      ok: true,
+      priority: page.priority,
+      priorityOverride: page.priorityOverride,
+    });
+  },
+);
 
 const MergeRequest = z.object({
   intoPageId: z.string().refine((v) => Types.ObjectId.isValid(v), 'invalid id'),

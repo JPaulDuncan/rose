@@ -822,6 +822,20 @@ export function startGeneratePageWorker() {
       ];
       const sourceEmailIds = pageEmails.map((e) => e._id) as Types.ObjectId[];
 
+      // The article's "as-of" date is the latest contributing email's
+      // received date — `date` (RFC 5322 Date: header) when present,
+      // otherwise the row's createdAt. This is what the UI surfaces;
+      // distinct from the Page row's createdAt which records when
+      // generation actually ran.
+      const articleDate = ((): Date => {
+        let max = 0;
+        for (const e of pageEmails) {
+          const t = (e.date ?? (e as { createdAt?: Date }).createdAt)?.getTime() ?? 0;
+          if (t > max) max = t;
+        }
+        return max > 0 ? new Date(max) : new Date();
+      })();
+
       // ---- metadata rollup ---------------------------------------------------
       const priorityRank = { high: 2, normal: 1, low: 0 } as const;
       let priority: 'high' | 'normal' | 'low' = 'normal';
@@ -990,7 +1004,23 @@ export function startGeneratePageWorker() {
         page.threadKeys = threadKeys;
         page.senderAddresses = senderAddresses;
         page.subjectTemplates = subjectTemplates;
-        page.priority = verdict.setPriority ?? priority;
+        // Honour a user priority override: only the rule engine can
+        // still set priority on an override page; auto-derivation
+        // doesn't clobber what the user picked.
+        if (verdict.setPriority) {
+          page.priority = verdict.setPriority;
+        } else if (!page.priorityOverride) {
+          page.priority = priority;
+        }
+        // Advance articleDate only if the new max email date is more
+        // recent than what the page already has. Stale resyncs of old
+        // emails shouldn't pull the article date backward.
+        if (
+          !page.articleDate ||
+          articleDate.getTime() > new Date(page.articleDate).getTime()
+        ) {
+          page.articleDate = articleDate;
+        }
         page.topics = topics;
         page.set('pageLinks', pageLinks);
         page.set('pageImages', pageImages);
@@ -1088,6 +1118,7 @@ export function startGeneratePageWorker() {
           senderAddresses,
           subjectTemplates,
           priority: verdict.setPriority ?? priority,
+          articleDate,
           topics,
           pageLinks,
           pageImages,

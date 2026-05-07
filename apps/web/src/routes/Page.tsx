@@ -76,6 +76,8 @@ type PageDoc = {
   generatedAt?: string | null;
   generatedBy?: 'llm' | 'synth' | 'briefing' | 'human' | null;
   priority?: 'high' | 'normal' | 'low';
+  priorityOverride?: boolean;
+  articleDate?: string | null;
   topics?: string[];
   pageLinks?: { url: string; text?: string | null; count: number }[];
   pageImages?: {
@@ -284,7 +286,11 @@ export default function PageView() {
                 ),
             )}
             <span className="text-xs text-ink-400">
-              v{page.version} · {new Date(page.updatedAt).toLocaleString()}
+              v{page.version} ·{' '}
+              {new Date(page.articleDate ?? page.updatedAt).toLocaleString()}
+              {page.articleDate && (
+                <span className="ml-1 text-ink-500">(article date)</span>
+              )}
             </span>
           </div>
           {mode === 'view' && <Attribution page={page} />}
@@ -308,6 +314,13 @@ export default function PageView() {
             <History className="h-4 w-4" />
           </button>
           {mode === 'view' && page && <FavoriteButton pageId={page._id} />}
+          {mode === 'view' && page && (
+            <PriorityControl
+              pageId={page._id}
+              priority={page.priority ?? 'normal'}
+              priorityOverride={page.priorityOverride ?? false}
+            />
+          )}
           {mode === 'view' && page && <ShareButton pageId={page._id} pageTitle={page.title} />}
           {mode === 'view' ? (
             <button className="btn-secondary" onClick={() => setMode('edit')}>
@@ -2265,5 +2278,78 @@ function Thumb({
     >
       {inner}
     </a>
+  );
+}
+
+/**
+ * Priority dropdown for the page header. Writes through to
+ * POST /api/pages/:id/priority and locks the page's priority to the
+ * user's choice (the generation worker honours `priorityOverride`).
+ * Selecting "Auto" clears the override so the next regeneration
+ * passes the heuristic-derived priority through again.
+ */
+function PriorityControl({
+  pageId,
+  priority,
+  priorityOverride,
+}: {
+  pageId: string;
+  priority: 'high' | 'normal' | 'low';
+  priorityOverride: boolean;
+}) {
+  const api = useApi();
+  const qc = useQueryClient();
+  const setPriority = useMutation({
+    mutationFn: async (next: 'high' | 'normal' | 'low' | 'auto') =>
+      api.post<{ ok: true; priority: string; priorityOverride: boolean }>(
+        `/api/pages/${pageId}/priority`,
+        { priority: next },
+      ),
+    onSuccess: () => {
+      void qc.invalidateQueries();
+      toast.success('Priority updated');
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const value = priorityOverride ? priority : 'auto';
+  const labelFor = (v: string) =>
+    v === 'auto' ? 'Auto' : v === 'high' ? 'High' : v === 'low' ? 'Low' : 'Normal';
+
+  return (
+    <label
+      className="inline-flex items-center gap-1 text-xs"
+      title={
+        priorityOverride
+          ? `Manual priority: ${labelFor(priority)}. Set to Auto to clear.`
+          : `Auto priority: ${labelFor(priority)}.`
+      }
+    >
+      <Flame
+        className={
+          'h-3.5 w-3.5 ' +
+          (priority === 'high'
+            ? 'text-rose-500'
+            : priority === 'low'
+              ? 'text-ink-400'
+              : 'text-ink-500')
+        }
+      />
+      <select
+        className="input h-7 px-1 py-0 text-xs"
+        value={value}
+        onChange={(e) =>
+          setPriority.mutate(
+            e.target.value as 'high' | 'normal' | 'low' | 'auto',
+          )
+        }
+        disabled={setPriority.isPending}
+      >
+        <option value="auto">Auto</option>
+        <option value="high">High</option>
+        <option value="normal">Normal</option>
+        <option value="low">Low</option>
+      </select>
+    </label>
   );
 }

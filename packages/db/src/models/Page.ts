@@ -101,6 +101,20 @@ const pageSchema = new Schema(
       default: 'normal',
       index: true,
     },
+    /** True when the user manually overrode the article's priority via
+     *  the page header control. Generation honours the override (won't
+     *  re-derive priority from email headers). Cleared when the user
+     *  resets to "auto". */
+    priorityOverride: { type: Boolean, default: false },
+    /**
+     * Newspaper-style article date — the date the story actually
+     * happened, sourced from the latest contributing email's `date`
+     * (received timestamp, falling back to its createdAt). Distinct
+     * from Mongoose's `createdAt` which is when the Page row was
+     * inserted. UI sorts and headlines use this so an article filed
+     * from a 3-day-old email sorts under that day, not today.
+     */
+    articleDate: { type: Date, default: null, index: true },
     /** Union of email topics (capitalized phrases / hashtags), deduped. */
     topics: { type: [String], default: [], index: true },
     /** Aggregated links across emails. */
