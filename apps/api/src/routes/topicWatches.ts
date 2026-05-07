@@ -69,6 +69,11 @@ const TopicWatchUpsert = z.object({
    *  {{topic}}, {{date}}, {{snippets}}, {{targetWords}}. */
   customPrompt: z.string().max(4000).optional(),
   maxResultsPerSource: z.number().int().min(1).max(10).optional(),
+  /** Force-enable Daydream's federated news / web-search adapters
+   *  (Marginalia, DuckDuckGo, Brave, SearXNG) for this watch even
+   *  when the user's global externalSearch toggle is off. Defaults
+   *  true since topic watches are usually news-leaning. */
+  includeNewsSearch: z.boolean().optional(),
 });
 
 type TopicWatchInput = z.infer<typeof TopicWatchUpsert>;
@@ -90,6 +95,7 @@ function recipeFromInput(input: TopicWatchInput, name?: string) {
           topic: input.topic,
           targetWords: input.targetWords ?? 400,
           maxResultsPerSource: input.maxResultsPerSource ?? 5,
+          includeNewsSearch: input.includeNewsSearch ?? true,
           ...(input.customPrompt ? { promptTemplate: input.customPrompt } : {}),
         },
       },
@@ -112,7 +118,13 @@ topicWatchesRouter.get('/', async (req, res) => {
       const action = (r.actions ?? [])[0] as
         | {
             kind: string;
-            config: { topic?: string; targetWords?: number; promptTemplate?: string; maxResultsPerSource?: number };
+            config: {
+              topic?: string;
+              targetWords?: number;
+              promptTemplate?: string;
+              maxResultsPerSource?: number;
+              includeNewsSearch?: boolean;
+            };
           }
         | undefined;
       const trigger = r.trigger as {
@@ -128,6 +140,9 @@ topicWatchesRouter.get('/', async (req, res) => {
         targetWords: action?.config?.targetWords ?? 400,
         customPrompt: action?.config?.promptTemplate ?? null,
         maxResultsPerSource: action?.config?.maxResultsPerSource ?? 5,
+        includeNewsSearch:
+          (action?.config as { includeNewsSearch?: boolean } | undefined)
+            ?.includeNewsSearch ?? true,
         enabled: r.enabled,
         fireCount: r.fireCount ?? 0,
         errorCount: r.errorCount ?? 0,
@@ -226,6 +241,10 @@ topicWatchesRouter.patch(
           partial.maxResultsPerSource ??
           ((action?.config as { maxResultsPerSource?: number } | undefined)
             ?.maxResultsPerSource ?? 5),
+        includeNewsSearch:
+          partial.includeNewsSearch ??
+          ((action?.config as { includeNewsSearch?: boolean } | undefined)
+            ?.includeNewsSearch ?? true),
       };
       const next = recipeFromInput(merged);
       existing.set(next);

@@ -361,14 +361,31 @@ async function runBriefingGenerate(
     promptTemplate?: string;
     maxResultsPerSource: number;
     targetWords: number;
+    includeNewsSearch?: boolean;
   },
   recipeName: string,
 ): Promise<{ pageSlug: string; snippetCount: number; sourceCount: number }> {
   // Load the user's daydream config; the briefing surface uses the
   // same source toggles. Library-as-daydream is gated separately.
   const user = await User.findById(userId).select('settings.daydream settings.library').lean();
-  const cfg = ((user?.settings as Record<string, unknown> | undefined)
+  const baseCfg = ((user?.settings as Record<string, unknown> | undefined)
     ?.daydream as DaydreamUserSettings | undefined) ?? {};
+  // News-oriented watches (the default) want federated web search
+  // even when the user hasn't turned the master Daydream toggle on.
+  // We force `externalSearch.enabled = true` on a cloned cfg so the
+  // adapter builder wires Marginalia / DuckDuckGo (key-less) in;
+  // Brave + SearXNG only fire when the user already configured them.
+  // Per-adapter enable flags inside externalSearch are preserved.
+  const cfg: DaydreamUserSettings =
+    config.includeNewsSearch !== false
+      ? {
+          ...baseCfg,
+          externalSearch: {
+            ...(baseCfg.externalSearch ?? {}),
+            enabled: true,
+          },
+        }
+      : baseCfg;
   const libraryEnabled =
     !!(user?.settings as { library?: { enabled?: boolean; useInDaydream?: boolean } } | undefined)
       ?.library?.enabled &&

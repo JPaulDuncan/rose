@@ -24,6 +24,7 @@ type TopicWatch = {
   targetWords: number;
   customPrompt: string | null;
   maxResultsPerSource: number;
+  includeNewsSearch: boolean;
   enabled: boolean;
   fireCount: number;
   errorCount: number;
@@ -281,6 +282,7 @@ type WatchFormValues = {
   targetWords: number;
   customPrompt?: string;
   maxResultsPerSource: number;
+  includeNewsSearch: boolean;
 };
 
 const PRESET_CADENCES: { id: string; label: string; cron: string; hint: string }[] = [
@@ -326,6 +328,9 @@ function WatchForm({
   const [maxResultsPerSource, setMaxResultsPerSource] = useState(
     initial?.maxResultsPerSource ?? 5,
   );
+  const [includeNewsSearch, setIncludeNewsSearch] = useState<boolean>(
+    initial?.includeNewsSearch ?? true,
+  );
 
   const cron = useMemo(() => {
     if (presetId === 'custom') return customCron.trim();
@@ -365,6 +370,25 @@ function WatchForm({
           maxLength={200}
         />
       </Field>
+
+      <label className="flex items-start gap-2 text-sm">
+        <input
+          type="checkbox"
+          className="mt-1 h-4 w-4 accent-rose-500"
+          checked={includeNewsSearch}
+          onChange={(e) => setIncludeNewsSearch(e.target.checked)}
+        />
+        <span>
+          <span className="font-medium">Include news / web search</span>
+          <span className="block text-[11px] text-ink-500">
+            Pull from the federated search adapters (Marginalia, DuckDuckGo,
+            and any keyed Brave / SearXNG you've set up) so the brief
+            includes current news — not just encyclopedic context. Leave on
+            for "what's new with X" topics; turn off for pure background
+            briefs.
+          </span>
+        </span>
+      </label>
 
       <Field label="Schedule">
         <div className="flex flex-wrap gap-1.5">
@@ -516,6 +540,7 @@ function WatchForm({
               enabled: initial?.enabled ?? true,
               targetWords,
               maxResultsPerSource,
+              includeNewsSearch,
               ...(customPrompt.trim() ? { customPrompt: customPrompt.trim() } : {}),
             })
           }

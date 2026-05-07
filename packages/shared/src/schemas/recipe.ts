@@ -260,6 +260,14 @@ const BriefingGenerateAction = z.object({
     /** Word-count target for the resulting article. Loose hint passed
      *  to the LLM, not a hard cap. */
     targetWords: z.number().int().min(80).max(2000).default(400),
+    /** Force the federated news / web-search adapters on (Marginalia,
+     *  DuckDuckGo, Brave when keyed, SearXNG when configured) even
+     *  if the user's master Daydream `externalSearch.enabled` toggle
+     *  is off. Topic watches default this true so news-style topics
+     *  ("new Marvel movies") get current information instead of just
+     *  encyclopedic context. Per-adapter toggles inside
+     *  `externalSearch` still apply. */
+    includeNewsSearch: z.boolean().default(true),
   }),
 });
 
