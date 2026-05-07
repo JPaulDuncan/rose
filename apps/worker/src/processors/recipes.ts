@@ -15,6 +15,8 @@ import {
   type Trigger,
   type Condition,
   type Action,
+  triggerMatches,
+  conditionMatches,
 } from '@rose/shared';
 import { assertSafeHttpUrl } from '@rose/llm';
 import { redis } from '../lib/redis.js';
@@ -26,83 +28,8 @@ import { resolveProviderForUser } from '../lib/providers.js';
 const QUEUE = 'rose.recipes';
 const WEBHOOK_TIMEOUT_MS = 15_000;
 
-/* ─── Trigger / condition matchers ────────────────────────────────── */
-
-/**
- * Decide whether an event is a candidate for this recipe. Trigger
- * filter is inline-matched here so the dispatcher never even
- * evaluates conditions for irrelevant recipes.
- */
-function triggerMatches(trigger: Trigger, event: RecipeEvent): boolean {
-  if (trigger.kind !== event.kind) return false;
-  if (trigger.kind === 'email.ingested' && event.kind === 'email.ingested') {
-    const cfg = trigger.config;
-    if (
-      cfg.senderContains &&
-      !(event.from ?? '').toLowerCase().includes(cfg.senderContains.toLowerCase())
-    ) {
-      return false;
-    }
-    if (cfg.brandKey && event.brandKey !== cfg.brandKey.toLowerCase()) {
-      return false;
-    }
-    if (
-      cfg.subjectContains &&
-      !event.subject.toLowerCase().includes(cfg.subjectContains.toLowerCase())
-    ) {
-      return false;
-    }
-    return true;
-  }
-  if (trigger.kind === 'tag.applied' && event.kind === 'tag.applied') {
-    return trigger.config.tag.toLowerCase() === event.tag.toLowerCase();
-  }
-  return true;
-}
-
-function conditionMatches(condition: Condition, event: RecipeEvent): boolean {
-  switch (condition.kind) {
-    case 'tag.contains': {
-      const target = condition.config.tag.toLowerCase();
-      const tags =
-        'tags' in event ? event.tags.map((t) => t.toLowerCase()) : [];
-      return tags.includes(target);
-    }
-    case 'sender.brand': {
-      const want = condition.config.brandKey.toLowerCase();
-      const has =
-        event.kind === 'email.ingested'
-          ? (event.brandKey ?? '').toLowerCase()
-          : event.kind === 'page.created' || event.kind === 'tag.applied'
-            ? event.brandKeys.map((k) => k.toLowerCase()).join(',')
-            : '';
-      return has.split(',').includes(want);
-    }
-    case 'priority.is': {
-      // Works on every event that carries priority — emails when they
-      // arrive, pages when they're created, and the per-tag fan-out.
-      if (
-        event.kind === 'email.ingested' ||
-        event.kind === 'page.created' ||
-        event.kind === 'tag.applied'
-      ) {
-        return event.priority === condition.config.priority;
-      }
-      return false;
-    }
-    case 'subject.matches': {
-      if (event.kind !== 'email.ingested') return false;
-      try {
-        const re = new RegExp(condition.config.pattern, 'i');
-        return re.test(event.subject);
-      } catch {
-        return false;
-      }
-    }
-    default:
-      return false;
-  }
-}
+/* ─── Trigger / condition matchers live in @rose/shared so the
+       dispatcher and the API's dry-run endpoint stay in lockstep. ── */
 
 function subjectKeyOf(event: RecipeEvent): string | null {
   if (event.kind === 'email.ingested') return `email:${event.emailId}`;

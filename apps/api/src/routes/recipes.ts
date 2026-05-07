@@ -1,16 +1,21 @@
 import { Router } from 'express';
 import { Types } from 'mongoose';
 import { z } from 'zod';
-import { Recipe, RecipeAudit, User } from '@rose/db';
+import { Recipe, RecipeAudit, User, Email, Page } from '@rose/db';
+import { senderDomainTag } from '@rose/email-parser';
 import {
   RecipeCreateRequest,
   RecipeUpdateRequest,
   type RecipeEvent,
+  type Trigger,
+  type Condition,
+  evaluateRecipe,
 } from '@rose/shared';
 import { userIdOf } from '../middleware/auth.js';
 import { validateBody } from '../middleware/validate.js';
 import { recipesQueue } from '../lib/queues.js';
 import { logger } from '../lib/logger.js';
+import { RECIPE_TEMPLATES } from './recipeTemplates.js';
 
 export const recipesRouter: Router = Router();
 
@@ -119,6 +124,14 @@ function virtualSpamRecipe(
     virtual: true,
   };
 }
+
+/**
+ * Static gallery of starter recipes the wizard can pre-populate.
+ * Mounted before `/:id` so the literal path wins over the param.
+ */
+recipesRouter.get('/templates', async (_req, res) => {
+  res.json({ templates: RECIPE_TEMPLATES });
+});
 
 recipesRouter.get('/', async (req, res) => {
   const userId = new Types.ObjectId(userIdOf(req));
@@ -287,4 +300,140 @@ recipesRouter.get('/:id/audit', async (req, res) => {
     .limit(limit)
     .lean();
   res.json({ audit: rows });
+});
+
+/**
+ * Replay recent state through the recipe's trigger + conditions
+ * without firing actions. The endpoint synthesises candidate events
+ * out of the user's recent emails / pages and runs the same matchers
+ * the dispatcher uses (`@rose/shared` `evaluateRecipe`), then
+ * returns a per-candidate verdict so the UI can show:
+ *
+ *   ✓  "Stripe — Your invoice for May"   would fire
+ *   ✗  "Linear — Build broke on main"    condition-mismatch:tag.contains
+ *
+ * Bounded to the last 200 candidates so the round trip stays cheap.
+ * Pure read — touches no queues, writes no audit rows.
+ */
+recipesRouter.post('/:id/dry-run', async (req, res, next) => {
+  try {
+    const userId = new Types.ObjectId(userIdOf(req));
+    if (!Types.ObjectId.isValid(req.params.id ?? '')) {
+      res.status(400).json({ error: 'invalid_request' });
+      return;
+    }
+    const recipe = await Recipe.findOne({ _id: req.params.id, userId }).lean();
+    if (!recipe) {
+      res.status(404).json({ error: 'not_found' });
+      return;
+    }
+    const trigger = recipe.trigger as unknown as Trigger;
+    const conditions = (recipe.conditions ?? []) as unknown as Condition[];
+    const limit = Math.min(
+      Number((req.body as { limit?: number })?.limit ?? 100),
+      200,
+    );
+
+    const candidates: Array<{
+      label: string;
+      subjectKey: string;
+      subjectUrl: string | null;
+      verdict: ReturnType<typeof evaluateRecipe>;
+    }> = [];
+
+    if (trigger.kind === 'email.ingested') {
+      const emails = await Email.find({ userId })
+        .select('subject from priority topics date createdAt')
+        .sort({ date: -1, createdAt: -1 })
+        .limit(limit)
+        .lean();
+      for (const e of emails) {
+        const fromAddr = e.from?.address ?? null;
+        const event: RecipeEvent = {
+          kind: 'email.ingested',
+          userId: String(userId),
+          emailId: String(e._id),
+          from: fromAddr,
+          subject: e.subject ?? '',
+          brandKey: (fromAddr ? senderDomainTag(fromAddr) : null)?.toLowerCase() ?? null,
+          priority: (e.priority as 'high' | 'normal' | 'low' | null) ?? null,
+          tags: (e.topics as string[] | undefined) ?? [],
+        };
+        candidates.push({
+          label: e.subject || '(no subject)',
+          subjectKey: `email:${String(e._id)}`,
+          subjectUrl: `/e/${String(e._id)}`,
+          verdict: evaluateRecipe(trigger, conditions, event),
+        });
+      }
+    } else if (
+      trigger.kind === 'page.created' ||
+      trigger.kind === 'tag.applied'
+    ) {
+      const pages = await Page.find({ userId })
+        .select('slug title tags topics priority senderAddresses categoryId')
+        .sort({ articleDate: -1, updatedAt: -1 })
+        .limit(limit)
+        .lean();
+      const tagFilter =
+        trigger.kind === 'tag.applied' ? trigger.config.tag.toLowerCase() : null;
+      for (const p of pages) {
+        const tags = ((p.tags as string[] | undefined) ?? []).map((t) =>
+          t.toLowerCase(),
+        );
+        const brandKeys = ((p.senderAddresses as string[] | undefined) ?? [])
+          .map((a) => senderDomainTag(a)?.toLowerCase() ?? null)
+          .filter((k): k is string => k !== null);
+        const event: RecipeEvent =
+          trigger.kind === 'page.created'
+            ? {
+                kind: 'page.created',
+                userId: String(userId),
+                pageId: String(p._id),
+                slug: p.slug,
+                title: p.title,
+                tags,
+                categoryId: p.categoryId ? String(p.categoryId) : null,
+                brandKeys,
+                priority: (p.priority as 'high' | 'normal' | 'low' | null) ?? null,
+              }
+            : {
+                kind: 'tag.applied',
+                userId: String(userId),
+                pageId: String(p._id),
+                slug: p.slug,
+                title: p.title,
+                tag: tagFilter ?? tags[0] ?? '',
+                tags,
+                brandKeys,
+                priority: (p.priority as 'high' | 'normal' | 'low' | null) ?? null,
+              };
+        candidates.push({
+          label: p.title,
+          subjectKey: `page:${String(p._id)}`,
+          subjectUrl: `/p/${p.slug}`,
+          verdict: evaluateRecipe(trigger, conditions, event),
+        });
+      }
+    } else {
+      // time.scheduled has no replayable subject — synthesise one
+      // so the UI confirms the cron / timezone parse, but always
+      // matches.
+      candidates.push({
+        label: 'Scheduled tick (synthetic)',
+        subjectKey: `cron:${String(recipe._id)}`,
+        subjectUrl: null,
+        verdict: { match: true },
+      });
+    }
+
+    const matched = candidates.filter((c) => c.verdict.match).length;
+    res.json({
+      total: candidates.length,
+      matched,
+      candidates,
+    });
+  } catch (err) {
+    next(err);
+  }
 });
