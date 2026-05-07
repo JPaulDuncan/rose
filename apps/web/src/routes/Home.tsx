@@ -18,6 +18,7 @@ import {
   X,
   MapPin as MapPinIcon,
   CloudSun,
+  Flag,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useApi } from '../lib/api';
@@ -1409,6 +1410,9 @@ function WeatherCard({ compact = false }: { compact?: boolean }) {
 type UpcomingEvent = {
   _id: string;
   title: string;
+  /** "event" = something happening at a time/place; "deadline" = a
+   *  due date / cutoff. The widget shows a flag for deadlines. */
+  kind?: 'event' | 'deadline';
   start: string;
   end: string | null;
   allDay: boolean;
@@ -1544,12 +1548,20 @@ function UpcomingEvents() {
 
 function UpcomingEventRow({ e }: { e: UpcomingEvent }) {
   const start = new Date(e.start);
-  const time = e.allDay
-    ? 'All day'
-    : start.toLocaleTimeString(undefined, {
-        hour: 'numeric',
-        minute: start.getMinutes() === 0 ? undefined : '2-digit',
-      });
+  const isDeadline = e.kind === 'deadline';
+  const time = isDeadline
+    ? e.allDay
+      ? 'Due'
+      : `Due ${start.toLocaleTimeString(undefined, {
+          hour: 'numeric',
+          minute: start.getMinutes() === 0 ? undefined : '2-digit',
+        })}`
+    : e.allDay
+      ? 'All day'
+      : start.toLocaleTimeString(undefined, {
+          hour: 'numeric',
+          minute: start.getMinutes() === 0 ? undefined : '2-digit',
+        });
   // Prefer the wiki page link when one exists — that's where the
   // user gets the full context. Fall back to the source email so the
   // row is always actionable.
@@ -1558,7 +1570,16 @@ function UpcomingEventRow({ e }: { e: UpcomingEvent }) {
     <li className="min-w-0">
       <Link to={href} className="group block">
         <div className="flex items-start gap-2">
-          <span className="mt-0.5 shrink-0 rounded bg-rose-100 px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-rose-800 dark:bg-rose-950/40 dark:text-rose-200">
+          <span
+            className={
+              'mt-0.5 inline-flex shrink-0 items-center gap-0.5 rounded px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wider ' +
+              (isDeadline
+                ? 'bg-amber-100 text-amber-900 dark:bg-amber-950/40 dark:text-amber-200'
+                : 'bg-rose-100 text-rose-800 dark:bg-rose-950/40 dark:text-rose-200')
+            }
+            title={isDeadline ? 'Deadline' : undefined}
+          >
+            {isDeadline && <Flag className="h-2.5 w-2.5" />}
             {time}
           </span>
           <span className="min-w-0 flex-1 truncate text-sm leading-snug group-hover:text-rose-700 dark:group-hover:text-rose-300">

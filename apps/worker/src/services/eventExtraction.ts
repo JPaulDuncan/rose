@@ -7,6 +7,7 @@ import { geocode } from '../lib/geocode.js';
 
 type ExtractedEvent = {
   title: string;
+  kind?: 'event' | 'deadline';
   start: string;
   end?: string | null;
   allDay?: boolean;
@@ -133,14 +134,30 @@ export async function extractEventsForEmail(
       }
     }
 
+    // Belt-and-braces deadline detection: even if the LLM forgot to
+    // emit `kind`, fall back to scanning the title for the obvious
+    // cutoff keywords. Cheap and catches model slips.
+    const titleStr = String(e.title);
+    const titleLooksLikeDeadline =
+      /\b(deadline|due|cutoff|cut[- ]off|expires?|closes?|submit by|rsvp by|register by|apply by|no later than|last day)\b/i.test(
+        titleStr,
+      );
+    const kind: 'event' | 'deadline' =
+      e.kind === 'deadline' || (e.kind == null && titleLooksLikeDeadline)
+        ? 'deadline'
+        : 'event';
+
     await CalendarEvent.create({
       userId,
       sourceEmailId: email._id,
       pageId: page?._id ?? null,
       pageSlug: page?.slug ?? null,
-      title: String(e.title).slice(0, 200),
+      title: titleStr.slice(0, 200),
+      kind,
       start,
-      end: end && end > start ? end : null,
+      // Deadlines are point-in-time even if the LLM tries to give an
+      // end. End only makes sense for things with duration.
+      end: kind === 'deadline' ? null : end && end > start ? end : null,
       allDay,
       location,
       geocoded: geocoded ?? {

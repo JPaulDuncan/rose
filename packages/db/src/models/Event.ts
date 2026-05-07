@@ -11,6 +11,19 @@ const eventSchema = new Schema(
     pageId: { type: Schema.Types.ObjectId, ref: 'Page', default: null },
     pageSlug: { type: String, default: null },
     title: { type: String, required: true, maxlength: 200 },
+    /**
+     * What kind of calendar entry this is. Drives the icon on the
+     * calendar grid + Upcoming widget so a "submit by" date doesn't
+     * look the same as a meeting.
+     *   event    — a thing happening at a time/place (default).
+     *   deadline — a "due by" date the user shouldn't miss.
+     */
+    kind: {
+      type: String,
+      enum: ['event', 'deadline'],
+      default: 'event',
+      index: true,
+    },
     /** Start instant. Always required. */
     start: { type: Date, required: true, index: true },
     /** End instant. Optional; absent for point-in-time events. */

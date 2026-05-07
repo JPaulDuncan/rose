@@ -11,6 +11,7 @@ import {
   X,
   Rss,
   AtSign,
+  Flag,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { moonPhase, MOON_PHASE_LABEL } from '@rose/shared';
@@ -21,6 +22,9 @@ import { MoonPhaseIcon } from '../components/MoonPhaseIcon';
 type CalendarEventDoc = {
   _id: string;
   title: string;
+  /** "event" = something happening at a time/place; "deadline" = a
+   *  due date / cutoff. The UI surfaces these differently. */
+  kind?: 'event' | 'deadline';
   start: string;
   end: string | null;
   allDay: boolean;
@@ -388,20 +392,33 @@ function MonthGrid({
                   )}
                 </span>
               </div>
-              {evs.slice(0, 2).map((e) => (
-                <span
-                  key={e._id}
-                  className="truncate rounded bg-rose-100/70 px-1 py-0.5 text-[10px] text-rose-900 dark:bg-rose-950/40 dark:text-rose-200"
-                  title={e.title}
-                >
-                  {!e.allDay && (
-                    <span className="mr-1 text-rose-500">
-                      {fmtTime(new Date(e.start))}
-                    </span>
-                  )}
-                  {e.title}
-                </span>
-              ))}
+              {evs.slice(0, 2).map((e) => {
+                const isDeadline = e.kind === 'deadline';
+                return (
+                  <span
+                    key={e._id}
+                    className={
+                      'truncate rounded px-1 py-0.5 text-[10px] ' +
+                      (isDeadline
+                        ? 'bg-amber-100 text-amber-900 ring-1 ring-inset ring-amber-300 dark:bg-amber-950/40 dark:text-amber-200 dark:ring-amber-800'
+                        : 'bg-rose-100/70 text-rose-900 dark:bg-rose-950/40 dark:text-rose-200')
+                    }
+                    title={isDeadline ? `Deadline: ${e.title}` : e.title}
+                  >
+                    {isDeadline ? (
+                      <Flag
+                        className="mr-1 inline h-2.5 w-2.5 align-[-1px] text-amber-600 dark:text-amber-400"
+                        aria-label="Deadline"
+                      />
+                    ) : !e.allDay ? (
+                      <span className="mr-1 text-rose-500">
+                        {fmtTime(new Date(e.start))}
+                      </span>
+                    ) : null}
+                    {e.title}
+                  </span>
+                );
+              })}
               {evs.length > 2 && (
                 <span className="text-[10px] text-ink-500">+{evs.length - 2} more</span>
               )}
@@ -455,14 +472,26 @@ function WeekGrid({
                 {evs.length === 0 ? (
                   <span className="text-[10px] italic text-ink-400">—</span>
                 ) : (
-                  evs.map((e) => (
+                  evs.map((e) => {
+                    const isDeadline = e.kind === 'deadline';
+                    return (
                     <div
                       key={e._id}
-                      className="group rounded-md border border-rose-200 bg-rose-50 p-1.5 text-[11px] text-rose-900 dark:border-rose-900/60 dark:bg-rose-950/30 dark:text-rose-100"
+                      className={
+                        'group rounded-md border p-1.5 text-[11px] ' +
+                        (isDeadline
+                          ? 'border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-100'
+                          : 'border-rose-200 bg-rose-50 text-rose-900 dark:border-rose-900/60 dark:bg-rose-950/30 dark:text-rose-100')
+                      }
                     >
                       <div className="flex items-start justify-between gap-1">
                         <span className="font-semibold">
-                          {e.allDay ? 'All day' : fmtTime(new Date(e.start))}
+                          {isDeadline ? (
+                            <span className="inline-flex items-center gap-1">
+                              <Flag className="h-3 w-3" />
+                              {e.allDay ? 'Due' : `Due ${fmtTime(new Date(e.start))}`}
+                            </span>
+                          ) : e.allDay ? 'All day' : fmtTime(new Date(e.start))}
                         </span>
                         <button
                           className="opacity-0 transition-opacity hover:text-ink-900 group-hover:opacity-100 dark:hover:text-ink-100"
@@ -490,7 +519,8 @@ function WeekGrid({
                         </Link>
                       )}
                     </div>
-                  ))
+                    );
+                  })
                 )}
               </div>
             </div>
@@ -565,11 +595,22 @@ function EventBody({ e, compact }: { e: CalendarEventDoc; compact?: boolean }) {
   const start = new Date(e.start);
   const end = e.end ? new Date(e.end) : null;
   const sender = e.sourceFromName || e.sourceFromAddress;
+  const isDeadline = e.kind === 'deadline';
   return (
     <>
       <div className="flex items-center gap-2">
-        <span className="rounded-full bg-rose-500 px-1.5 py-0.5 text-[10px] font-semibold text-white">
-          {e.allDay ? 'all day' : fmtTime(start) + (end ? `–${fmtTime(end)}` : '')}
+        <span
+          className={
+            'inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-semibold text-white ' +
+            (isDeadline ? 'bg-amber-600' : 'bg-rose-500')
+          }
+        >
+          {isDeadline ? (
+            <>
+              <Flag className="h-2.5 w-2.5" />
+              {e.allDay ? 'due' : `due ${fmtTime(start)}`}
+            </>
+          ) : e.allDay ? 'all day' : fmtTime(start) + (end ? `–${fmtTime(end)}` : '')}
         </span>
         {!compact && (
           <span className="text-xs text-ink-500">

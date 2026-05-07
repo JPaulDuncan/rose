@@ -264,19 +264,28 @@ Return JSON only:
     name: 'extract.events',
     scope: 'events',
     description:
-      'Extract concrete future events (concerts, meetings, deadlines, deliveries, appointments) mentioned in an email.',
+      'Extract concrete future events (concerts, meetings, deliveries, appointments) and deadlines (submission cutoffs, due dates, RSVP deadlines) mentioned in an email.',
     variables: ['email_subject', 'email_from', 'email_date', 'email_body'],
     isDefault: true,
-    template: `Identify any concrete future events that are explicitly mentioned in the email below. Examples: a concert on a specific date, a meeting with a specific time, a delivery window, an appointment, a deadline.
+    template: `Identify any concrete future events OR deadlines explicitly mentioned in the email below.
 
 REQUIREMENTS
-- Only events that have a clear date (and a time, if specified) — do NOT make up dates.
+- Only entries that have a clear date (and a time, if specified) — do NOT make up dates.
 - Resolve relative dates ("next Friday at 6pm", "in 2 weeks") using the email's send date as the anchor.
 - Use ISO-8601 with timezone offset when the email implies a timezone; otherwise emit the local time without offset (e.g. "2026-08-12T18:00:00").
-- If a time is not given, set "allDay": true and omit the time component (e.g. "2026-08-12").
+- If a time is not given, set "allDay": true and emit a date-only string for "start" (e.g. "2026-08-12").
 - Title: ≤ 80 chars, the thing happening (not the email subject).
 - Skip generic dates already in the past relative to the email's send date.
-- If the email contains no concrete events, return {"events": []}.
+- If the email contains no concrete events or deadlines, return {"events": []}.
+
+KIND — required on every entry, exactly one of:
+  - "deadline" when the date marks a *cutoff* the recipient must act before. Strong signals:
+      • language like "deadline", "due", "due by", "must be received by", "submit by", "RSVP by", "register by", "apply by", "no later than", "expires", "closes", "cutoff", "last day to".
+      • a date with no event happening on that date — just a "by then" obligation.
+      • application / submission / registration / payment / RSVP / renewal / contest entry windows that close on the date.
+    Examples: "Submit your film by May 15" → deadline. "RSVP by Friday" → deadline. "Payment due Aug 1" → deadline.
+  - "event" otherwise — anything that *occurs* at the date/time. Concerts, meetings, deliveries, appointments, screenings, calls, ceremonies. Examples: "Film screening on May 20" → event. "Standup at 10am Tuesday" → event.
+- "end" applies only to events that have a duration. Deadlines do NOT use "end".
 
 EMAIL METADATA
 - Subject: {{email_subject}}
@@ -290,7 +299,7 @@ EMAIL BODY
 
 Respond with JSON only, matching exactly:
 {"events": [
-  {"title": "...", "start": "<ISO-8601>", "end": null | "<ISO-8601>", "allDay": <bool>, "location": null | "...", "description": "<one sentence>"}
+  {"title": "...", "kind": "event" | "deadline", "start": "<ISO-8601>", "end": null | "<ISO-8601>", "allDay": <bool>, "location": null | "...", "description": "<one sentence>"}
 ]}`,
   },
   {
