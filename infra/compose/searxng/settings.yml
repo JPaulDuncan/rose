@@ -1,0 +1,61 @@
+# SearXNG config for Rose's bundled in-cluster instance.
+#
+# `use_default_settings: true` merges this file on top of the
+# upstream defaults shipped with the searxng/searxng image — only
+# fields we care about need to be listed here. Everything else
+# (engine catalog, plugins, locales, etc.) inherits.
+#
+# The Daydream "SearXNG" adapter calls /search?format=json, which
+# requires the json formatter to be in `search.formats` (the
+# upstream default ships only html). That's the load-bearing
+# change; the rest is hygiene.
+#
+# Secret key is pulled from the SEARXNG_SECRET env var by the
+# searxng image at boot. Override in your compose .env in prod.
+
+use_default_settings: true
+
+general:
+  instance_name: 'Rose SearXNG'
+  contact_url: false
+  enable_metrics: false
+
+server:
+  port: 8080
+  bind_address: '0.0.0.0'
+  base_url: false
+  # Disable the rate-limiter — it's primarily designed for public
+  # SearXNG instances getting hit by browsers. The Rose worker
+  # makes one request per Daydream pass and 429s under the limiter
+  # would silently break the SearXNG adapter.
+  limiter: false
+  image_proxy: false
+  method: 'GET'
+  default_http_headers:
+    X-Content-Type-Options: nosniff
+    X-Download-Options: noopen
+    X-Robots-Tag: noindex, nofollow
+    Referrer-Policy: no-referrer
+
+ui:
+  query_in_title: false
+  infinite_scroll: false
+  default_theme: simple
+
+search:
+  safe_search: 0
+  autocomplete: ''
+  default_lang: 'en'
+  # The list the Daydream adapter relies on. Without `json` here
+  # the request returns an HTML page and Zod parsing throws.
+  formats:
+    - html
+    - json
+
+outgoing:
+  request_timeout: 5.0
+  max_request_timeout: 10.0
+  pool_connections: 100
+  pool_maxsize: 20
+  enable_http2: true
+  useragent_suffix: 'Rose-Daydream'

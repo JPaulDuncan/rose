@@ -19,6 +19,7 @@ import {
   type DaydreamSnippet,
 } from '@rose/llm';
 import { decryptJson } from '../lib/crypto.js';
+import { env } from '../lib/env.js';
 import { DaydreamSynthesisOutput } from '@rose/shared';
 import { redis } from '../lib/redis.js';
 import { logger } from '../lib/logger.js';
@@ -140,7 +141,12 @@ export function buildAdapters(
     if (cfg.externalSearch.brave?.enabled && cfg.externalSearch.brave.encryptedApiKey) {
       adapters.push(new BraveSearchAdapter());
     }
-    if (cfg.externalSearch.searxng?.enabled && cfg.externalSearch.searxng.instanceUrl) {
+    // SearXNG is bundled in docker-compose, so SEARXNG_URL is always
+    // available as a fallback; the toggle alone is enough to opt in.
+    if (
+      cfg.externalSearch.searxng?.enabled &&
+      (cfg.externalSearch.searxng.instanceUrl || env.SEARXNG_URL)
+    ) {
       adapters.push(new SearXNGAdapter());
     }
   }
@@ -174,7 +180,13 @@ export function adapterOptions(
     stackexchangeKey: cfg.sources?.stackexchange?.apiKey ?? '',
     minHostCount: cfg.sources?.linkGraph?.minHostCount ?? 2,
     braveApiKey,
-    searxngInstanceUrl: cfg.externalSearch?.searxng?.instanceUrl ?? '',
+    // Fall back to the bundled docker SearXNG when the user hasn't
+    // explicitly configured an instance URL. Lets them just toggle
+    // SearXNG on under Settings → Daydream and have it work.
+    searxngInstanceUrl:
+      cfg.externalSearch?.searxng?.instanceUrl?.trim() ||
+      env.SEARXNG_URL ||
+      '',
   };
 }
 

@@ -55,6 +55,23 @@ services:
     # line out (or set to 0) when running without an NVIDIA GPU.
     gpus: all
 
+  searxng:
+    image: searxng/searxng:latest
+    restart: unless-stopped
+    volumes:
+      - ./searxng:/etc/searxng:rw
+    environment:
+      # The HMAC secret SearXNG mixes into URL-signing for click
+      # tracking. Override in `.env` for production; the bundled
+      # default is only safe for local development.
+      SEARXNG_SECRET: ${SEARXNG_SECRET:-rose-searxng-dev-secret-change-me}
+      # Tells SearXNG which URL to advertise in its own pages.
+      # In-cluster callers (the worker) hit http://searxng:8080
+      # regardless of this value.
+      SEARXNG_BASE_URL: ${SEARXNG_BASE_URL:-http://searxng:8080/}
+    expose:
+      - "8080"
+
   api:
     build:
       context: ../..

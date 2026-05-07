@@ -801,8 +801,8 @@ function ExternalSearchCard({
           }
         />
         <SourceToggle
-          label="SearXNG (your instance)"
-          hint="Calls a SearXNG instance you've already deployed. JSON output must be enabled in the instance's settings.yml."
+          label="SearXNG (federated meta-search)"
+          hint="Toggling this on uses the SearXNG instance that ships with Rose's docker-compose stack — no setup required. To point at your own SearXNG instead, paste its URL on the right (JSON output must be enabled in its settings.yml)."
           enabled={ext.searxng.enabled}
           onToggle={(v) =>
             setForm({
@@ -826,8 +826,8 @@ function ExternalSearchCard({
                   },
                 })
               }
-              placeholder="https://searx.example.com"
-              title="SearXNG instance URL (no trailing /search)."
+              placeholder="bundled (or your URL)"
+              title="Override URL (leave blank to use the bundled instance)."
             />
           }
         />

@@ -29,4 +29,10 @@ export const env = {
   ADMIN_EMAIL: (process.env.ADMIN_EMAIL ?? 'jpaulduncan@gmail.com')
     .toLowerCase()
     .trim(),
+  /** In-cluster URL for the bundled SearXNG service. Falls back to
+   *  the docker-compose service name + default port. The Daydream
+   *  SearXNG adapter prefers the user's per-account `instanceUrl`
+   *  setting when set; this is the fallback so opting in to SearXNG
+   *  works on a fresh deploy without any extra config. */
+  SEARXNG_URL: (process.env.SEARXNG_URL ?? 'http://searxng:8080').trim(),
 } as const;
