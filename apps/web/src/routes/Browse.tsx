@@ -13,6 +13,7 @@ import {
   ExternalLink,
   Mail as MailIcon,
   Sparkles,
+  Wand2,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useApi } from '../lib/api';
@@ -402,13 +403,54 @@ function railButtonClass(active: boolean) {
   );
 }
 
+type RecategorizeOutcome = {
+  pageId: string;
+  title: string;
+  oldCategory: string | null;
+  newCategory: string | null;
+  status: 'changed' | 'unchanged' | 'failed';
+  reason?: string;
+};
+
 function ChapterPanel({
   chapter,
 }: {
   chapter: { _id: string; name: string; entries: Entry[] };
 }) {
+  const api = useApi();
+  const qc = useQueryClient();
   const [synthesizing, setSynthesizing] = useState(false);
-  const ids = chapter.entries.slice(0, 8).map((e) => e._id);
+  const synthesisIds = chapter.entries.slice(0, 8).map((e) => e._id);
+  const isOrphans = chapter._id === '__orphans';
+
+  // Recategorize burns LLM tokens — cap each batch at 50 so a runaway
+  // category doesn't fan out to a giant request.
+  const recategorize = useMutation({
+    mutationFn: async (pageIds: string[]) =>
+      api.post<{ outcomes: RecategorizeOutcome[] }>('/api/pages/recategorize', {
+        pageIds: pageIds.slice(0, 50),
+      }),
+    onSuccess: (resp) => {
+      const changed = resp.outcomes.filter((o) => o.status === 'changed').length;
+      const failed = resp.outcomes.filter((o) => o.status === 'failed').length;
+      if (changed === 0 && failed === 0) {
+        toast.success('Reviewed — no changes needed.');
+      } else if (failed === 0) {
+        toast.success(
+          `Moved ${changed} page${changed === 1 ? '' : 's'} to better-fitting categor${
+            changed === 1 ? 'y' : 'ies'
+          }.`,
+        );
+      } else {
+        toast.success(
+          `Moved ${changed}; ${failed} failed (see logs).`,
+        );
+      }
+      qc.invalidateQueries({ queryKey: ['codex'] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
   return (
     <section className="space-y-4">
       <div className="flex items-end justify-between gap-3 border-b border-ink-200 pb-3 dark:border-ink-800">
@@ -424,16 +466,43 @@ function ChapterPanel({
             {chapter.entries.length === 1 ? 'page' : 'pages'}
           </p>
         </div>
-        {chapter.entries.length >= 2 && (
-          <button
-            type="button"
-            className="btn-secondary text-xs"
-            onClick={() => setSynthesizing(true)}
-            title={`Combine the top ${Math.min(8, chapter.entries.length)} pages into a meta-page`}
-          >
-            <Sparkles className="h-3.5 w-3.5" /> Synthesize
-          </button>
-        )}
+        <div className="flex flex-wrap gap-2">
+          {chapter.entries.length >= 1 && (
+            <button
+              type="button"
+              className="btn-secondary text-xs"
+              onClick={() => {
+                const n = Math.min(50, chapter.entries.length);
+                if (
+                  confirm(
+                    isOrphans
+                      ? `Re-run categorization on ${n} uncategorized page${
+                          n === 1 ? '' : 's'
+                        }? This burns LLM tokens.`
+                      : `Re-run categorization on ${n} page${n === 1 ? '' : 's'} in "${chapter.name}"? Pages may move into other categories. This burns LLM tokens.`,
+                  )
+                ) {
+                  recategorize.mutate(chapter.entries.map((e) => e._id));
+                }
+              }}
+              disabled={recategorize.isPending}
+              title="Re-run category assignment using the current LLM and your existing taxonomy"
+            >
+              <Wand2 className={`h-3.5 w-3.5 ${recategorize.isPending ? 'animate-pulse' : ''}`} />
+              {recategorize.isPending ? 'Recategorizing…' : 'Recategorize'}
+            </button>
+          )}
+          {chapter.entries.length >= 2 && (
+            <button
+              type="button"
+              className="btn-secondary text-xs"
+              onClick={() => setSynthesizing(true)}
+              title={`Combine the top ${Math.min(8, chapter.entries.length)} pages into a meta-page`}
+            >
+              <Sparkles className="h-3.5 w-3.5" /> Synthesize
+            </button>
+          )}
+        </div>
       </div>
       <ul className="divide-y divide-ink-200 dark:divide-ink-800">
         {chapter.entries.map((e) => (
@@ -444,7 +513,7 @@ function ChapterPanel({
       </ul>
       {synthesizing && (
         <SynthesizeDrawer
-          pageIds={ids}
+          pageIds={synthesisIds}
           defaultTitle={`${chapter.name} — synthesis`}
           onClose={() => setSynthesizing(false)}
         />

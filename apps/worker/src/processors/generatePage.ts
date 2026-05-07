@@ -456,6 +456,20 @@ export function startGeneratePageWorker() {
       }
 
       const categories = await Category.find({ userId }).select('name').lean();
+      // Page counts per category — lets the prompt show the LLM which
+      // buckets are popular so it prefers established names over inventing
+      // new (often catch-all) ones. Aggregation is bounded by the user's
+      // category count, which is small.
+      const counts = await Page.aggregate<{ _id: Types.ObjectId; n: number }>([
+        { $match: { userId, categoryId: { $ne: null } } },
+        { $group: { _id: '$categoryId', n: { $sum: 1 } } },
+      ]);
+      const countById = new Map(counts.map((c) => [String(c._id), c.n]));
+      const categoriesBlock = categories.length
+        ? categories
+            .map((c) => `${c.name}\t${countById.get(String(c._id)) ?? 0}`)
+            .join('\n')
+        : '(none yet — pick null or invent a specific category)';
       const stream = isNotificationStream(pageEmails);
 
       // Decide rebuild vs incremental. Incremental kicks in when the
@@ -563,10 +577,8 @@ export function startGeneratePageWorker() {
           new_labeled_threads: labeledThreads,
           new_email_count: String(newEmails.length),
           sender_summary: describeSenders(pageEmails),
-          extra_instructions:
-            'Available categories: ' +
-            (categories.map((c) => c.name).join(', ') || '(none)') +
-            streamGuidance,
+          existing_categories: categoriesBlock,
+          extra_instructions: streamGuidance.trim() || '(none)',
         });
       } else {
         const generateTemplate = await getInstructionTemplate(userId, 'generate');
@@ -576,11 +588,8 @@ export function startGeneratePageWorker() {
           thread_count: String(distinctThreadKeys.size),
           email_count: String(pageEmails.length),
           sender_summary: describeSenders(pageEmails),
-          extra_instructions:
-            'Available categories: ' +
-            (categories.map((c) => c.name).join(', ') || '(none)') +
-            streamGuidance +
-            elidedNote,
+          existing_categories: categoriesBlock,
+          extra_instructions: (streamGuidance + elidedNote).trim() || '(none)',
         });
       }
 

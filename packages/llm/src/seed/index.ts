@@ -46,7 +46,14 @@ TAGS — strict rules:
     scope: 'generate',
     description:
       'Generates a wiki page that reads like a news story, consolidating one or more conversation threads about the same topic — newest developments first, with inline citations.',
-    variables: ['labeled_threads', 'thread_count', 'email_count', 'sender_summary', 'extra_instructions'],
+    variables: [
+      'labeled_threads',
+      'thread_count',
+      'email_count',
+      'sender_summary',
+      'existing_categories',
+      'extra_instructions',
+    ],
     isDefault: true,
     template: `You are a beat reporter writing the running story for a single subject. {{email_count}} email message(s) across {{thread_count}} thread(s) form your source material. Each message is labeled with an opaque token (e1, e2, …). Treat the page as a long-lived news article that gets updated as new dispatches arrive.
 
@@ -64,6 +71,21 @@ CITATIONS
 - Every factual claim, decision, action item, quoted statement, or attributed fact MUST be followed by an inline citation referencing the source email using the exact label provided — e.g. \`The deploy is set for Friday [e2]\` or \`Costs were debated at length [e1, e3]\`. Multiple labels comma-separated inside one bracket. Only use labels that appear below; never invent labels.
 - Weave citations naturally into the prose. Don't dump a row of bracketed numbers at the end of a paragraph.
 - If messages contradict each other, lead with the latest position and mention the prior view as context.
+
+CATEGORY (suggestedCategory) — STRICT
+The user already has a category taxonomy. Categories are coarse buckets — fewer is better than more. Read every rule before deciding:
+
+EXISTING CATEGORIES (name<TAB>page-count, one per line, may be empty):
+{{existing_categories}}
+
+1. PREFER an existing category. If the page fits one of the names above, use that exact name verbatim.
+2. Only invent a NEW category when the page is clearly about a topic NONE of the existing categories cover. New categories must be specific noun phrases (e.g. "Home Improvement", "Personal Finance"), not vague catch-alls.
+3. NEVER use these vague catch-alls unless the content is unambiguously about the subject:
+   - "Politics" — only when the page names specific politicians, parties, elections, legislation, government policy debates, ballot measures, or political movements. Opinion newsletters, op-eds, satire, or analysis that merely *touches* on current events do NOT qualify. Tech-industry commentary, business news, marketing emails about social causes, and general newsletters are NOT politics.
+   - "News" — never. The whole product is a news engine; this is not a useful bucket.
+   - "Misc", "Other", "General", "Updates", "Email", "Information" — never. If nothing fits, return null.
+4. When in doubt, return null. An uncategorized page is strictly better than a wrongly-categorized one — the user can sort it manually.
+5. Be consistent: pages about the same subject should land in the same category across runs.
 
 ADDITIONAL INSTRUCTIONS FROM USER:
 {{extra_instructions}}
@@ -153,6 +175,7 @@ Every emitted tag must appear once in mappings. \`isNew: true\` means there was 
       'new_labeled_threads',
       'new_email_count',
       'sender_summary',
+      'existing_categories',
       'extra_instructions',
     ],
     isDefault: true,
@@ -183,6 +206,18 @@ MERGE RULES — these are the differences from a fresh-write
 7. Summary: ≤ 280 chars, written like a news lede that reflects the latest development across the full page.
 8. Tags: union of existing + whatever the new emails add (the noun-only rules above apply).
 9. topicAliases: if the new emails phrase the underlying story differently than the existing title (e.g. body says "Iran-Israel conflict" while title says "War in Iran"), include the alternate phrasings as lowercase strings here so future emails using either phrasing route to this page.
+
+CATEGORY (suggestedCategory) — STRICT
+The user already has a category taxonomy. The page already has a category — DON'T change it unless the merge fundamentally re-frames the page.
+
+EXISTING CATEGORIES (name<TAB>page-count, one per line, may be empty):
+{{existing_categories}}
+
+Rules:
+1. PREFER an existing category. If the page fits one above, use that exact name verbatim. The page's current category is almost always the right answer for a merge.
+2. Only return a NEW category name if the merge has genuinely re-framed the page (rare). New categories must be specific noun phrases, not vague buckets.
+3. NEVER default to "Politics", "News", "Misc", "Other", "General", "Updates", "Email", or "Information". When in doubt, return null and let the user keep what's there.
+   - "Politics" specifically requires the content to name politicians, parties, elections, legislation, or government policy. Tech / business / marketing / opinion emails do NOT qualify.
 
 OUTPUT — JSON only, matching exactly:
 {"title": "...", "summary": "...", "contentMd": "...", "tags": ["..."], "topicAliases": ["..."], "suggestedCategory": "..." | null}

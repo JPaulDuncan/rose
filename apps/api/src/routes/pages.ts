@@ -4,8 +4,11 @@ import { z } from 'zod';
 import { PageUpdateRequest } from '@rose/shared';
 import { userIdOf } from '../middleware/auth.js';
 import { validateBody } from '../middleware/validate.js';
-import { Page, SenderBrand, DaydreamNote, TagCanonical, Email, titleCaseTag } from '@rose/db';
+import { Page, SenderBrand, DaydreamNote, TagCanonical, Email, titleCaseTag, Category, normalizeCategoryName } from '@rose/db';
 import { PageRevision } from '@rose/db';
+import { SYSTEM_PROMPT_BASE, extractJson } from '@rose/llm';
+import { resolveProviderForUser } from '../lib/providers.js';
+import { logger } from '../lib/logger.js';
 
 /**
  * Resolve every senderAddress on a page to its (brandKey, name, logoUrl).
@@ -513,3 +516,238 @@ pagesRouter.post('/:id/daydream', llmForceLimiter, async (req, res) => {
   );
   res.status(202).json({ jobId: job.id });
 });
+
+const RecategorizeRequest = z.object({
+  pageIds: z.array(z.string()).min(1).max(50),
+});
+
+/**
+ * Build the categorization prompt. Mirrors the CATEGORY rules in the
+ * page-generation seed prompt so a recategorize and a fresh generate
+ * agree on what counts as a good vs bad bucket.
+ */
+function buildCategorizePrompt(args: {
+  pageTitle: string;
+  pageSummary: string;
+  pageBody: string;
+  tags: string[];
+  existingCategoriesBlock: string;
+  currentCategoryName: string | null;
+}): string {
+  return `You are reassigning a wiki page to a category. Read every rule before deciding.
+
+EXISTING CATEGORIES (name<TAB>page-count, one per line, may be empty):
+${args.existingCategoriesBlock}
+
+PAGE
+- Title: ${args.pageTitle}
+- Summary: ${args.pageSummary}
+- Tags: ${args.tags.join(', ') || '(none)'}
+- Currently in category: ${args.currentCategoryName ?? 'Uncategorized'}
+- Body (first 4000 chars):
+"""
+${args.pageBody.slice(0, 4000)}
+"""
+
+RULES — STRICT
+1. PREFER an existing category. If the page fits one above, return that exact name verbatim.
+2. Only invent a NEW category when the page is clearly about a topic NONE of the existing categories cover. New categories must be specific noun phrases (e.g. "Home Improvement", "Personal Finance"), not vague catch-alls.
+3. NEVER use these vague catch-alls unless the content is unambiguously about the subject:
+   - "Politics" — only when the page names specific politicians, parties, elections, legislation, government policy debates, or political movements. Opinion newsletters, op-eds, satire, tech-industry commentary, business news, marketing emails about social causes, and general newsletters are NOT politics.
+   - "News" — never. The whole product is a news engine.
+   - "Misc", "Other", "General", "Updates", "Email", "Information" — never. Return null instead.
+4. If nothing fits, return null. An uncategorized page is strictly better than a wrongly-categorized one.
+5. If the current category is still the right answer, return it unchanged.
+
+Respond with JSON only, exactly:
+{"category": "<existing or new category name>" | null, "isNewCategory": <bool>, "reason": "<one short sentence>"}`;
+}
+
+const Verdict = z.object({
+  category: z.string().nullable(),
+  isNewCategory: z.boolean().optional(),
+  reason: z.string().optional(),
+});
+
+/**
+ * Recategorize a batch of pages using the user's current category
+ * taxonomy. Sequential per-page LLM calls; capped at 50 pages so the
+ * total request stays bounded. Returns per-page outcomes so the UI
+ * can show what changed.
+ *
+ * Rate-limited via `llmForceLimiter` (shared with the daydream/force
+ * endpoint) — recategorize can fire up to 50 LLM calls per request.
+ */
+pagesRouter.post(
+  '/recategorize',
+  llmForceLimiter,
+  validateBody(RecategorizeRequest),
+  async (req, res, next) => {
+    try {
+      const userId = new Types.ObjectId(userIdOf(req));
+      const { pageIds } = req.body as z.infer<typeof RecategorizeRequest>;
+
+      const ids = pageIds
+        .filter((id) => Types.ObjectId.isValid(id))
+        .map((id) => new Types.ObjectId(id));
+      if (ids.length === 0) {
+        res.status(400).json({ error: 'invalid_request', message: 'No valid page ids' });
+        return;
+      }
+
+      const pages = await Page.find({ userId, _id: { $in: ids } })
+        .select('+contentMd title summary tags categoryId')
+        .lean();
+
+      const categories = await Category.find({ userId }).select('_id name normalizedName').lean();
+      const counts = await Page.aggregate<{ _id: Types.ObjectId; n: number }>([
+        { $match: { userId, categoryId: { $ne: null } } },
+        { $group: { _id: '$categoryId', n: { $sum: 1 } } },
+      ]);
+      const countById = new Map(counts.map((c) => [String(c._id), c.n]));
+      const categoryById = new Map(categories.map((c) => [String(c._id), c]));
+      const existingCategoriesBlock = categories.length
+        ? categories
+            .map((c) => `${c.name}\t${countById.get(String(c._id)) ?? 0}`)
+            .join('\n')
+        : '(none yet — pick null or a specific new category)';
+
+      const { provider, model } = await resolveProviderForUser(userId, 'generation');
+
+      type Outcome = {
+        pageId: string;
+        title: string;
+        oldCategory: string | null;
+        newCategory: string | null;
+        status: 'changed' | 'unchanged' | 'failed';
+        reason?: string;
+      };
+      const outcomes: Outcome[] = [];
+
+      for (const page of pages) {
+        const oldCategory = page.categoryId
+          ? categoryById.get(String(page.categoryId))?.name ?? null
+          : null;
+        const prompt = buildCategorizePrompt({
+          pageTitle: page.title ?? '',
+          pageSummary: page.summary ?? '',
+          pageBody: page.contentMd ?? '',
+          tags: (page.tags as string[] | undefined) ?? [],
+          existingCategoriesBlock,
+          currentCategoryName: oldCategory,
+        });
+        let raw: string;
+        try {
+          raw = await provider.generate({
+            model,
+            prompt,
+            system: SYSTEM_PROMPT_BASE,
+            format: 'json',
+            temperature: 0.1,
+            maxTokens: 200,
+          });
+        } catch (err) {
+          logger.warn(
+            { err, pageId: String(page._id) },
+            'recategorize: provider call failed',
+          );
+          outcomes.push({
+            pageId: String(page._id),
+            title: page.title ?? '',
+            oldCategory,
+            newCategory: oldCategory,
+            status: 'failed',
+            reason: 'LLM call failed',
+          });
+          continue;
+        }
+        let verdict: z.infer<typeof Verdict>;
+        try {
+          verdict = Verdict.parse(extractJson(raw));
+        } catch (err) {
+          logger.warn(
+            { err, pageId: String(page._id), raw },
+            'recategorize: invalid JSON from LLM',
+          );
+          outcomes.push({
+            pageId: String(page._id),
+            title: page.title ?? '',
+            oldCategory,
+            newCategory: oldCategory,
+            status: 'failed',
+            reason: 'Invalid JSON',
+          });
+          continue;
+        }
+
+        const newName = verdict.category?.trim() || null;
+        if (newName === oldCategory) {
+          outcomes.push({
+            pageId: String(page._id),
+            title: page.title ?? '',
+            oldCategory,
+            newCategory: oldCategory,
+            status: 'unchanged',
+            reason: verdict.reason,
+          });
+          continue;
+        }
+
+        let newCategoryId: Types.ObjectId | null = null;
+        if (newName) {
+          const normalized = normalizeCategoryName(newName);
+          const existing =
+            (await Category.findOne({ userId, normalizedName: normalized })) ??
+            (await Category.findOne({ userId, name: newName }));
+          if (existing) {
+            newCategoryId = existing._id as Types.ObjectId;
+          } else {
+            const created = await Category.create({
+              userId,
+              name: newName,
+              normalizedName: normalized,
+            });
+            newCategoryId = created._id as Types.ObjectId;
+          }
+        }
+        await Page.updateOne(
+          { _id: page._id, userId },
+          { $set: { categoryId: newCategoryId } },
+        );
+        outcomes.push({
+          pageId: String(page._id),
+          title: page.title ?? '',
+          oldCategory,
+          newCategory: newName,
+          status: 'changed',
+          reason: verdict.reason,
+        });
+      }
+
+      // Garbage-collect any categories that are no longer referenced.
+      // Cheap: skip if nothing actually changed.
+      const movedFrom = outcomes
+        .filter((o) => o.status === 'changed')
+        .map((o) => o.oldCategory)
+        .filter((n): n is string => !!n);
+      if (movedFrom.length > 0) {
+        const orphans = await Category.find({
+          userId,
+          name: { $in: movedFrom },
+        })
+          .select('_id name')
+          .lean();
+        for (const orphan of orphans) {
+          const stillUsed = await Page.exists({ userId, categoryId: orphan._id });
+          if (!stillUsed) {
+            await Category.deleteOne({ _id: orphan._id });
+          }
+        }
+      }
+
+      res.json({ outcomes });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
