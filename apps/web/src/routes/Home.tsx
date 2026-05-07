@@ -7,8 +7,6 @@ import {
   Flame,
   ShieldAlert,
   Megaphone,
-  TrendingUp,
-  Users,
   Tag as TagIcon,
   Calendar,
   ChevronRight,
@@ -164,19 +162,14 @@ export default function HomePage() {
     <div className="mx-auto w-full max-w-7xl px-6 py-10">
       <Masthead edition={data.edition} stats={data.stats} />
 
-      {/* 20/60/20 newspaper layout via a 5-column grid with explicit
-          col-spans. Stacks to a single column at <lg so the rails
-          flow naturally below the body on mobile. */}
-      <div className="mt-10 grid gap-6 lg:grid-cols-5">
-        <aside className="space-y-6 lg:col-span-1">
-          <BreakingNews pages={breakingPool} />
-          <MostReadCard pages={data.mostRead ?? []} />
-        </aside>
-
-        <div className="min-w-0 space-y-10 lg:col-span-3">
+      {/* 85 / 15 two-panel layout. Stacks to a single column at <lg so
+          the right rail flows naturally below the body on mobile. */}
+      <div className="mt-10 grid gap-6 lg:grid-cols-[85fr_15fr]">
+        <div className="min-w-0 space-y-10">
           {data.topStories && data.topStories.lead && (
             <TopStories lead={data.topStories.lead} />
           )}
+          <BreakingCarousel pages={breakingPool} />
           {data.featuredSections.length > 0 && (
             <FeaturedSections
               sections={data.featuredSections}
@@ -186,15 +179,11 @@ export default function HomePage() {
           <MoreNews buckets={populated} suppressIds={suppressIds} />
         </div>
 
-        <aside className="space-y-6 lg:col-span-1">
+        <aside className="space-y-6">
           <MoonPhaseCard show={!!data.showMoonPhases} />
           <WeatherCard compact />
           <UpcomingEvents />
-          <Sidebar
-            topSenders={data.topSenders}
-            topTopics={data.topTopics}
-            stats={data.stats}
-          />
+          <Sidebar topTopics={data.topTopics} />
         </aside>
       </div>
 
@@ -454,10 +443,13 @@ function HeroLead({ page }: { page: DigestPage }) {
  * left rail visually quiet on slow days instead of showing an
  * empty "Breaking" box.
  */
-function BreakingNews({ pages }: { pages: DigestPage[] }) {
-  // 24 hours ago. We use updatedAt because that's what changes when
-  // a page gets a new email; createdAt would miss "ongoing story
-  // hit a new development today" cases.
+/**
+ * Breaking-news carousel. Sits between the Top Story and the deeper
+ * sections. Horizontal scroll with CSS scroll-snap so it feels
+ * carousel-y on touch + scroll, and pager arrows for mouse users.
+ * Filters to high-priority pages updated in the last 24h.
+ */
+function BreakingCarousel({ pages }: { pages: DigestPage[] }) {
   const cutoff = Date.now() - 24 * 60 * 60 * 1000;
   const seen = new Set<string>();
   const breaking = pages
@@ -474,73 +466,72 @@ function BreakingNews({ pages }: { pages: DigestPage[] }) {
       const bt = new Date(b.updatedAt ?? 0).getTime();
       return bt - at;
     })
-    .slice(0, 6);
+    .slice(0, 12);
+  const scroller = useRef<HTMLDivElement>(null);
   if (breaking.length === 0) return null;
-  return (
-    <div className="card border-l-4 border-red-500 dark:border-red-400">
-      <div className="mb-3 flex items-center gap-1.5 text-[10px] uppercase tracking-[0.25em] text-red-600 dark:text-red-400">
-        <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-red-500" />
-        Breaking
-      </div>
-      <ul className="space-y-3">
-        {breaking.map((p) => (
-          <li key={p._id}>
-            <Link to={`/p/${p.slug}`} className="group block">
-              <h4 className="font-serif text-sm font-bold leading-snug group-hover:text-rose-700 dark:group-hover:text-rose-300">
-                {p.title}
-              </h4>
-              {p.summary && (
-                <p className="mt-0.5 line-clamp-2 text-[11px] leading-snug text-ink-600 dark:text-ink-300">
-                  {p.summary}
-                </p>
-              )}
-            </Link>
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
-}
 
-/**
- * Most-read card. Same row content as the inline "Most Read" rail
- * that used to live inside TopStories — now extracted into its own
- * left-column card so the layout is grid-aligned with Breaking.
- */
-function MostReadCard({ pages }: { pages: DigestPage[] }) {
-  if (pages.length === 0) return null;
-  return (
-    <div className="card">
-      <div className="mb-3 text-[10px] uppercase tracking-[0.25em] text-ink-500">
-        Most Read
-      </div>
-      <ol className="space-y-3">
-        {pages.slice(0, 8).map((p, i) => (
-          <li key={p._id}>
-            <MostReadItem page={p} rank={i + 1} />
-          </li>
-        ))}
-      </ol>
-    </div>
-  );
-}
+  function scrollBy(dir: 1 | -1) {
+    const el = scroller.current;
+    if (!el) return;
+    // One "card width" plus the gap. The cards are min-w-[280px], so
+    // 296 (280 + 16) covers a full step on most layouts.
+    el.scrollBy({ left: dir * 296, behavior: 'smooth' });
+  }
 
-function MostReadItem({ page, rank }: { page: DigestPage; rank: number }) {
   return (
-    <Link to={`/p/${page.slug}`} className="group flex gap-3">
-      <span className="font-serif text-2xl font-black leading-none text-ink-300 dark:text-ink-700">
-        {String(rank).padStart(2, '0')}
-      </span>
-      <div className="min-w-0 flex-1 pt-0.5">
-        <h4 className="font-serif text-sm font-semibold leading-snug group-hover:text-rose-700 dark:group-hover:text-rose-300">
-          {page.title}
-        </h4>
-        <div className="mt-0.5 truncate text-[10px] uppercase tracking-widest text-ink-500">
-          {eyebrowFor(page).label}
-          {readTime(page.wordCount) && <> · {readTime(page.wordCount)}</>}
+    <section className="relative border-y-2 border-double border-red-500/60 py-3 dark:border-red-400/50">
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.25em] text-red-600 dark:text-red-400">
+          <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-red-500" />
+          Breaking
+          <span className="ml-1 text-ink-400">{breaking.length}</span>
+        </div>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            className="btn-ghost rounded-full p-1"
+            onClick={() => scrollBy(-1)}
+            aria-label="Previous"
+          >
+            <ChevronLeft className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            className="btn-ghost rounded-full p-1"
+            onClick={() => scrollBy(1)}
+            aria-label="Next"
+          >
+            <ChevronRight className="h-4 w-4" />
+          </button>
         </div>
       </div>
-    </Link>
+      <div
+        ref={scroller}
+        className="flex snap-x snap-mandatory gap-4 overflow-x-auto scroll-smooth pb-1"
+        style={{ scrollbarWidth: 'thin' }}
+      >
+        {breaking.map((p) => (
+          <Link
+            key={p._id}
+            to={`/p/${p.slug}`}
+            className="group block min-w-[280px] max-w-[320px] shrink-0 snap-start rounded-lg border border-ink-200 bg-white p-3 transition-colors hover:border-red-300 dark:border-ink-800 dark:bg-ink-900 dark:hover:border-red-800"
+          >
+            <div className="flex items-center gap-1.5 text-[9px] uppercase tracking-widest text-red-600 dark:text-red-400">
+              <span className="inline-block h-1 w-1 rounded-full bg-red-500" />
+              {p.updatedAt ? timeAgo(p.updatedAt) : 'just now'}
+            </div>
+            <h4 className="mt-1.5 font-serif text-base font-bold leading-snug group-hover:text-rose-700 dark:group-hover:text-rose-300">
+              {p.title}
+            </h4>
+            {p.summary && (
+              <p className="mt-1 line-clamp-3 text-xs leading-snug text-ink-600 dark:text-ink-300">
+                {p.summary}
+              </p>
+            )}
+          </Link>
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -788,69 +779,12 @@ function PageBadges({ page, compact }: { page: DigestPage; compact?: boolean }) 
 }
 
 function Sidebar({
-  topSenders,
   topTopics,
-  stats,
 }: {
-  topSenders: Digest['topSenders'];
   topTopics: Digest['topTopics'];
-  stats: Digest['stats'];
 }) {
   return (
     <>
-      <div className="card">
-        <div className="mb-3 flex items-center gap-2 text-xs uppercase tracking-widest text-ink-500">
-          <TrendingUp className="h-3.5 w-3.5" />
-          At a glance
-        </div>
-        <ul className="space-y-1.5 text-sm">
-          <li className="flex justify-between">
-            <span className="text-ink-500">Wiki pages</span>
-            <span className="font-medium">{stats.totalPages}</span>
-          </li>
-          <li className="flex justify-between">
-            <span className="text-ink-500">Source emails</span>
-            <span className="font-medium">{stats.totalEmails}</span>
-          </li>
-          <li className="flex justify-between">
-            <span className="text-ink-500">Updated today</span>
-            <span className="font-medium">{stats.newToday}</span>
-          </li>
-          <li className="flex justify-between">
-            <span className="text-ink-500">High priority</span>
-            <span className="font-medium">{stats.highPriority}</span>
-          </li>
-          <li className="flex justify-between text-red-600 dark:text-red-400">
-            <span>Spam (hidden)</span>
-            <span className="font-medium">{stats.spam}</span>
-          </li>
-        </ul>
-      </div>
-
-      {topSenders.length > 0 && (
-        <div className="card">
-          <div className="mb-3 flex items-center gap-2 text-xs uppercase tracking-widest text-ink-500">
-            <Users className="h-3.5 w-3.5" />
-            Top senders
-          </div>
-          <ul className="space-y-1.5 text-sm">
-            {topSenders.map((s) => (
-              <li key={s.address} className="flex items-center justify-between gap-2">
-                <code
-                  className="truncate text-xs text-ink-700 dark:text-ink-200"
-                  title={s.address}
-                >
-                  {s.address}
-                </code>
-                <span className="shrink-0 text-xs text-ink-500">
-                  {s.pageCount} page{s.pageCount === 1 ? '' : 's'}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
       {topTopics.length > 0 && (
         <div className="card">
           <div className="mb-3 flex items-center gap-2 text-xs uppercase tracking-widest text-ink-500">

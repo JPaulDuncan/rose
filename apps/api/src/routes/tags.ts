@@ -1,6 +1,15 @@
 import { Router } from 'express';
 import { Types } from 'mongoose';
-import { Page, TagDigest, TagCanonical, normalizeTagKey, titleCaseTag } from '@rose/db';
+import {
+  Page,
+  TagDigest,
+  TagCanonical,
+  Sender,
+  SenderBrand,
+  normalizeTagKey,
+  titleCaseTag,
+} from '@rose/db';
+import { senderDomainTag } from '@rose/email-parser';
 import { userIdOf } from '../middleware/auth.js';
 import { tagDigestQueue } from '../lib/queues.js';
 
@@ -461,6 +470,39 @@ tagsRouter.get('/:tag', async (req, res) => {
   for (const [t, n] of tagCounts) related.set(t, (related.get(t) ?? 0) + n);
   for (const [t, n] of topicCounts) related.set(t, (related.get(t) ?? 0) + n);
 
+  // Resolve each top-sender address to its brand (display name + brandKey)
+  // so the UI can render "AMC Theatres" instead of
+  // "no-reply@email.amctheatres.com" and link to /s/<brandKey>. Pipeline:
+  //   address → senderDomainTag() → brandKey (a domain-root token)
+  //          → SenderBrand(brandKey).name        (canonical name)
+  //          → Sender(userId, brandKey).nameOverride (user wins if set)
+  //   fallback display = brandKey or the raw address.
+  const topAddresses = [...senderCounts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 10)
+    .map(([address]) => address);
+
+  const addrToBrandKey = new Map<string, string | null>();
+  for (const a of topAddresses) {
+    const tag = senderDomainTag(a);
+    addrToBrandKey.set(a, tag ? tag.toLowerCase() : null);
+  }
+  const brandKeys = [...new Set([...addrToBrandKey.values()].filter((k): k is string => !!k))];
+  const [brandRows, senderRows] = await Promise.all([
+    brandKeys.length
+      ? SenderBrand.find({ brandKey: { $in: brandKeys } })
+          .select('brandKey name')
+          .lean()
+      : Promise.resolve([]),
+    brandKeys.length
+      ? Sender.find({ userId, brandKey: { $in: brandKeys } })
+          .select('brandKey nameOverride')
+          .lean()
+      : Promise.resolve([]),
+  ]);
+  const brandByKey = new Map(brandRows.map((b) => [b.brandKey, b]));
+  const senderByKey = new Map(senderRows.map((s) => [s.brandKey, s]));
+
   const digest = shapeDigest(await latestDigest(userId, tag));
   res.json({
     tag,
@@ -468,10 +510,19 @@ tagsRouter.get('/:tag', async (req, res) => {
     totalEmails,
     dateRange:
       earliest && latest ? { from: earliest.toISOString(), to: latest.toISOString() } : null,
-    topSenders: [...senderCounts.entries()]
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 10)
-      .map(([address, pageCount]) => ({ address, pageCount })),
+    topSenders: topAddresses.map((address) => {
+      const brandKey = addrToBrandKey.get(address) ?? null;
+      const brand = brandKey ? brandByKey.get(brandKey) : null;
+      const sender = brandKey ? senderByKey.get(brandKey) : null;
+      const name =
+        sender?.nameOverride || brand?.name || (brandKey ?? address);
+      return {
+        address,
+        pageCount: senderCounts.get(address) ?? 0,
+        brandKey: brandKey ?? null,
+        name,
+      };
+    }),
     relatedTags: [...related.entries()]
       .sort((a, b) => b[1] - a[1])
       .slice(0, 20)

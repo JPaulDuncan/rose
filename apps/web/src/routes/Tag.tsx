@@ -3,7 +3,6 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Hash,
   FileText,
-  Calendar,
   Users,
   Network,
   Flame,
@@ -46,7 +45,12 @@ type TagPageResponse = {
   pageCount: number;
   totalEmails: number;
   dateRange: { from: string; to: string } | null;
-  topSenders: { address: string; pageCount: number }[];
+  topSenders: {
+    address: string;
+    pageCount: number;
+    brandKey: string | null;
+    name: string;
+  }[];
   relatedTags: { tag: string; count: number }[];
   digest: TagDigestSummary | null;
   pages: TagPage[];
@@ -103,13 +107,6 @@ export default function TagPage() {
   if (isLoading || !data) {
     return <div className="px-6 py-10 text-ink-500">Loading…</div>;
   }
-
-  const dr = data.dateRange;
-  const dateLabel = dr
-    ? new Date(dr.from).toLocaleDateString() === new Date(dr.to).toLocaleDateString()
-      ? new Date(dr.from).toLocaleDateString()
-      : `${new Date(dr.from).toLocaleDateString()} → ${new Date(dr.to).toLocaleDateString()}`
-    : null;
 
   return (
     <div className="mx-auto w-full max-w-6xl px-6 py-10">
@@ -177,52 +174,43 @@ export default function TagPage() {
           </div>
 
           <aside className="space-y-4">
-            <div className="card">
-              <div className="mb-3 flex items-center gap-2 text-xs uppercase tracking-widest text-ink-500">
-                <FileText className="h-3.5 w-3.5" /> Stats
-              </div>
-              <ul className="space-y-1.5 text-sm">
-                <li className="flex justify-between">
-                  <span className="text-ink-500">Wiki pages</span>
-                  <span className="font-medium">{data.pageCount}</span>
-                </li>
-                <li className="flex justify-between">
-                  <span className="text-ink-500">Source emails</span>
-                  <span className="font-medium">{data.totalEmails}</span>
-                </li>
-                {dateLabel && (
-                  <li className="flex items-center justify-between">
-                    <span className="inline-flex items-center gap-1 text-ink-500">
-                      <Calendar className="h-3 w-3" /> Range
-                    </span>
-                    <span className="text-xs">{dateLabel}</span>
-                  </li>
-                )}
-              </ul>
-            </div>
-
             {data.topSenders.length > 0 && (
               <div className="card">
                 <div className="mb-3 flex items-center gap-2 text-xs uppercase tracking-widest text-ink-500">
                   <Users className="h-3.5 w-3.5" /> Top senders
                 </div>
                 <ul className="space-y-1.5 text-sm">
-                  {data.topSenders.map((s) => (
-                    <li
-                      key={s.address}
-                      className="flex items-center justify-between gap-2"
-                    >
-                      <code
-                        className="truncate text-xs text-ink-700 dark:text-ink-200"
-                        title={s.address}
-                      >
-                        {s.address}
-                      </code>
-                      <span className="shrink-0 text-xs text-ink-500">
-                        {s.pageCount}
-                      </span>
-                    </li>
-                  ))}
+                  {data.topSenders.map((s) => {
+                    const inner = (
+                      <>
+                        <span
+                          className="truncate font-medium text-ink-800 dark:text-ink-100"
+                          title={s.address}
+                        >
+                          {s.name}
+                        </span>
+                        <span className="shrink-0 text-xs text-ink-500">
+                          {s.pageCount}
+                        </span>
+                      </>
+                    );
+                    return (
+                      <li key={s.address}>
+                        {s.brandKey ? (
+                          <Link
+                            to={`/s/${encodeURIComponent(s.brandKey)}`}
+                            className="flex items-center justify-between gap-2 rounded px-1 py-0.5 hover:bg-ink-100 hover:text-rose-700 dark:hover:bg-ink-800 dark:hover:text-rose-300"
+                          >
+                            {inner}
+                          </Link>
+                        ) : (
+                          <div className="flex items-center justify-between gap-2 px-1 py-0.5">
+                            {inner}
+                          </div>
+                        )}
+                      </li>
+                    );
+                  })}
                 </ul>
               </div>
             )}
