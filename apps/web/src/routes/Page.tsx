@@ -1,16 +1,10 @@
 import { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useEditor, EditorContent } from '@tiptap/react';
-import StarterKit from '@tiptap/starter-kit';
-import Placeholder from '@tiptap/extension-placeholder';
-import TiptapLink from '@tiptap/extension-link';
 import {
-  Save,
   History,
-  Eye,
-  Edit2,
   Trash2,
+  Plus,
   Mail,
   ExternalLink,
   Flame,
@@ -161,7 +155,6 @@ export default function PageView() {
   const { slug } = useParams<{ slug: string }>();
   const api = useApi();
   const qc = useQueryClient();
-  const [mode, setMode] = useState<'view' | 'edit'>('view');
   const [showRevisions, setShowRevisions] = useState(false);
 
   const { data: page, isLoading } = useQuery({
@@ -177,59 +170,6 @@ export default function PageView() {
     void api.post(`/api/pages/${page._id}/read`, { read: true }).catch(() => null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page?._id]);
-
-  const [title, setTitle] = useState('');
-  const [summary, setSummary] = useState('');
-  const [tags, setTags] = useState('');
-
-  const editor = useEditor(
-    {
-      extensions: [
-        StarterKit,
-        Placeholder.configure({ placeholder: 'Write your article in markdown…' }),
-        TiptapLink.configure({ openOnClick: false }),
-      ],
-      content: '',
-      editable: mode === 'edit',
-    },
-    [page?._id, mode],
-  );
-
-  useEffect(() => {
-    if (!page || !editor) return;
-    setTitle(page.title);
-    setSummary(page.summary);
-    setTags(page.tags.join(', '));
-    editor.commands.setContent(mdToHtml(page.contentMd));
-  }, [page, editor]);
-
-  useEffect(() => {
-    if (editor) editor.setEditable(mode === 'edit');
-  }, [mode, editor]);
-
-  const save = useMutation({
-    mutationFn: async () => {
-      if (!page) throw new Error('No page loaded');
-      const contentMd = htmlToMd(editor?.getHTML() ?? '');
-      return api.patch<PageDoc>(`/api/pages/${page._id}`, {
-        title,
-        summary,
-        contentMd,
-        tags: tags
-          .split(',')
-          .map((t) => t.trim())
-          .filter(Boolean),
-      });
-    },
-    onSuccess: (updated) => {
-      toast.success('Saved');
-      qc.invalidateQueries({ queryKey: ['page'] });
-      qc.invalidateQueries({ queryKey: ['pages-recent'] });
-      setMode('view');
-      if (updated.slug !== slug) window.history.replaceState(null, '', `/p/${updated.slug}`);
-    },
-    onError: (err: Error) => toast.error(err.message),
-  });
 
   const del = useMutation({
     mutationFn: async () => api.del<{ ok: true }>(`/api/pages/${page!._id}`),
@@ -254,44 +194,20 @@ export default function PageView() {
     <div className="mx-auto w-full max-w-8xl px-6 py-10">
       <div className="mb-6 flex items-start justify-between gap-4">
         <div className="min-w-0 flex-1">
-          {mode === 'edit' ? (
-            <input
-              className="input text-2xl font-semibold"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-            />
-          ) : (
-            <h1 className="text-3xl font-semibold tracking-tight">{page.title}</h1>
-          )}
-          {mode === 'edit' ? (
-            <textarea
-              className="input mt-2 text-sm"
-              rows={2}
-              value={summary}
-              onChange={(e) => setSummary(e.target.value)}
-              placeholder="Summary…"
-            />
-          ) : (
-            <p className="mt-2 text-sm text-ink-500">{page.summary}</p>
-          )}
+          <h1 className="text-3xl font-semibold tracking-tight">{page.title}</h1>
+          <p className="mt-2 text-sm text-ink-500">{page.summary}</p>
           <div className="mt-3 flex flex-wrap items-center gap-2">
-            {(mode === 'edit' ? tags.split(',').map((t) => t.trim()).filter(Boolean) : page.tags).map(
-              (t) =>
-                mode === 'edit' ? (
-                  <span key={t} className="pill">
-                    #{t}
-                  </span>
-                ) : (
-                  <Link
-                    key={t}
-                    to={`/t/${encodeURIComponent(t)}`}
-                    className="pill hover:bg-rose-100 hover:text-rose-800 dark:hover:bg-rose-950/40 dark:hover:text-rose-300"
-                    title={`See all #${t}`}
-                  >
-                    {displayTag(t, page.tagDisplayNames)}
-                  </Link>
-                ),
-            )}
+            {page.tags.map((t) => (
+              <Link
+                key={t}
+                to={`/t/${encodeURIComponent(t)}`}
+                className="pill hover:bg-rose-100 hover:text-rose-800 dark:hover:bg-rose-950/40 dark:hover:text-rose-300"
+                title={`See all #${t}`}
+              >
+                {displayTag(t, page.tagDisplayNames)}
+              </Link>
+            ))}
+            <AddTagControl pageId={page._id} existing={page.tags ?? []} />
             <span className="text-xs text-ink-400">
               v{page.version} ·{' '}
               {new Date(page.articleDate ?? page.updatedAt).toLocaleString()}
@@ -300,17 +216,9 @@ export default function PageView() {
               )}
             </span>
           </div>
-          {mode === 'view' && <Attribution page={page} />}
-          {mode === 'view' && <MergeBanner page={page} />}
-          {mode === 'view' && <PageBanners page={page} />}
-          {mode === 'edit' && (
-            <input
-              className="input mt-2 text-xs"
-              value={tags}
-              onChange={(e) => setTags(e.target.value)}
-              placeholder="comma, separated, tags"
-            />
-          )}
+          <Attribution page={page} />
+          <MergeBanner page={page} />
+          <PageBanners page={page} />
         </div>
         <div className="flex gap-2">
           <button
@@ -320,33 +228,13 @@ export default function PageView() {
           >
             <History className="h-4 w-4" />
           </button>
-          {mode === 'view' && page && <FavoriteButton pageId={page._id} />}
-          {mode === 'view' && page && (
-            <PriorityControl
-              pageId={page._id}
-              priority={page.priority ?? 'normal'}
-              priorityOverride={page.priorityOverride ?? false}
-            />
-          )}
-          {mode === 'view' && page && <ShareButton pageId={page._id} pageTitle={page.title} />}
-          {mode === 'view' ? (
-            <button className="btn-secondary" onClick={() => setMode('edit')}>
-              <Edit2 className="h-4 w-4" /> Edit
-            </button>
-          ) : (
-            <button
-              className="btn-primary"
-              onClick={() => save.mutate()}
-              disabled={save.isPending}
-            >
-              <Save className="h-4 w-4" /> {save.isPending ? 'Saving…' : 'Save'}
-            </button>
-          )}
-          {mode === 'edit' && (
-            <button className="btn-ghost" onClick={() => setMode('view')}>
-              <Eye className="h-4 w-4" />
-            </button>
-          )}
+          <FavoriteButton pageId={page._id} />
+          <PriorityControl
+            pageId={page._id}
+            priority={page.priority ?? 'normal'}
+            priorityOverride={page.priorityOverride ?? false}
+          />
+          <ShareButton pageId={page._id} pageTitle={page.title} />
           <SpamMenu page={page} />
           <button
             className="btn-ghost text-red-600"
@@ -360,12 +248,11 @@ export default function PageView() {
         </div>
       </div>
 
-      {mode === 'view' ? (
-        // `minmax(0, …fr)` rather than `7fr_3fr` is load-bearing — bare
-        // `fr` resolves to `minmax(auto, 1fr)` which lets a long
-        // unbreakable token (a tracking URL, an image filename) in
-        // the rail override the ratio and squeeze the article column.
-        <div className="mt-2 grid gap-6 lg:grid-cols-[minmax(0,7fr)_minmax(0,3fr)]">
+      {/* `minmax(0, …fr)` rather than `7fr_3fr` is load-bearing — bare
+          `fr` resolves to `minmax(auto, 1fr)` which lets a long
+          unbreakable token (a tracking URL, an image filename) in
+          the rail override the ratio and squeeze the article column. */}
+      <div className="mt-2 grid gap-6 lg:grid-cols-[minmax(0,7fr)_minmax(0,3fr)]">
           {/* Left column (~70%) — hero, body, sources, background, provenance.
               The hero floats inside the article so text wraps newspaper-
               style around its native dimensions. */}
@@ -409,11 +296,6 @@ export default function PageView() {
             <AttachmentsBlock attachments={page.pageAttachments ?? []} />
           </aside>
         </div>
-      ) : (
-        <article className="card prose prose-rose mt-2 max-w-none dark:prose-invert">
-          <EditorContent editor={editor} />
-        </article>
-      )}
 
       {showRevisions && revisions && (
         <div className="card mt-6">
@@ -458,43 +340,90 @@ export default function PageView() {
  * Bare-bones markdown ↔ HTML conversion. We round-trip via TipTap which understands
  * HTML; full Markdown fidelity needs a server-side serializer (deferred).
  */
-function mdToHtml(md: string): string {
-  return md
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .split(/\n{2,}/)
-    .map((p) => {
-      if (/^#\s/.test(p)) return `<h1>${p.replace(/^#\s/, '')}</h1>`;
-      if (/^##\s/.test(p)) return `<h2>${p.replace(/^##\s/, '')}</h2>`;
-      if (/^###\s/.test(p)) return `<h3>${p.replace(/^###\s/, '')}</h3>`;
-      if (/^- /.test(p))
-        return `<ul>${p
-          .split('\n')
-          .map((l) => `<li>${l.replace(/^- /, '')}</li>`)
-          .join('')}</ul>`;
-      return `<p>${p.replace(/\n/g, '<br/>')}</p>`;
-    })
-    .join('');
-}
+/**
+ * Inline "+ tag" affordance shown next to the existing tag chips.
+ * Click expands an input; submit calls POST /api/pages/:id/tags
+ * which $addToSet's the normalised tag onto the page so re-adding
+ * an existing one is a no-op. The query cache is invalidated so
+ * the new pill appears without a manual refresh.
+ */
+function AddTagControl({
+  pageId,
+  existing,
+}: {
+  pageId: string;
+  existing: string[];
+}) {
+  const api = useApi();
+  const qc = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const [value, setValue] = useState('');
+  const add = useMutation({
+    mutationFn: async (tag: string) =>
+      api.post<{ ok: true; tag: string; tags: string[] }>(
+        `/api/pages/${pageId}/tags`,
+        { tag },
+      ),
+    onSuccess: (r) => {
+      if (existing.includes(r.tag)) {
+        toast.success(`Already tagged #${r.tag}`);
+      } else {
+        toast.success(`Added #${r.tag}`);
+      }
+      setValue('');
+      setOpen(false);
+      void qc.invalidateQueries({ queryKey: ['page'] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
 
-function htmlToMd(html: string): string {
-  return html
-    .replace(/<h1>(.*?)<\/h1>/g, '# $1\n\n')
-    .replace(/<h2>(.*?)<\/h2>/g, '## $1\n\n')
-    .replace(/<h3>(.*?)<\/h3>/g, '### $1\n\n')
-    .replace(/<ul>(.*?)<\/ul>/gs, (_m, inner: string) =>
-      inner.replace(/<li>(.*?)<\/li>/g, '- $1\n') + '\n',
-    )
-    .replace(/<p>(.*?)<\/p>/gs, '$1\n\n')
-    .replace(/<br\s*\/?>/g, '\n')
-    .replace(/<strong>(.*?)<\/strong>/g, '**$1**')
-    .replace(/<em>(.*?)<\/em>/g, '*$1*')
-    .replace(/<code>(.*?)<\/code>/g, '`$1`')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&amp;/g, '&')
-    .trim();
+  if (!open) {
+    return (
+      <button
+        type="button"
+        className="pill inline-flex items-center gap-1 hover:bg-rose-100 hover:text-rose-800 dark:hover:bg-rose-950/40 dark:hover:text-rose-300"
+        onClick={() => setOpen(true)}
+        title="Add a tag"
+      >
+        <Plus className="h-3 w-3" /> tag
+      </button>
+    );
+  }
+  return (
+    <form
+      className="inline-flex items-center gap-1"
+      onSubmit={(e) => {
+        e.preventDefault();
+        const v = value.trim();
+        if (!v) return;
+        add.mutate(v);
+      }}
+    >
+      <input
+        autoFocus
+        className="input h-6 px-1.5 py-0 text-xs"
+        value={value}
+        maxLength={80}
+        placeholder="new tag"
+        onChange={(e) => setValue(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') {
+            e.preventDefault();
+            setValue('');
+            setOpen(false);
+          }
+        }}
+        disabled={add.isPending}
+      />
+      <button
+        type="submit"
+        className="btn-ghost text-[11px]"
+        disabled={!value.trim() || add.isPending}
+      >
+        {add.isPending ? '…' : 'Add'}
+      </button>
+    </form>
+  );
 }
 
 const CITATION_RE = /\[((?:e\d+\s*,\s*)*e\d+)\]/g;

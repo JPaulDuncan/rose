@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { PageUpdateRequest, priorityForDate } from '@rose/shared';
 import { userIdOf } from '../middleware/auth.js';
 import { validateBody } from '../middleware/validate.js';
-import { Page, SenderBrand, DaydreamNote, TagCanonical, Email, titleCaseTag, Category, normalizeCategoryName, Shipment, PromoCode } from '@rose/db';
+import { Page, SenderBrand, DaydreamNote, TagCanonical, Email, titleCaseTag, normalizeTagKey, Category, normalizeCategoryName, Shipment, PromoCode } from '@rose/db';
 import { PageRevision } from '@rose/db';
 import { SYSTEM_PROMPT_BASE, extractJson } from '@rose/llm';
 import { resolveProviderForUser } from '../lib/providers.js';
@@ -269,6 +269,41 @@ pagesRouter.get('/:id/extras', async (req, res) => {
       .lean(),
   ]);
   res.json({ promoCodes, shipments });
+});
+
+const AddTagRequest = z.object({
+  tag: z.string().min(1).max(80),
+});
+
+/**
+ * Add a single tag to a page. Used by the inline "+ tag" affordance
+ * on the page header. Idempotent — uses `$addToSet` so re-adding the
+ * same tag is a no-op, and the tag is run through `normalizeTagKey`
+ * so the user can type "Earth Month" and we store the canonical
+ * `earth-month`.
+ */
+pagesRouter.post('/:id/tags', validateBody(AddTagRequest), async (req, res) => {
+  const userId = new Types.ObjectId(userIdOf(req));
+  if (!Types.ObjectId.isValid(req.params.id ?? '')) {
+    res.status(400).json({ error: 'invalid_request' });
+    return;
+  }
+  const raw = (req.body as { tag: string }).tag;
+  const tag = normalizeTagKey(raw);
+  if (!tag) {
+    res.status(400).json({ error: 'invalid_request', message: 'Tag is empty after normalization' });
+    return;
+  }
+  const updated = await Page.findOneAndUpdate(
+    { _id: req.params.id, userId },
+    { $addToSet: { tags: tag } },
+    { new: true },
+  ).lean();
+  if (!updated) {
+    res.status(404).json({ error: 'not_found' });
+    return;
+  }
+  res.json({ ok: true, tag, tags: updated.tags ?? [] });
 });
 
 const PrioritySetRequest = z.object({
