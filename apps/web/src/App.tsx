@@ -19,6 +19,7 @@ const PageView = lazy(() => import('./routes/Page'));
 const SearchPage = lazy(() => import('./routes/Search'));
 const CalendarPage = lazy(() => import('./routes/Calendar'));
 const WeatherPage = lazy(() => import('./routes/Weather'));
+const MoonPage = lazy(() => import('./routes/Moon'));
 const BrowsePage = lazy(() => import('./routes/Browse'));
 const TagPage = lazy(() => import('./routes/Tag'));
 const EntityPage = lazy(() => import('./routes/Entity'));
@@ -108,6 +109,7 @@ export default function App() {
         <Route path="/search" element={<SearchPage />} />
         <Route path="/calendar" element={<CalendarPage />} />
         <Route path="/weather" element={<WeatherPage />} />
+        <Route path="/moon" element={<MoonPage />} />
         <Route path="/browse" element={<BrowsePage />} />
         {/* Old discovery surfaces folded into /browse — keep redirects so
             existing bookmarks land on the right tab. */}

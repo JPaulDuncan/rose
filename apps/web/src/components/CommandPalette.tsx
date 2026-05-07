@@ -6,7 +6,6 @@ import {
   Inbox,
   Home,
   Calendar as CalendarIcon,
-  Activity,
   Settings,
   FileText,
   BookOpen,
@@ -15,6 +14,8 @@ import {
   Sparkles,
   Link2,
   Star,
+  CloudSun,
+  MoonStar,
 } from 'lucide-react';
 import { useApi } from '../lib/api';
 
@@ -74,11 +75,14 @@ export function CommandPalette({
               <Command.Item onSelect={() => go('/calendar')}>
                 <CalendarIcon className="h-4 w-4" /> Calendar
               </Command.Item>
-              <Command.Item onSelect={() => go('/streams')}>
-                <Activity className="h-4 w-4" /> Streams
+              <Command.Item onSelect={() => go('/browse')}>
+                <BookOpen className="h-4 w-4" /> Browse
               </Command.Item>
-              <Command.Item onSelect={() => go('/codex')}>
-                <BookOpen className="h-4 w-4" /> Codex
+              <Command.Item onSelect={() => go('/weather')}>
+                <CloudSun className="h-4 w-4" /> Weather
+              </Command.Item>
+              <Command.Item onSelect={() => go('/moon')}>
+                <MoonStar className="h-4 w-4" /> Moon Phase
               </Command.Item>
               <Command.Item onSelect={() => go('/favorites')}>
                 <Star className="h-4 w-4" /> Favorites

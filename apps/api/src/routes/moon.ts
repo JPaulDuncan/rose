@@ -1,5 +1,11 @@
 import { Router } from 'express';
-import { moonPhase, MOON_PHASE_LABEL, moonIllumination, type MoonPhase } from '@rose/shared';
+import {
+  moonPhase,
+  MOON_PHASE_LABEL,
+  moonIllumination,
+  upcomingPrincipalPhases,
+  type MoonPhase,
+} from '@rose/shared';
 import { logger } from '../lib/logger.js';
 
 export const moonRouter: Router = Router();
@@ -15,15 +21,21 @@ export const moonRouter: Router = Router();
  * NOT publish moon phase data — they're weather/oceanic — so the
  * "official source" people often want is actually USNO.
  */
+type PhaseEvent = { phase: string; date: string };
 type CacheEntry = {
   fetchedAt: number;
   phase: MoonPhase;
   label: string;
   illumination: number;
   source: 'usno' | 'local';
-  /** USNO-only: the four bracketing principal phases, so the UI can
-   *  render "Last quarter on Tue · Next: Full Moon Sat". */
-  principal?: { phase: string; date: string }[];
+  /** Most-recent past + next-future principal phases — the bracket
+   *  that includes "today". The card-sized header on /moon shows
+   *  these as "Last quarter on Tue · Next: Full Moon Sat". */
+  principal?: PhaseEvent[];
+  /** Several principal phases into the future. Drives the
+   *  "Coming up" list on /moon and the per-day rows on the
+   *  printable monthly view. */
+  upcoming?: PhaseEvent[];
 };
 
 const TTL_MS = 6 * 60 * 60 * 1000;
@@ -103,11 +115,12 @@ function eventDate(p: { year: number; month: number; day: number; time: string }
 }
 
 async function fromUsno(now: Date): Promise<CacheEntry | null> {
-  // Ask for 6 events starting 14 days before today — that comfortably
-  // brackets today regardless of where we are in the lunation cycle.
+  // Ask for 16 events starting 14 days before today — comfortably
+  // brackets today and gives us a few months of upcoming principals
+  // for the /moon page's "Coming up" list.
   const start = new Date(now.getTime() - 14 * 24 * 3600 * 1000);
   const dateStr = start.toISOString().slice(0, 10);
-  const url = `${USNO_URL}?date=${dateStr}&nump=6`;
+  const url = `${USNO_URL}?date=${dateStr}&nump=16`;
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), USNO_TIMEOUT_MS);
   let body: UsnoResponse;
@@ -150,13 +163,21 @@ async function fromUsno(now: Date): Promise<CacheEntry | null> {
   const sincePrevHrs = (now.getTime() - prev.when.getTime()) / 3_600_000;
   const untilNextHrs = (next.when.getTime() - now.getTime()) / 3_600_000;
   const phase = classifyByPrincipal(prev.phase, next.phase, sincePrevHrs, untilNextHrs);
+  const futureEvents = events.filter((e) => e.when > now);
+  const pastEvents = events.filter((e) => e.when <= now);
   return {
     fetchedAt: Date.now(),
     phase,
     label: MOON_PHASE_LABEL[phase],
     illumination: moonIllumination(now),
     source: 'usno',
-    principal: events.slice(-4).map((e) => ({
+    // The bracket: last past + next future, two events.
+    principal: [...pastEvents.slice(-1), ...futureEvents.slice(0, 1)].map((e) => ({
+      phase: e.phase,
+      date: e.when.toISOString(),
+    })),
+    // Coming up: the next ~8 principal phases.
+    upcoming: futureEvents.slice(0, 8).map((e) => ({
       phase: e.phase,
       date: e.when.toISOString(),
     })),
@@ -165,12 +186,17 @@ async function fromUsno(now: Date): Promise<CacheEntry | null> {
 
 function fromLocal(now: Date): CacheEntry {
   const phase = moonPhase(now);
+  const upcoming = upcomingPrincipalPhases(now, 8).map((e) => ({
+    phase: e.phase,
+    date: e.date.toISOString(),
+  }));
   return {
     fetchedAt: Date.now(),
     phase,
     label: MOON_PHASE_LABEL[phase],
     illumination: moonIllumination(now),
     source: 'local',
+    upcoming,
   };
 }
 

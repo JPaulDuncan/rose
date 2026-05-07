@@ -20,6 +20,8 @@ import {
   ChevronDown,
   Menu,
   Loader2,
+  CloudSun,
+  MoonStar,
 } from 'lucide-react';
 import clsx from 'clsx';
 import { useApi } from '../lib/api';
@@ -47,6 +49,8 @@ const PRIMARY_NAV: NavItem[] = [
 
 const SECONDARY_NAV: NavItem[] = [
   { to: '/library', label: 'Library', icon: BookOpen, key: 'g l' },
+  { to: '/weather', label: 'Weather', icon: CloudSun, key: 'g w' },
+  { to: '/moon', label: 'Moon Phase', icon: MoonStar, key: 'g m' },
   // Plan 12 (R6) — single landing page that surfaces totals across
   // quarantine + spam + promotions. The dedicated routes still exist
   // for bulk actions (and keep their hotkeys), but the user has one
@@ -87,6 +91,8 @@ export function Shell({ children }: { children: ReactNode }) {
     'g t': () => navigate('/browse?tab=streams'),
     'g x': () => navigate('/browse?tab=categories'),
     'g l': () => navigate('/library'),
+    'g w': () => navigate('/weather'),
+    'g m': () => navigate('/moon'),
     'g q': () => navigate('/quarantine'),
     'g p': () => navigate('/promotions'),
     'g s': () => navigate('/settings'),

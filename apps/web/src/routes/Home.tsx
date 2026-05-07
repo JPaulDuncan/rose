@@ -162,9 +162,13 @@ export default function HomePage() {
     <div className="mx-auto w-full max-w-7xl px-6 py-10">
       <Masthead edition={data.edition} stats={data.stats} />
 
-      {/* 85 / 15 two-panel layout. Stacks to a single column at <lg so
-          the right rail flows naturally below the body on mobile. */}
-      <div className="mt-10 grid gap-6 lg:grid-cols-[85fr_15fr]">
+      {/* 90 / 10 two-panel layout. Stacks to a single column at <lg so
+          the right rail flows naturally below the body on mobile.
+          The right rail is `sticky` from below the top bar, so the
+          left column scrolls independently while pinned widgets stay
+          visible. items-start prevents the grid from stretching the
+          aside to match the main column's height. */}
+      <div className="mt-10 grid items-start gap-6 lg:grid-cols-[90fr_10fr]">
         <div className="min-w-0 space-y-10">
           {data.topStories && data.topStories.lead && (
             <TopStories lead={data.topStories.lead} />
@@ -179,7 +183,11 @@ export default function HomePage() {
           <MoreNews buckets={populated} suppressIds={suppressIds} />
         </div>
 
-        <aside className="space-y-6">
+        {/* sticky top:5rem leaves room for the 56px shell header +
+            small breathing margin. max-height + overflow lets the
+            rail scroll within itself when it's taller than the
+            viewport, instead of pushing the page. */}
+        <aside className="space-y-6 lg:sticky lg:top-20 lg:max-h-[calc(100vh-5rem)] lg:overflow-y-auto lg:pr-1">
           <MoonPhaseCard show={!!data.showMoonPhases} />
           <WeatherCard compact />
           <UpcomingEvents />
@@ -514,20 +522,33 @@ function BreakingCarousel({ pages }: { pages: DigestPage[] }) {
           <Link
             key={p._id}
             to={`/p/${p.slug}`}
-            className="group block min-w-[280px] max-w-[320px] shrink-0 snap-start rounded-lg border border-ink-200 bg-white p-3 transition-colors hover:border-red-300 dark:border-ink-800 dark:bg-ink-900 dark:hover:border-red-800"
+            className="group flex min-w-[280px] max-w-[320px] shrink-0 snap-start flex-col overflow-hidden rounded-lg border border-ink-200 bg-white transition-colors hover:border-red-300 dark:border-ink-800 dark:bg-ink-900 dark:hover:border-red-800"
           >
-            <div className="flex items-center gap-1.5 text-[9px] uppercase tracking-widest text-red-600 dark:text-red-400">
-              <span className="inline-block h-1 w-1 rounded-full bg-red-500" />
-              {p.updatedAt ? timeAgo(p.updatedAt) : 'just now'}
-            </div>
-            <h4 className="mt-1.5 font-serif text-base font-bold leading-snug group-hover:text-rose-700 dark:group-hover:text-rose-300">
-              {p.title}
-            </h4>
-            {p.summary && (
-              <p className="mt-1 line-clamp-3 text-xs leading-snug text-ink-600 dark:text-ink-300">
-                {p.summary}
-              </p>
+            {p.heroImageUrl && (
+              <SafeImage
+                src={p.heroImageUrl}
+                alt={p.title}
+                // Native aspect ratio — no forced crop. Capped via
+                // max-h so a portrait photo doesn't dominate the
+                // card; centered horizontally, top-aligned so the
+                // headline still anchors the bottom.
+                className="block w-full max-h-[200px] object-contain bg-ink-50 dark:bg-ink-950"
+              />
             )}
+            <div className="p-3">
+              <div className="flex items-center gap-1.5 text-[9px] uppercase tracking-widest text-red-600 dark:text-red-400">
+                <span className="inline-block h-1 w-1 rounded-full bg-red-500" />
+                {p.updatedAt ? timeAgo(p.updatedAt) : 'just now'}
+              </div>
+              <h4 className="mt-1.5 font-serif text-base font-bold leading-snug group-hover:text-rose-700 dark:group-hover:text-rose-300">
+                {p.title}
+              </h4>
+              {p.summary && (
+                <p className="mt-1 line-clamp-3 text-xs leading-snug text-ink-600 dark:text-ink-300">
+                  {p.summary}
+                </p>
+              )}
+            </div>
           </Link>
         ))}
       </div>
@@ -783,6 +804,14 @@ function Sidebar({
 }: {
   topTopics: Digest['topTopics'];
 }) {
+  const api = useApi();
+  // Hide the "Connect a source" CTA once the user has at least one
+  // source connected; it's a first-run nudge, not a permanent slot.
+  const { data: sources } = useQuery({
+    queryKey: ['sources-count'],
+    queryFn: () => api.get<{ sources: { _id: string }[] }>('/api/sources'),
+  });
+  const hasAnySource = (sources?.sources?.length ?? 0) > 0;
   return (
     <>
       {topTopics.length > 0 && (
@@ -806,11 +835,13 @@ function Sidebar({
         </div>
       )}
 
-      <div className="card">
-        <Link to="/settings/sources" className="btn-primary w-full justify-center">
-          <Plus className="h-4 w-4" /> Connect a source
-        </Link>
-      </div>
+      {!hasAnySource && (
+        <div className="card">
+          <Link to="/settings/sources" className="btn-primary w-full justify-center">
+            <Plus className="h-4 w-4" /> Connect a source
+          </Link>
+        </div>
+      )}
     </>
   );
 }
@@ -1123,8 +1154,9 @@ function MoonPhaseCard({ show }: { show: boolean }) {
   });
   if (!show || !data) return null;
   return (
-    <div
-      className="rounded-xl border border-ink-200 px-3 py-2 text-sm dark:border-ink-800"
+    <Link
+      to="/moon"
+      className="block rounded-xl border border-ink-200 px-3 py-2 text-sm transition-colors hover:border-rose-300 hover:bg-rose-50/40 dark:border-ink-800 dark:hover:border-rose-800 dark:hover:bg-rose-950/20"
       title={`${Math.round(data.illumination * 100)}% illuminated · source: ${
         data.source === 'usno' ? 'U.S. Naval Observatory' : 'local approximation'
       }`}
@@ -1133,7 +1165,7 @@ function MoonPhaseCard({ show }: { show: boolean }) {
         Moon Phase:
       </span>{' '}
       <span className="font-medium text-ink-800 dark:text-ink-100">{data.label}</span>
-    </div>
+    </Link>
   );
 }
 
@@ -1223,7 +1255,7 @@ function WeatherCard({ compact = false }: { compact?: boolean }) {
                 <div className="font-serif text-2xl font-bold leading-none tracking-tight">
                   {cur.temperature}°{cur.temperatureUnit}
                 </div>
-                <div className="mt-0.5 truncate text-xs text-ink-700 dark:text-ink-200">
+                <div className="mt-0.5 break-words text-xs leading-snug text-ink-700 dark:text-ink-200">
                   {cur.shortForecast}
                 </div>
               </div>
