@@ -51,7 +51,12 @@ export type EmailMetadata = {
 
 const URL_RE = /\bhttps?:\/\/[^\s<>"')]+/gi;
 const HASHTAG_RE = /(?:^|\s)#([a-z][a-z0-9_-]{1,40})/gi;
-const TRACKING_HOSTS = /^(?:click|track|pixel|email|mail|t|r|e)\.[a-z0-9.-]+/i;
+const TRACKING_HOSTS =
+  /^(?:click|track|tracking|pixel|pixels|beacon|open|opens|ping|email|mail|t|r|e|li|link|links|news|cl|metrics?|analytics|stats?|impression|imp)\.[a-z0-9.-]+/i;
+/** Bulk-mailer / ESP CDNs whose entire job is open-tracking. Conservative
+ *  list — only hosts that exist primarily to serve invisible pixels. */
+const TRACKING_DOMAINS =
+  /(?:^|\.)(?:list-manage\.com|mailgun\.org|sendgrid\.net|sparkpostmail\.com|sailthru\.com|hubspotemail\.net|hsforms\.com|hsforms\.net|marketo\.com|cmail\d?\.com|exct\.net|exacttarget\.com|et\.email|emltrk\.com|mailtrack\.io|mailtrack\.com|streak-link\.com|customer\.io|braze\.com|braze\.eu|mlsend\.com|email\.notion\.com|tracking\.epsilon\.com|elasticemail\.com|email\.linkedin\.com|substackcdn\.com|ck\.page|convertkit-mail\.com|convertkit-mail2\.com|email-decode\.com|cloudflare-email\.com|click\.notification\.linkedin\.com)$/i;
 
 const SUSPICIOUS_SENDER_RE =
   /^(?:mailer-daemon|postmaster|bounce|spam|abuse|junk|nobody|root)@/i;
@@ -371,6 +376,77 @@ export function filterNominalTags(raw: readonly string[]): string[] {
  * TRACKING_HOSTS), data: URIs, and non-https schemes. Includes alt text
  * when present so the page UI has something to label thumbnails with.
  */
+/**
+ * Pull `width: 1px;` / `height: 1px;` etc. out of an inline `style="…"`
+ * attribute. Trackers commonly hide via inline CSS rather than width/
+ * height attributes, so the attribute-only check missed them.
+ */
+function readStyleDim(style: string, prop: 'width' | 'height'): number | null {
+  const m = style.match(new RegExp(`(?:^|;|\\s)${prop}\\s*:\\s*(\\d+(?:\\.\\d+)?)\\s*(px)?`, 'i'));
+  if (!m) return null;
+  const n = Number(m[1]);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** Returns true when an `<img>` tag is almost certainly a tracking pixel. */
+export function isTrackingImage(tag: string, url: string): boolean {
+  // 1) Hostname / domain blocklists.
+  let host = '';
+  try {
+    host = new URL(url).hostname;
+  } catch {
+    return true;
+  }
+  if (TRACKING_HOSTS.test(host)) return true;
+  if (TRACKING_DOMAINS.test(host)) return true;
+
+  // 2) URL path patterns that scream tracker.
+  if (/\/(open|opens|track|tracking|pixel|pixels|beacon|metric|metrics|impression|imp|ping|stats?|analytics)[/.?]/i.test(url)) return true;
+  // …or a path/query that explicitly names itself.
+  if (/[?&](utm_|mc_eid|mc_cid|mkt_tok|sc_eid|email_id|recipient|opens?|tracking_id|impression)/i.test(url)) {
+    // utm_* alone isn't a tracker (it's link-tagging). Only treat the
+    // image as a tracker if it ALSO has tiny dimensions or zero alt.
+    // We continue to the dimension check below.
+  }
+
+  // 3) Explicit width/height attributes ≤ 2px.
+  const wAttr = Number(tag.match(/\bwidth\s*=\s*["']?(\d+)/i)?.[1] ?? '');
+  const hAttr = Number(tag.match(/\bheight\s*=\s*["']?(\d+)/i)?.[1] ?? '');
+  if (
+    Number.isFinite(wAttr) && Number.isFinite(hAttr) &&
+    wAttr > 0 && hAttr > 0 &&
+    wAttr <= 2 && hAttr <= 2
+  ) return true;
+
+  // 4) Inline-style dimensions ≤ 2px (in either direction). Common
+  //    pattern: `style="width:1px;height:1px;border:0"`.
+  const style = tag.match(/\bstyle\s*=\s*["']([^"']+)["']/i)?.[1] ?? '';
+  if (style) {
+    const wStyle = readStyleDim(style, 'width');
+    const hStyle = readStyleDim(style, 'height');
+    if (wStyle != null && hStyle != null && wStyle <= 2 && hStyle <= 2) return true;
+    // …or hidden via display:none / visibility:hidden, which is also
+    // a frequent tracking-pixel pattern even when width/height are
+    // omitted.
+    if (/display\s*:\s*none|visibility\s*:\s*hidden/i.test(style)) return true;
+  }
+
+  // 5) Filename pattern (lots of trackers serve `pixel.gif`, `o.gif`,
+  //    `open.png`, `1x1.png`, etc.).
+  if (/\/(pixel|p|o|open|spacer|blank|clear|1x1|tracking)\.(gif|png|jpe?g|webp)(?:$|\?)/i.test(url)) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Pull <img> URLs out of HTML. Skips tracking pixels (1x1 in either
+ * width/height attributes OR inline style; tracker-y hosts/paths/
+ * filenames; display:none), data: URIs, and non-https schemes.
+ * Includes alt text when present so the page UI has something to
+ * label thumbnails with.
+ */
 function extractImages(html: string | null): EmailImage[] {
   if (!html) return [];
   const out = new Map<string, EmailImage>();
@@ -380,20 +456,7 @@ function extractImages(html: string | null): EmailImage[] {
     if (!srcMatch) continue;
     const url = srcMatch[1]!.trim();
     if (!/^https?:\/\//i.test(url)) continue;
-    let host = '';
-    try {
-      host = new URL(url).hostname;
-    } catch {
-      continue;
-    }
-    if (TRACKING_HOSTS.test(host)) continue;
-    // Heuristic 1×1 / 2×2 pixel filter via attribute width/height.
-    const w = Number(tag.match(/\bwidth\s*=\s*["']?(\d+)/i)?.[1] ?? '');
-    const h = Number(tag.match(/\bheight\s*=\s*["']?(\d+)/i)?.[1] ?? '');
-    if (Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0 && w <= 2 && h <= 2)
-      continue;
-    // Heuristic URL paths that scream tracker.
-    if (/\/(open|track|pixel|beacon|metric|impression)[/.?]/i.test(url)) continue;
+    if (isTrackingImage(tag, url)) continue;
     if (out.has(url)) continue;
     const alt = tag.match(/\balt\s*=\s*["']([^"']*)["']/i)?.[1]?.trim();
     out.set(url, alt ? { url, alt } : { url });
@@ -599,14 +662,13 @@ function extractLogoCandidate(
     if (!srcMatch) continue;
     const url = srcMatch[1]!.trim();
     if (!/^https?:\/\//i.test(url)) continue;
+    if (isTrackingImage(tag, url)) continue;
     let host = '';
     try {
       host = new URL(url).hostname.toLowerCase();
     } catch {
       continue;
     }
-    if (TRACKING_HOSTS.test(host)) continue;
-    if (/\/(open|track|pixel|beacon|metric|impression)[/.?]/i.test(url)) continue;
 
     const alt = tag.match(/\balt\s*=\s*["']([^"']*)["']/i)?.[1]?.trim() ?? null;
     const w = Number(tag.match(/\bwidth\s*=\s*["']?(\d+)/i)?.[1] ?? '');
@@ -614,9 +676,6 @@ function extractLogoCandidate(
     // Reject obvious giant hero images.
     if (Number.isFinite(w) && w > 360) continue;
     if (Number.isFinite(h) && h > 360) continue;
-    // Reject tracking pixels that slipped through the host filter.
-    if (Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0 && w <= 4 && h <= 4)
-      continue;
 
     let score = 0.2;
     const haystack = `${alt ?? ''} ${url}`.toLowerCase();
