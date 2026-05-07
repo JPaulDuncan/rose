@@ -7,6 +7,11 @@ import {
   generatePageEvents,
   embedPageQueue,
   imapSyncQueue,
+  gmailSyncQueue,
+  rssSyncQueue,
+  websiteSyncQueue,
+  parseEmailQueue,
+  fetchAndParseQueue,
 } from '../lib/queues.js';
 import { jobEvents } from '../services/sse.js';
 import { env } from '../lib/env.js';
@@ -15,6 +20,35 @@ import { resolveProviderForUser } from '../lib/providers.js';
 
 /** Authenticated REST routes. */
 export const jobsRouter: Router = Router();
+
+/**
+ * Cheap "is there work in flight?" probe for the top-bar activity
+ * indicator. Sums waiting + active across the queues that ingest or
+ * generate user-visible content. Returns small JSON; the SPA polls
+ * every few seconds. No provider pings, no Mongo round-trips.
+ */
+jobsRouter.get('/activity', async (_req, res) => {
+  const queues = [
+    parseEmailQueue,
+    generatePageQueue,
+    embedPageQueue,
+    imapSyncQueue,
+    gmailSyncQueue,
+    rssSyncQueue,
+    websiteSyncQueue,
+    fetchAndParseQueue,
+  ];
+  const counts = await Promise.all(
+    queues.map((q) => q.getJobCounts('waiting', 'active')),
+  );
+  let active = 0;
+  let waiting = 0;
+  for (const c of counts) {
+    active += (c.active as number | undefined) ?? 0;
+    waiting += (c.waiting as number | undefined) ?? 0;
+  }
+  res.json({ active, waiting, busy: active + waiting > 0 });
+});
 
 jobsRouter.get('/:id', async (req, res) => {
   const _userId = userIdOf(req);

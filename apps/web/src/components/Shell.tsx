@@ -19,6 +19,7 @@ import {
   X,
   ChevronDown,
   Menu,
+  Loader2,
 } from 'lucide-react';
 import clsx from 'clsx';
 import { useApi } from '../lib/api';
@@ -129,6 +130,7 @@ export function Shell({ children }: { children: ReactNode }) {
                 ⌘K
               </kbd>
             </button>
+            <ActivityIndicator />
             <button
               type="button"
               className="rounded-lg p-1.5 text-ink-500 hover:bg-ink-100 dark:hover:bg-ink-800"
@@ -511,5 +513,48 @@ function TopSearchBar({
         }}
       />
     </form>
+  );
+}
+
+/**
+ * Tiny "is the worker doing anything right now?" indicator that lives
+ * between the palette button and the theme toggle. Polls a cheap
+ * `/api/jobs/activity` endpoint every 5 seconds, renders a spinning
+ * loader when something is in flight, and a faint resting dot when
+ * idle so the slot doesn't visually shift.
+ */
+function ActivityIndicator() {
+  const api = useApi();
+  const { data } = useQuery({
+    queryKey: ['jobs-activity'],
+    queryFn: () =>
+      api.get<{ active: number; waiting: number; busy: boolean }>(
+        '/api/jobs/activity',
+      ),
+    refetchInterval: 5_000,
+    staleTime: 4_000,
+  });
+  const busy = !!data?.busy;
+  const total = (data?.active ?? 0) + (data?.waiting ?? 0);
+  return (
+    <span
+      className={clsx(
+        'flex h-7 w-7 items-center justify-center rounded-lg transition-colors',
+        busy ? 'text-rose-500' : 'text-ink-300 dark:text-ink-700',
+      )}
+      title={
+        busy
+          ? `Ingesting / processing — ${total} job${total === 1 ? '' : 's'} in flight`
+          : 'Idle — nothing in flight'
+      }
+      aria-live="polite"
+      aria-label={busy ? 'Processing in progress' : 'Idle'}
+    >
+      {busy ? (
+        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+      ) : (
+        <span className="h-1.5 w-1.5 rounded-full bg-current" />
+      )}
+    </span>
   );
 }
