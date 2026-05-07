@@ -314,6 +314,12 @@ async function runPlacesExtraction(
   // with `type: 'place'`. Lets /n/<key> route uniformly across every
   // named thing; the entity page already handles place-specific
   // map rendering when the key matches a Page.places[] row.
+  //
+  // The place extractor sometimes misclassifies works ("Ariana
+  // Grande x Swarovski") as places, so we never overwrite an
+  // existing entity's type — `type` is set on insert only.
+  // extractEntities (which produces person/work/organization) wins
+  // when both fire for the same key.
   for (const p of next) {
     if (!p.normKey) continue;
     try {
@@ -322,12 +328,12 @@ async function runPlacesExtraction(
         {
           $set: {
             displayName: p.displayName ?? p.name,
-            type: 'place',
             lastSeenAt: new Date(),
           },
           $setOnInsert: {
             userId,
             key: p.normKey,
+            type: 'place',
             pageCount: 0,
           },
         },

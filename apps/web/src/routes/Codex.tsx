@@ -195,6 +195,7 @@ const ENTITY_TYPE_ICON: Record<EntityRow['type'], typeof UserIcon> = {
  */
 function EntitiesTab() {
   const api = useApi();
+  const qc = useQueryClient();
   const [typeFilter, setTypeFilter] = useState<EntityRow['type'] | 'all'>('all');
   const { data, isLoading } = useQuery({
     queryKey: ['entities', typeFilter],
@@ -205,6 +206,27 @@ function EntitiesTab() {
           : `/api/entities?type=${typeFilter}&limit=500`;
       return api.get<{ entities: EntityRow[] }>(url);
     },
+  });
+
+  const rescan = useMutation({
+    mutationFn: async () =>
+      api.post<{
+        ok: true;
+        kept: number;
+        retyped: number;
+        deleted: number;
+        scanned: number;
+      }>('/api/entities/rescan', {}),
+    onSuccess: (r) => {
+      const bits = [
+        `${r.scanned} scanned`,
+        r.retyped > 0 ? `${r.retyped} retyped` : null,
+        r.deleted > 0 ? `${r.deleted} dropped` : null,
+      ].filter(Boolean);
+      toast.success(`Re-scan done — ${bits.join(', ')}`);
+      void qc.invalidateQueries({ queryKey: ['entities'] });
+    },
+    onError: (e: Error) => toast.error(e.message),
   });
 
   if (isLoading) {
@@ -222,27 +244,41 @@ function EntitiesTab() {
 
   return (
     <div className="space-y-5">
-      <div className="flex flex-wrap gap-1 text-xs">
-        {(['all', 'person', 'organization', 'work', 'place'] as const).map((t) => (
-          <button
-            key={t}
-            type="button"
-            onClick={() => setTypeFilter(t)}
-            className={
-              'rounded-full px-3 py-1 ' +
-              (typeFilter === t
-                ? 'bg-rose-100 text-rose-800 dark:bg-rose-950/40 dark:text-rose-200'
-                : 'text-ink-500 hover:text-ink-700 dark:hover:text-ink-200')
-            }
-          >
-            {t === 'all' ? 'All' : ENTITY_TYPE_LABEL[t as EntityRow['type']]}
-            {t !== 'all' && grouped.has(t as EntityRow['type']) && (
-              <span className="ml-1 text-ink-400">
-                {grouped.get(t as EntityRow['type'])!.length}
-              </span>
-            )}
-          </button>
-        ))}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap gap-1 text-xs">
+          {(['all', 'person', 'organization', 'work', 'place'] as const).map((t) => (
+            <button
+              key={t}
+              type="button"
+              onClick={() => setTypeFilter(t)}
+              className={
+                'rounded-full px-3 py-1 ' +
+                (typeFilter === t
+                  ? 'bg-rose-100 text-rose-800 dark:bg-rose-950/40 dark:text-rose-200'
+                  : 'text-ink-500 hover:text-ink-700 dark:hover:text-ink-200')
+              }
+            >
+              {t === 'all' ? 'All' : ENTITY_TYPE_LABEL[t as EntityRow['type']]}
+              {t !== 'all' && grouped.has(t as EntityRow['type']) && (
+                <span className="ml-1 text-ink-400">
+                  {grouped.get(t as EntityRow['type'])!.length}
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
+        <button
+          type="button"
+          className="btn-ghost text-xs"
+          onClick={() => rescan.mutate()}
+          disabled={rescan.isPending}
+          title="Recompute types from current pages and drop entities with no contributing data"
+        >
+          <Wand2
+            className={'h-3.5 w-3.5' + (rescan.isPending ? ' animate-pulse' : '')}
+          />{' '}
+          Re-scan
+        </button>
       </div>
       {entities.length === 0 ? (
         <EmptyHint label="No entities yet — once articles are filed, names and brands appear here." />

@@ -4,6 +4,7 @@ import {
   Entity,
   Page,
   DaydreamNote,
+  Sender,
   User,
   normalizeTagKey,
   ENTITY_TYPES,
@@ -634,4 +635,114 @@ entitiesRouter.post('/:key/daydream', llmForceLimiter, async (req, res) => {
     },
   );
   res.status(202).json({ jobId: job.id });
+});
+
+/**
+ * Rebuild the entity registry from the user's current pages. Walks
+ * every Entity row and:
+ *   • Recounts contributing pages from Page.entities[].normKey and
+ *     Page.places[].normKey.
+ *   • Recomputes type from the live page data — entities[] entries
+ *     win over places[] entries so a misclassified place flips back
+ *     to person / work / organization once any page actually carries
+ *     that type. Sender-derived organizations are pinned to
+ *     'organization' since the SenderBrand registry is authoritative.
+ *   • Drops any row that has zero contributing pages AND no
+ *     daydream note backing it. Cleans up ghosts left behind after
+ *     the user deletes the contributing articles.
+ *
+ * Returns a summary so the UI can confirm "kept N, retyped M, deleted K".
+ */
+entitiesRouter.post('/rescan', async (req, res, next) => {
+  try {
+    const userId = new Types.ObjectId(userIdOf(req));
+
+    // Pull the live page graph once so we can compute counts /
+    // candidate types without N round-trips.
+    const pages = await Page.find({ userId })
+      .select('entities places')
+      .lean();
+
+    type Cand = { count: number; typeVotes: Map<string, number> };
+    const byKey = new Map<string, Cand>();
+    function bump(key: string, type: string | null) {
+      const c = byKey.get(key) ?? { count: 0, typeVotes: new Map() };
+      c.count += 1;
+      if (type) c.typeVotes.set(type, (c.typeVotes.get(type) ?? 0) + 1);
+      byKey.set(key, c);
+    }
+    for (const p of pages) {
+      for (const e of (p.entities ?? []) as { normKey: string; type: string }[]) {
+        if (e.normKey) bump(e.normKey, e.type);
+      }
+      for (const pl of (p.places ?? []) as { normKey: string }[]) {
+        if (pl.normKey) bump(pl.normKey, 'place');
+      }
+    }
+
+    // Sender-derived organisations should never be downgraded to
+    // place / person even if no current page uses them yet — the
+    // sender row is its own evidence. Read the sender brand keys
+    // for this user and pin the type for matching entities.
+    const senderKeys = new Set(
+      (
+        await Sender.find({ userId }).select('brandKey').lean()
+      ).map((s) => s.brandKey as string),
+    );
+
+    const all = await Entity.find({ userId }).lean();
+    let kept = 0;
+    let retyped = 0;
+    let deleted = 0;
+
+    for (const ent of all) {
+      const key = ent.key as string;
+      const cand = byKey.get(key);
+      const isSender = senderKeys.has(key);
+
+      if (!cand && !isSender) {
+        // Nothing in pages references this entity. Check daydream
+        // notes — they can keep an entity row alive even when the
+        // contributing pages were deleted.
+        const subjectKey = daydreamSubjectKey(ent.displayName ?? '');
+        const hasDaydream = await DaydreamNote.exists({
+          subjectKey,
+          forgottenBy: { $ne: userId },
+        });
+        if (!hasDaydream) {
+          await Entity.deleteOne({ _id: ent._id });
+          deleted += 1;
+          continue;
+        }
+      }
+
+      // Decide the canonical type. Sender-derived organisations stay
+      // organisations. Otherwise use the most-voted non-place type;
+      // fall back to the most-voted type overall.
+      let nextType: string | null = null;
+      if (isSender) {
+        nextType = 'organization';
+      } else if (cand) {
+        const sorted = [...cand.typeVotes.entries()].sort(
+          (a, b) => b[1] - a[1],
+        );
+        const nonPlace = sorted.find(([t]) => t !== 'place');
+        nextType = (nonPlace ?? sorted[0])?.[0] ?? null;
+      }
+
+      const update: Record<string, unknown> = {
+        pageCount: cand?.count ?? 0,
+      };
+      if (nextType && nextType !== ent.type) {
+        update.type = nextType;
+        retyped += 1;
+      }
+      await Entity.updateOne({ _id: ent._id }, { $set: update });
+      kept += 1;
+    }
+
+    res.json({ ok: true, kept, retyped, deleted, scanned: all.length });
+  } catch (err) {
+    next(err);
+  }
 });
