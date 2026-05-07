@@ -12,7 +12,6 @@ const TABS = [
   { to: 'recipes', label: 'Recipes' },
   { to: 'integrations', label: 'Integrations' },
   { to: 'instructions', label: 'Instructions' },
-  { to: 'models', label: 'Models' },
   { to: 'daydream', label: 'Daydream' },
   { to: 'maps', label: 'Maps' },
   { to: 'tags', label: 'Tags' },
@@ -20,6 +19,15 @@ const TABS = [
   { to: 'library', label: 'Library' },
   { to: 'spam', label: 'Spam' },
   { to: 'storage', label: 'Storage' },
+];
+
+/** Admin-only tabs. Models is global LLM-stack configuration —
+ *  every account uses one shared provider — so non-admins don't
+ *  see it. Joins the regular tab list when `/api/admin/me` reports
+ *  the caller is the deployment admin. */
+const ADMIN_TABS = [
+  { to: 'models', label: 'Models' },
+  { to: 'admin', label: 'Admin' },
 ];
 
 export default function SettingsLayout() {
@@ -33,9 +41,7 @@ export default function SettingsLayout() {
     queryFn: () => api.get<{ isAdmin: boolean }>('/api/admin/me'),
     staleTime: 5 * 60 * 1000,
   });
-  const tabs = adminInfo?.isAdmin
-    ? [...TABS, { to: 'admin', label: 'Admin' }]
-    : TABS;
+  const tabs = adminInfo?.isAdmin ? [...TABS, ...ADMIN_TABS] : TABS;
   return (
     <div className="mx-auto w-full max-w-6xl px-6 py-10">
       <h1 className="mb-2 text-2xl font-semibold tracking-tight">Settings</h1>

@@ -7,6 +7,7 @@ import {
 } from '@rose/llm';
 import { decryptJson } from './crypto.js';
 import { env } from './env.js';
+import { adminUserId } from './adminUser.js';
 
 export type GenerationParamOverrides = {
   temperature?: number | null;
@@ -86,14 +87,25 @@ function ollamaUrlForRole(
   return (roleSpecific?.trim() || cfg?.baseUrl?.trim() || env.OLLAMA_URL) as string;
 }
 
-/** Mirror of the API's resolver. The worker also needs per-user provider routing. */
+/**
+ * Mirror of the API's resolver. Provider config is deployment-wide —
+ * every job, regardless of which user owns the data, runs through
+ * the admin user's `User.providers`. Keeping the userId argument on
+ * the signature avoids touching every call site.
+ */
 export async function resolveProviderForUser(
-  userId: Types.ObjectId | string,
+  _userId: Types.ObjectId | string,
   role: Role,
 ): Promise<ResolvedProvider> {
-  const user = await User.findById(userId)
+  const adminId = await adminUserId();
+  if (!adminId) {
+    throw new Error('ADMIN_EMAIL is not configured — provider settings are unavailable.');
+  }
+  const user = await User.findById(adminId)
     .select('+providers.anthropic.encryptedApiKey +providers.openai.encryptedApiKey');
-  if (!user) throw new Error('User not found');
+  if (!user) {
+    throw new Error('Admin user not found — provider settings are unavailable.');
+  }
 
   const cfg = user.providers ?? {};
   const cfgRole: 'generation' | 'embedding' = role === 'vision' ? 'generation' : role;

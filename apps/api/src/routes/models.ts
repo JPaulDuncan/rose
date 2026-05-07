@@ -7,6 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { OllamaProvider } from '@rose/llm';
+import { Types } from 'mongoose';
 import { User } from '@rose/db';
 import { userIdOf } from '../middleware/auth.js';
 import { validateBody } from '../middleware/validate.js';
@@ -419,6 +420,21 @@ modelsStreamRouter.get('/pull/stream', async (req: Request, res: Response) => {
     userId = payload.sub;
   } catch {
     res.status(401).json({ error: 'unauthorized', message: 'Invalid token' });
+    return;
+  }
+  // Admin gate: model pulls download multi-GB files into a shared
+  // Ollama and need to be locked down to the deployment admin.
+  // The router-level `requireAdmin` doesn't apply here because we
+  // bypass `requireAuth` to take the access token from the query.
+  if (!env.ADMIN_EMAIL) {
+    res.status(404).json({ error: 'not_found' });
+    return;
+  }
+  const callerEmail = (
+    await User.findById(new Types.ObjectId(userId)).select('email').lean()
+  )?.email?.toLowerCase();
+  if (callerEmail !== env.ADMIN_EMAIL) {
+    res.status(403).json({ error: 'forbidden', message: 'Admin only' });
     return;
   }
   const rawName = (req.query.name as string | undefined) ?? '';

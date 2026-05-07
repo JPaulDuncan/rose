@@ -54,6 +54,7 @@ import { libraryRouter } from './routes/library.js';
 import { mapsRouter } from './routes/maps.js';
 import { errorHandler } from './middleware/error.js';
 import { requireAuth } from './middleware/auth.js';
+import { requireAdmin } from './middleware/admin.js';
 import { apiLimiter } from './middleware/rateLimit.js';
 import { redis } from './lib/redis.js';
 import { generatePageEvents } from './lib/queues.js';
@@ -116,14 +117,17 @@ export async function createServer(): Promise<Express> {
   app.use('/api/shipments', requireAuth, shipmentsRouter);
   app.use('/api/promo-codes', requireAuth, promoCodesRouter);
   app.use('/api/retention', requireAuth, retentionRouter);
-  app.use('/api/providers', requireAuth, providersRouter);
-  app.use('/api/system', requireAuth, systemRouter);
+  // Models / providers / system are deployment-wide configuration —
+  // an admin sets them once and every account uses the same stack.
+  // Gating both `requireAuth` (for the JWT) and `requireAdmin`.
+  app.use('/api/providers', requireAuth, requireAdmin, providersRouter);
+  app.use('/api/system', requireAuth, requireAdmin, systemRouter);
   app.use('/api/daydream', requireAuth, daydreamRouter);
   app.use('/api/library', requireAuth, libraryRouter);
   app.use('/api/maps', requireAuth, mapsRouter);
   // Streaming pull auth via query param; mount before the protected models router.
   app.use('/api/models', modelsStreamRouter);
-  app.use('/api/models', requireAuth, modelsRouter);
+  app.use('/api/models', requireAuth, requireAdmin, modelsRouter);
   app.use('/api/senders', requireAuth, sendersRouter);
   app.use('/api/codex', requireAuth, codexRouter);
   app.use('/api/quarantine', requireAuth, quarantineRouter);

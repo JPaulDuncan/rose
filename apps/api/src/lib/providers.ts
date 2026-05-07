@@ -7,6 +7,7 @@ import {
 } from '@rose/llm';
 import { decryptJson } from './crypto.js';
 import { env } from './env.js';
+import { adminUserId } from './adminUser.js';
 
 /** Optional sampler overrides plumbed in from the user's settings.
  *  Each field is null/undefined when the user hasn't customized it,
@@ -114,12 +115,22 @@ function ollamaUrlForRole(
  * generation provider but uses the vision-specific Ollama URL.
  */
 export async function resolveProviderForUser(
-  userId: Types.ObjectId | string,
+  _userId: Types.ObjectId | string,
   role: Role,
 ): Promise<ResolvedProvider> {
-  const user = await User.findById(userId)
+  // Provider configuration is deployment-wide — every account uses
+  // the admin user's `User.providers`. The userId arg is kept on the
+  // signature so callers don't need to change; under the hood we
+  // ignore it and route to the admin record.
+  const adminId = await adminUserId();
+  if (!adminId) {
+    throw new Error('ADMIN_EMAIL is not configured — provider settings are unavailable.');
+  }
+  const user = await User.findById(adminId)
     .select('+providers.anthropic.encryptedApiKey +providers.openai.encryptedApiKey');
-  if (!user) throw new Error('User not found');
+  if (!user) {
+    throw new Error('Admin user not found — provider settings are unavailable.');
+  }
 
   const cfg = user.providers ?? {};
   // Vision is not its own provider config — it follows generation, but we

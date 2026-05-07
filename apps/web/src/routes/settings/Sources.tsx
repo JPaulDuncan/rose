@@ -220,7 +220,6 @@ export default function SourcesSettings() {
 
   return (
     <div className="space-y-6">
-      <RssGlobalDefaults />
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
         <button className="btn-secondary" onClick={() => setForm({ kind: 'create-imap' })}>
           <Mail className="h-4 w-4" /> Connect IMAP
@@ -346,8 +345,7 @@ export default function SourcesSettings() {
         {!data?.sources.length ? (
           <div className="text-sm text-ink-500">No sources yet.</div>
         ) : (
-          <ul className="space-y-2 text-sm">
-            {data.sources.map((s) => (
+          renderGroupedSources(data.sources, (s) => (
               <li
                 key={s._id}
                 className="flex items-center justify-between rounded-lg border border-ink-200 px-3 py-2 dark:border-ink-800"
@@ -495,10 +493,70 @@ export default function SourcesSettings() {
                   </button>
                 </div>
               </li>
-            ))}
-          </ul>
-        )}
+            ))
+          )}
       </div>
+    </div>
+  );
+}
+
+/* ─── Grouped source list ─────────────────────────────────────── */
+
+const SOURCE_TYPE_ORDER: Source['type'][] = [
+  'imap',
+  'gmail',
+  'webhook',
+  'rss',
+  'website',
+  'slack',
+  'discord',
+  'gcal',
+  'upload',
+];
+
+const SOURCE_TYPE_LABELS: Record<Source['type'], string> = {
+  imap: 'IMAP mailboxes',
+  gmail: 'Gmail accounts',
+  webhook: 'Inbound webhooks',
+  rss: 'RSS / Atom feeds',
+  website: 'Tracked websites',
+  slack: 'Slack workspaces',
+  discord: 'Discord guilds',
+  gcal: 'Google calendars',
+  upload: 'Uploaded mailboxes',
+};
+
+/**
+ * Render sources broken out by type. Source rows pass through
+ * `renderItem` unchanged; the helper just slots them into a
+ * labelled section per type so the user sees "IMAP mailboxes",
+ * "Gmail accounts", "RSS / Atom feeds" rather than one long mixed
+ * list. Empty types are dropped; the section order is stable
+ * (matches `SOURCE_TYPE_ORDER`) so the layout doesn't reflow when
+ * a single source is added or removed.
+ */
+function renderGroupedSources(
+  sources: Source[],
+  renderItem: (s: Source) => React.ReactNode,
+): React.ReactNode {
+  const buckets = new Map<Source['type'], Source[]>();
+  for (const s of sources) {
+    const arr = buckets.get(s.type) ?? [];
+    arr.push(s);
+    buckets.set(s.type, arr);
+  }
+  const ordered = SOURCE_TYPE_ORDER.filter((t) => buckets.has(t));
+  return (
+    <div className="space-y-4">
+      {ordered.map((t) => (
+        <section key={t}>
+          <h3 className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.25em] text-ink-500">
+            {SOURCE_TYPE_LABELS[t]}
+            <span className="ml-1.5 text-ink-400">{buckets.get(t)!.length}</span>
+          </h3>
+          <ul className="space-y-2 text-sm">{buckets.get(t)!.map(renderItem)}</ul>
+        </section>
+      ))}
     </div>
   );
 }
@@ -827,57 +885,6 @@ function Field({
       {children}
       {hint && <span className="mt-1 block text-xs text-ink-500">{hint}</span>}
     </label>
-  );
-}
-
-function RssGlobalDefaults() {
-  const api = useApi();
-  const qc = useQueryClient();
-  const { data } = useQuery({
-    queryKey: ['me'],
-    queryFn: () =>
-      api.get<{ settings?: { rssPollIntervalMinutes?: number } }>('/api/me'),
-  });
-  const current = data?.settings?.rssPollIntervalMinutes ?? 30;
-  const [value, setValue] = useState<number>(current);
-  useEffect(() => {
-    setValue(current);
-  }, [current]);
-  const save = useMutation({
-    mutationFn: async (minutes: number) =>
-      api.patch<unknown>('/api/me', {
-        settings: { ...(data?.settings ?? {}), rssPollIntervalMinutes: minutes },
-      }),
-    onSuccess: () => {
-      toast.success('Default RSS poll interval saved');
-      qc.invalidateQueries({ queryKey: ['me'] });
-    },
-    onError: (err: Error) => toast.error(err.message),
-  });
-  return (
-    <div className="card flex flex-wrap items-end gap-3">
-      <div className="flex items-center gap-2 text-sm text-ink-700 dark:text-ink-200">
-        <Rss className="h-4 w-4 text-rose-500" />
-        <span className="font-medium">Default RSS poll interval</span>
-      </div>
-      <Field label="Minutes" hint="Applies to new feeds. Per-feed overrides win.">
-        <input
-          className="input w-32"
-          type="number"
-          min={5}
-          max={1440}
-          value={value}
-          onChange={(e) => setValue(Number(e.target.value))}
-        />
-      </Field>
-      <button
-        className="btn-secondary"
-        onClick={() => save.mutate(value)}
-        disabled={save.isPending || value === current}
-      >
-        Save
-      </button>
-    </div>
   );
 }
 

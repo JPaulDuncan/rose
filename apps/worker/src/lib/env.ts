@@ -23,4 +23,10 @@ export const env = {
   VAPID_PUBLIC_KEY: process.env.VAPID_PUBLIC_KEY ?? '',
   VAPID_PRIVATE_KEY: process.env.VAPID_PRIVATE_KEY ?? '',
   VAPID_SUBJECT: process.env.VAPID_SUBJECT ?? 'mailto:admin@rose.local',
+  /** Email of the deployment-wide admin. Models / providers config
+   *  are read from this user's `User.providers` so every account
+   *  shares one global LLM stack. Mirrors the API's env. */
+  ADMIN_EMAIL: (process.env.ADMIN_EMAIL ?? 'jpaulduncan@gmail.com')
+    .toLowerCase()
+    .trim(),
 } as const;

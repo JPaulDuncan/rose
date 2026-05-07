@@ -1,6 +1,7 @@
 import { Types } from 'mongoose';
 import { Page, User, type PageDoc } from '@rose/db';
 import { resolveProviderForUser } from '../lib/providers.js';
+import { adminUserId } from '../lib/adminUser.js';
 import { logger } from '../lib/logger.js';
 
 /** Per-user / per-day cap state. Plan 13 (D6) — folded into the
@@ -59,7 +60,13 @@ export async function describePageImages(
   page: PageDoc,
   maxPerPage = 3,
 ): Promise<{ described: number; skipped: number }> {
-  const user = await User.findById(userId).select('settings.vision providers').lean();
+  // Vision is a Models-tab knob — global, owned by the admin user.
+  // Read settings from there so toggling "describe images" once
+  // applies to every account's pages.
+  const adminId = await adminUserId();
+  const user = adminId
+    ? await User.findById(adminId).select('settings.vision providers').lean()
+    : null;
   const cfg = (user?.settings as { vision?: { enabled?: boolean; model?: string; dailyCap?: number } } | undefined)
     ?.vision ?? {};
   if (!cfg.enabled) return { described: 0, skipped: 0 };

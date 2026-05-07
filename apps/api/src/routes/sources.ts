@@ -98,11 +98,10 @@ sourcesRouter.post('/', validateBody(SourceCreateRequest), async (req, res) => {
   }
 
   if (body.type === 'rss') {
-    const user = await User.findById(userId).select('settings').lean();
-    const userDefault =
-      (user?.settings as { rssPollIntervalMinutes?: number } | undefined)
-        ?.rssPollIntervalMinutes ?? 30;
-    const interval = body.config.pollIntervalMinutes ?? userDefault;
+    // 30 minutes is the global default for new feeds. Per-feed
+    // pollIntervalMinutes still wins when the user sets one
+    // explicitly via the create form or the per-feed editor.
+    const interval = body.config.pollIntervalMinutes ?? 30;
     const cfg: RssConfig = {
       url: body.config.url,
       pollIntervalMinutes: interval,
