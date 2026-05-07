@@ -173,6 +173,8 @@ async function bootstrap() {
       migrateSenderStripBrandFields,
       migrateWeatherLocationNulls,
       migrateWeatherLocationToArray,
+      migrateNotificationRulesToRecipes,
+      migrateWebhookSubscriptionsToRecipes,
     } = await import('./services/migrations.js');
     await migrateLegacyThreadKey();
     // Plan 14 — collapse per-user DaydreamNote duplicates into one
@@ -192,6 +194,11 @@ async function bootstrap() {
     // Multi-location weather — collapse legacy singular field into
     // the new `weatherLocations[]` array.
     await migrateWeatherLocationToArray();
+    // Recipes Phase 2 — fold NotificationRule + WebhookSubscription
+    // into Recipe rows so the new dispatcher takes over delivery.
+    // Idempotent on (importedFrom, importedFromId).
+    await migrateNotificationRulesToRecipes();
+    await migrateWebhookSubscriptionsToRecipes();
   } catch (err) {
     logger.warn({ err }, 'boot-time migration failed');
   }

@@ -250,6 +250,9 @@ export type RecipeEvent =
       tags: string[];
       categoryId: string | null;
       brandKeys: string[];
+      /** Page priority — needed for the `priority.is` condition on
+       *  page-shaped events (mirrors NotificationRule.kind 'priority-high'). */
+      priority: 'high' | 'normal' | 'low' | null;
     }
   | {
       kind: 'tag.applied';
@@ -260,6 +263,7 @@ export type RecipeEvent =
       tag: string;
       tags: string[];
       brandKeys: string[];
+      priority: 'high' | 'normal' | 'low' | null;
     }
   | {
       kind: 'time.scheduled';

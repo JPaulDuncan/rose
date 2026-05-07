@@ -25,6 +25,7 @@ type Recipe = {
   cooldownSeconds: number;
   fireLimitPerHour: number;
   importedFrom: string | null;
+  importedFromId?: string | null;
   fireCount: number;
   errorCount: number;
   lastFiredAt: string | null;
@@ -32,6 +33,9 @@ type Recipe = {
   lastErrorMessage: string | null;
   createdAt: string;
   updatedAt: string;
+  /** Set on synthetic rows generated from spam-policy entries —
+   *  read-only on the client, no edit/delete affordance. */
+  virtual?: boolean;
 };
 
 /**
@@ -140,33 +144,53 @@ export default function RecipesSettings() {
               {recipes.map((r) => (
                 <li
                   key={r._id}
-                  className="flex items-start gap-3 rounded-lg border border-ink-200 px-3 py-2 dark:border-ink-800"
+                  className={
+                    'flex items-start gap-3 rounded-lg border px-3 py-2 ' +
+                    (r.virtual
+                      ? 'border-dashed border-ink-300 bg-ink-50/50 dark:border-ink-700 dark:bg-ink-900/40'
+                      : 'border-ink-200 dark:border-ink-800')
+                  }
                 >
-                  <button
-                    type="button"
-                    onClick={() => toggleEnabled.mutate({ id: r._id, enabled: !r.enabled })}
-                    className={
-                      'mt-0.5 inline-flex h-5 w-5 items-center justify-center rounded ' +
-                      (r.enabled
-                        ? 'bg-rose-500 text-white'
-                        : 'bg-ink-200 text-ink-500 dark:bg-ink-700')
-                    }
-                    title={r.enabled ? 'Disable' : 'Enable'}
-                  >
-                    {r.enabled ? (
-                      <Play className="h-3 w-3" />
-                    ) : (
-                      <Pause className="h-3 w-3" />
-                    )}
-                  </button>
+                  {r.virtual ? (
+                    <span
+                      className="mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded bg-amber-500/80 text-white"
+                      title="Read-only — owned by Settings → Spam"
+                    >
+                      <AlertCircle className="h-3 w-3" />
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        toggleEnabled.mutate({ id: r._id, enabled: !r.enabled })
+                      }
+                      className={
+                        'mt-0.5 inline-flex h-5 w-5 items-center justify-center rounded ' +
+                        (r.enabled
+                          ? 'bg-rose-500 text-white'
+                          : 'bg-ink-200 text-ink-500 dark:bg-ink-700')
+                      }
+                      title={r.enabled ? 'Disable' : 'Enable'}
+                    >
+                      {r.enabled ? (
+                        <Play className="h-3 w-3" />
+                      ) : (
+                        <Pause className="h-3 w-3" />
+                      )}
+                    </button>
+                  )}
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-baseline gap-2">
                       <span className="font-medium">{r.name}</span>
-                      {r.importedFrom && (
+                      {r.virtual ? (
+                        <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] uppercase tracking-widest text-amber-700 dark:bg-amber-950/40 dark:text-amber-200">
+                          spam policy
+                        </span>
+                      ) : r.importedFrom ? (
                         <span className="rounded-full bg-ink-100 px-1.5 py-0.5 text-[10px] uppercase tracking-widest text-ink-600 dark:bg-ink-800 dark:text-ink-300">
                           imported · {r.importedFrom}
                         </span>
-                      )}
+                      ) : null}
                     </div>
                     <div className="mt-0.5 text-xs text-ink-500">
                       <code>{r.trigger.kind}</code>
@@ -201,28 +225,40 @@ export default function RecipesSettings() {
                     )}
                   </div>
                   <div className="flex shrink-0 items-center gap-1">
-                    <button
-                      type="button"
-                      className="btn-ghost"
-                      onClick={() => setEditing(r)}
-                      aria-label="Edit"
-                      title="Edit"
-                    >
-                      <Edit3 className="h-4 w-4" />
-                    </button>
-                    <button
-                      type="button"
-                      className="btn-ghost text-red-600"
-                      onClick={() => {
-                        if (confirm(`Delete recipe "${r.name}"?`)) {
-                          remove.mutate(r._id);
-                        }
-                      }}
-                      aria-label="Delete"
-                      title="Delete"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
+                    {r.virtual ? (
+                      <a
+                        href="/settings/spam"
+                        className="btn-ghost text-xs"
+                        title="Edit in Settings → Spam"
+                      >
+                        Manage
+                      </a>
+                    ) : (
+                      <>
+                        <button
+                          type="button"
+                          className="btn-ghost"
+                          onClick={() => setEditing(r)}
+                          aria-label="Edit"
+                          title="Edit"
+                        >
+                          <Edit3 className="h-4 w-4" />
+                        </button>
+                        <button
+                          type="button"
+                          className="btn-ghost text-red-600"
+                          onClick={() => {
+                            if (confirm(`Delete recipe "${r.name}"?`)) {
+                              remove.mutate(r._id);
+                            }
+                          }}
+                          aria-label="Delete"
+                          title="Delete"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </>
+                    )}
                   </div>
                 </li>
               ))}

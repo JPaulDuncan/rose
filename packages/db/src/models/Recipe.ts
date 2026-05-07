@@ -61,6 +61,12 @@ const recipeSchema = new Schema(
       enum: ['notification-rule', 'webhook', 'spam-policy', 'rule', null],
       default: null,
     },
+    /** ID of the source row this Recipe was migrated from, when
+     *  applicable. Lets the boot-time migration skip rows that were
+     *  already imported on a previous boot. Null for native recipes
+     *  and for spam-policy imports (those use the address as the
+     *  natural key). */
+    importedFromId: { type: Schema.Types.ObjectId, default: null, index: true },
     /** Stats surfaced in the list UI. */
     fireCount: { type: Number, default: 0 },
     errorCount: { type: Number, default: 0 },

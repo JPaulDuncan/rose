@@ -75,8 +75,16 @@ function conditionMatches(condition: Condition, event: RecipeEvent): boolean {
       return has.split(',').includes(want);
     }
     case 'priority.is': {
-      if (event.kind !== 'email.ingested') return false;
-      return event.priority === condition.config.priority;
+      // Works on every event that carries priority — emails when they
+      // arrive, pages when they're created, and the per-tag fan-out.
+      if (
+        event.kind === 'email.ingested' ||
+        event.kind === 'page.created' ||
+        event.kind === 'tag.applied'
+      ) {
+        return event.priority === condition.config.priority;
+      }
+      return false;
     }
     case 'subject.matches': {
       if (event.kind !== 'email.ingested') return false;

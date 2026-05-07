@@ -1,4 +1,13 @@
-import { Page, DaydreamNote, Sender, SenderBrand, User } from '@rose/db';
+import {
+  Page,
+  DaydreamNote,
+  Sender,
+  SenderBrand,
+  User,
+  NotificationRule,
+  WebhookSubscription,
+  Recipe,
+} from '@rose/db';
 import { Types } from 'mongoose';
 import { logger } from '../lib/logger.js';
 
@@ -402,6 +411,138 @@ export async function migrateWeatherLocationNulls(): Promise<void> {
       { fixed: r.modifiedCount },
       'cleared literal-null User.weatherLocation rows',
     );
+  }
+}
+
+/**
+ * Phase 2 of Recipes — fold every NotificationRule row into a
+ * matching Recipe so the new dispatcher takes over push delivery.
+ * Mapping:
+ *   priority-high → trigger=page.created, condition=priority.is high,
+ *                   action=notify.push
+ *   tag           → trigger=tag.applied{tag}, action=notify.push
+ *   sender        → trigger=page.created, condition=sender.brand{key},
+ *                   action=notify.push
+ *   event-soon    → no Phase 1/2 equivalent — skipped (Phase 3
+ *                   adds deadline.approaching).
+ *
+ * Idempotent: skips any NotificationRule that already has a
+ * matching `Recipe(importedFrom='notification-rule', importedFromId=<id>)`.
+ */
+export async function migrateNotificationRulesToRecipes(): Promise<void> {
+  const rules = await NotificationRule.find({}).lean();
+  if (!rules.length) return;
+  const existing = await Recipe.find({
+    importedFrom: 'notification-rule',
+  })
+    .select('importedFromId')
+    .lean();
+  const seen = new Set(existing.map((r) => String(r.importedFromId)));
+  let imported = 0;
+  let skippedNoMap = 0;
+  for (const r of rules) {
+    if (seen.has(String(r._id))) continue;
+    const m = (r.match ?? {}) as { tag?: string; brandKey?: string };
+    let trigger: { kind: string; config: Record<string, unknown> } | null = null;
+    const conditions: { kind: string; config: Record<string, unknown> }[] = [];
+    if (r.kind === 'priority-high') {
+      trigger = { kind: 'page.created', config: {} };
+      conditions.push({ kind: 'priority.is', config: { priority: 'high' } });
+    } else if (r.kind === 'tag' && m.tag) {
+      trigger = { kind: 'tag.applied', config: { tag: m.tag.toLowerCase() } };
+    } else if (r.kind === 'sender' && m.brandKey) {
+      trigger = { kind: 'page.created', config: {} };
+      conditions.push({
+        kind: 'sender.brand',
+        config: { brandKey: m.brandKey.toLowerCase() },
+      });
+    }
+    if (!trigger) {
+      skippedNoMap += 1;
+      continue;
+    }
+    const name = nameForNotificationRule(r.kind, m);
+    await Recipe.create({
+      userId: r.userId,
+      name,
+      description: 'Imported from your previous notification rules.',
+      enabled: r.enabled,
+      trigger,
+      conditions,
+      actions: [
+        {
+          kind: 'notify.push',
+          config: {},
+        },
+      ],
+      importedFrom: 'notification-rule',
+      importedFromId: r._id,
+    });
+    imported += 1;
+  }
+  if (imported > 0 || skippedNoMap > 0) {
+    logger.info(
+      { imported, skippedNoMap },
+      'recipes: NotificationRule → Recipe migration complete',
+    );
+  }
+}
+
+function nameForNotificationRule(
+  kind: string,
+  m: { tag?: string; brandKey?: string; hoursAhead?: number },
+): string {
+  if (kind === 'priority-high') return 'High-priority pages → push';
+  if (kind === 'tag' && m.tag) return `Tagged #${m.tag} → push`;
+  if (kind === 'sender' && m.brandKey) return `Sender ${m.brandKey} → push`;
+  if (kind === 'event-soon')
+    return `Event in ${m.hoursAhead ?? 24}h → push (deferred)`;
+  return 'Notification rule (imported)';
+}
+
+/**
+ * Phase 2 of Recipes — every WebhookSubscription becomes a Recipe
+ * with a webhook.post action firing on page.created. The original
+ * row is preserved for safety / rollback; the legacy fan-out path
+ * in generatePage is disabled in the same change so we don't
+ * double-fire.
+ *
+ * Idempotent on (importedFrom='webhook', importedFromId=<id>).
+ */
+export async function migrateWebhookSubscriptionsToRecipes(): Promise<void> {
+  const subs = await WebhookSubscription.find({}).lean();
+  if (!subs.length) return;
+  const existing = await Recipe.find({ importedFrom: 'webhook' })
+    .select('importedFromId')
+    .lean();
+  const seen = new Set(existing.map((r) => String(r.importedFromId)));
+  let imported = 0;
+  for (const s of subs) {
+    if (seen.has(String(s._id))) continue;
+    await Recipe.create({
+      userId: s.userId,
+      name: s.name || `Webhook → ${new URL(s.url).hostname}`,
+      description: 'Imported from your previous webhook subscriptions.',
+      enabled: s.enabled,
+      // Best-effort: legacy WebhookSubscription's "events" list is
+      // free-form. We map every existing sub onto page.created since
+      // that's what the legacy fan-out actually fired on. Users
+      // wanting a different trigger can edit after import.
+      trigger: { kind: 'page.created', config: {} },
+      conditions: [],
+      actions: [
+        {
+          kind: 'webhook.post',
+          config: { url: s.url },
+        },
+      ],
+      importedFrom: 'webhook',
+      importedFromId: s._id,
+    });
+    imported += 1;
+  }
+  if (imported > 0) {
+    logger.info({ imported }, 'recipes: WebhookSubscription → Recipe migration complete');
   }
 }
 

@@ -1160,38 +1160,15 @@ export function startGeneratePageWorker() {
               'merge-detection step failed',
             );
           }
-          // Fan out webhook events to subscribers — best-effort.
-          try {
-            const event = pageWasNew ? 'page.created' : 'page.updated';
-            await dispatchWebhookEvent(userId, event, {
-              page: {
-                id: String(pageObj._id),
-                slug: pageObj.slug,
-                title: pageObj.title,
-                summary: pageObj.summary,
-                tags: pageObj.tags,
-                priority: pageObj.priority,
-                version: pageObj.version,
-                updatedAt: pageObj.updatedAt,
-              },
-              sourceEmailIds: sourceEmailIds.map((x) => String(x)),
-            });
-            if (pageObj.flags?.userMarkedSpam || pageObj.flags?.autoQuarantined) {
-              await dispatchWebhookEvent(userId, 'page.spam.flagged', {
-                page: { id: String(pageObj._id), slug: pageObj.slug, title: pageObj.title },
-                reason: pageObj.flags.autoQuarantined ? 'auto-quarantined' : 'user-marked',
-              });
-            }
-          } catch (err) {
-            logger.warn({ err, pageId: String(pageId) }, 'webhook dispatch failed');
-          }
-          // Push notifications — fire matching subscriptions for this
-          // page. Best-effort; failures don't break generation.
-          try {
-            await evaluatePageNotifications(userId, pageObj);
-          } catch (err) {
-            logger.warn({ err, pageId: String(pageId) }, 'push dispatch failed');
-          }
+          // Phase 2 of recipes — webhook fan-out and push-notification
+          // matching are now handled by user Recipes (see the
+          // page.created / tag.applied emits below). The legacy
+          // dispatchWebhookEvent + evaluatePageNotifications paths
+          // would double-fire, so they're disabled. Boot-time
+          // migrations have ported existing WebhookSubscription /
+          // NotificationRule rows into matching Recipes.
+          void dispatchWebhookEvent; // keep import live for future re-wiring
+          void evaluatePageNotifications;
           // Recipes — fan out page.created (new pages only) and
           // tag.applied for every tag this generation pass added.
           // brandKeys are derived from senderAddresses so recipe
@@ -1208,6 +1185,8 @@ export function startGeneratePageWorker() {
               })
               .filter((b): b is string => !!b);
             const tags = (pageObj.tags ?? []) as string[];
+            const pagePriority =
+              (pageObj.priority as 'high' | 'normal' | 'low' | null | undefined) ?? null;
             if (pageWasNew) {
               await emitRecipeEvent({
                 kind: 'page.created',
@@ -1218,6 +1197,7 @@ export function startGeneratePageWorker() {
                 tags,
                 categoryId: pageObj.categoryId ? String(pageObj.categoryId) : null,
                 brandKeys,
+                priority: pagePriority,
               });
             }
             for (const tag of tags) {
@@ -1230,6 +1210,7 @@ export function startGeneratePageWorker() {
                 tag,
                 tags,
                 brandKeys,
+                priority: pagePriority,
               });
             }
           } catch (err) {
