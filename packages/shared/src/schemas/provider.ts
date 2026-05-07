@@ -20,11 +20,21 @@ export const GenerationParams = z.object({
 });
 export type GenerationParams = z.infer<typeof GenerationParams>;
 
+/** How a role should be served on Ollama. Maps to the `num_gpu`
+ *  option on Ollama's /api/generate call:
+ *    auto → no override, Ollama picks based on VRAM
+ *    gpu  → num_gpu = 999 (every layer on GPU)
+ *    cpu  → num_gpu = 0   (every layer on CPU)
+ *  Anthropic / OpenAI ignore the field — they're not local. */
+export const Device = z.enum(['auto', 'gpu', 'cpu']);
+export type Device = z.infer<typeof Device>;
+
 /** Public view of a user's provider settings. API keys are NEVER returned. */
 export const ProviderSettings = z.object({
   generation: z.object({
     provider: ProviderId.default('ollama'),
     model: z.string().default('llama3.1:8b-instruct'),
+    device: Device.default('auto'),
     params: GenerationParams.default({
       temperature: null,
       maxTokens: null,
@@ -38,6 +48,7 @@ export const ProviderSettings = z.object({
     /** Anthropic excluded — no embeddings API. */
     provider: z.enum(['ollama', 'openai']).default('ollama'),
     model: z.string().default('nomic-embed-text'),
+    device: Device.default('auto'),
   }),
   ollama: z.object({
     /** Empty/undefined = use the docker-compose default (`http://ollama:11434`). */
@@ -64,6 +75,7 @@ export const ProviderSettingsUpdate = z.object({
     .object({
       provider: ProviderId.optional(),
       model: z.string().min(1).optional(),
+      device: Device.optional(),
       params: GenerationParams.partial().optional(),
     })
     .optional(),
@@ -71,6 +83,7 @@ export const ProviderSettingsUpdate = z.object({
     .object({
       provider: z.enum(['ollama', 'openai']),
       model: z.string().min(1),
+      device: Device.optional(),
     })
     .optional(),
   ollama: z

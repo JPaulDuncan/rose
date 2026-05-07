@@ -553,6 +553,9 @@ function RoleCard({
   const current = settings[role];
   const [provider, setProvider] = useState<ProviderId>(current.provider as ProviderId);
   const [model, setModel] = useState(current.model);
+  const [device, setDevice] = useState<'auto' | 'gpu' | 'cpu'>(
+    ((current as { device?: 'auto' | 'gpu' | 'cpu' }).device ?? 'auto'),
+  );
 
   // Per-task default the worker uses when the user hasn't overridden.
   // Surfaced in placeholders so the user knows what they're tuning.
@@ -584,6 +587,9 @@ function RoleCard({
     setProvider(current.provider as ProviderId);
     setModel(current.model);
     setParams(savedParams);
+    setDevice(
+      ((current as { device?: 'auto' | 'gpu' | 'cpu' }).device ?? 'auto'),
+    );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [current.provider, current.model, JSON.stringify(savedParams)]);
 
@@ -603,7 +609,7 @@ function RoleCard({
 
   const save = useMutation({
     mutationFn: async () => {
-      const body: Record<string, unknown> = { provider, model };
+      const body: Record<string, unknown> = { provider, model, device };
       if (role === 'generation') body.params = params;
       return api.patch<{ ok: true }>('/api/providers', { [role]: body });
     },
@@ -617,8 +623,11 @@ function RoleCard({
 
   const paramsDirty =
     role === 'generation' && JSON.stringify(params) !== JSON.stringify(savedParams);
+  const savedDevice =
+    ((current as { device?: 'auto' | 'gpu' | 'cpu' }).device ?? 'auto');
+  const deviceDirty = device !== savedDevice;
   const dirty =
-    provider !== current.provider || model !== current.model || paramsDirty;
+    provider !== current.provider || model !== current.model || paramsDirty || deviceDirty;
 
   const setParam = (key: string, raw: string) => {
     const trimmed = raw.trim();
@@ -689,6 +698,60 @@ function RoleCard({
           </datalist>
         </label>
       </div>
+
+      {provider === 'ollama' && (
+        <div>
+          <span className="mb-1 block text-sm font-medium">Device</span>
+          <div
+            role="radiogroup"
+            aria-label="Where to run this model"
+            className="inline-flex rounded-lg border border-ink-200 p-0.5 text-xs dark:border-ink-800"
+          >
+            {(
+              [
+                ['auto', 'Auto', 'Let Ollama decide based on free VRAM (default).'],
+                ['gpu', 'GPU only', 'Force every layer onto the GPU. Fastest, but consumes the most VRAM.'],
+                [
+                  'cpu',
+                  'CPU only',
+                  role === 'embedding'
+                    ? 'Runs the embedding model on CPU so it doesn\'t share VRAM with your generation model. Slower per call but keeps the GPU free for chat / page generation. Good pick when your gen model is already large (≥7B).'
+                    : 'Runs every layer on CPU. Slow but uses no VRAM at all — useful if you\'re sharing the GPU with another app.',
+                ],
+              ] as const
+            ).map(([key, label, hint]) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => setDevice(key)}
+                aria-checked={device === key}
+                role="radio"
+                title={hint}
+                className={
+                  'rounded-md px-3 py-1 transition-colors ' +
+                  (device === key
+                    ? 'bg-rose-600 text-white'
+                    : 'text-ink-700 hover:bg-ink-100 dark:text-ink-200 dark:hover:bg-ink-800')
+                }
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <p className="mt-1 text-xs text-ink-500">
+            {device === 'auto' &&
+              'Ollama loads as many layers onto the GPU as VRAM allows.'}
+            {device === 'gpu' &&
+              'Pinned to GPU. If the model is bigger than free VRAM the call may fail — fall back to Auto.'}
+            {device === 'cpu' &&
+              role === 'embedding' &&
+              'Pinned to CPU. Recommended on a 12 GB GPU when running a 14B+ generation model — frees ~1 GB of VRAM.'}
+            {device === 'cpu' &&
+              role === 'generation' &&
+              'Pinned to CPU. Generation will be much slower; use only if you need the GPU for something else.'}
+          </p>
+        </div>
+      )}
 
       {role === 'generation' && (
         <details className="rounded border border-ink-200 bg-ink-50 px-3 py-2 dark:border-ink-800 dark:bg-ink-900">

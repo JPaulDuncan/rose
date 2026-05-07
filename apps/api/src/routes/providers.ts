@@ -27,6 +27,7 @@ providersRouter.get('/', async (req, res) => {
     generation: {
       provider: cfg.generation?.provider ?? 'ollama',
       model: cfg.generation?.model ?? 'llama3.1:8b-instruct',
+      device: (cfg.generation as { device?: 'auto' | 'gpu' | 'cpu' })?.device ?? 'auto',
       params: {
         temperature: cfg.generation?.params?.temperature ?? null,
         maxTokens: cfg.generation?.params?.maxTokens ?? null,
@@ -39,6 +40,7 @@ providersRouter.get('/', async (req, res) => {
     embedding: {
       provider: cfg.embedding?.provider ?? 'ollama',
       model: cfg.embedding?.model ?? 'nomic-embed-text',
+      device: (cfg.embedding as { device?: 'auto' | 'gpu' | 'cpu' })?.device ?? 'auto',
     },
     ollama: {
       baseUrl: cfg.ollama?.baseUrl ?? '',

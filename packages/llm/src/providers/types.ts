@@ -21,6 +21,12 @@ export type GenerateOptions = {
   /** Context window size in tokens. Ollama-only — Anthropic/OpenAI
    *  derive this from the model. */
   numCtx?: number;
+  /** Number of layers to offload to the GPU. Ollama-only.
+   *    undefined → no override, Ollama auto-picks based on VRAM
+   *    999       → force-pin every layer to GPU
+   *    0         → force CPU
+   *  Anthropic/OpenAI ignore this.  */
+  numGpu?: number;
   signal?: AbortSignal;
 };
 
@@ -82,8 +88,14 @@ export interface LlmProvider {
   generateStream(opts: GenerateOptions): AsyncGenerator<GenerateChunk>;
   /** Convenience: collect a full string. */
   generate(opts: GenerateOptions): Promise<string>;
-  /** Throws if not supported. Always check `supportsEmbeddings` first. */
-  embed(model: string, input: string, signal?: AbortSignal): Promise<number[]>;
+  /** Throws if not supported. Always check `supportsEmbeddings` first.
+   *  `numGpu` is Ollama-only — see GenerateOptions.numGpu for semantics. */
+  embed(
+    model: string,
+    input: string,
+    signal?: AbortSignal,
+    numGpu?: number,
+  ): Promise<number[]>;
   /** Returns a one-paragraph plain-language description. Throws when
    *  the provider doesn't support vision; check `supportsVision` first. */
   describeImage(image: ImageInput, opts?: DescribeImageOptions): Promise<string>;

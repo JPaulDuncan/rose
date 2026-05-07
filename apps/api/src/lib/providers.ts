@@ -26,7 +26,65 @@ export type ResolvedProvider = {
   providerId: ProviderId;
   model: string;
   params: GenerationParamOverrides;
+  /** Ollama-only: layer count to offload to the GPU. Resolved from
+   *  `User.providers.<role>.device` ("auto" | "gpu" | "cpu"). When
+   *  `auto` (or the user hasn't picked yet) this is undefined and
+   *  Ollama uses its own heuristic. Anthropic / OpenAI ignore. */
+  numGpu?: number;
 };
+
+/**
+ * Map the user-facing device choice to Ollama's num_gpu option.
+ *   auto → undefined (let Ollama decide based on free VRAM)
+ *   gpu  → 999       (force every layer onto the GPU)
+ *   cpu  → 0         (force CPU, no GPU layers)
+ */
+function deviceToNumGpu(device: 'auto' | 'gpu' | 'cpu' | undefined): number | undefined {
+  if (device === 'gpu') return 999;
+  if (device === 'cpu') return 0;
+  return undefined;
+}
+
+/**
+ * Wrap a provider so every generate / generateStream / embed call
+ * carries the role's `numGpu` automatically. Call-site overrides
+ * still win — only fills in when the caller didn't set their own.
+ *
+ * No-op when numGpu is undefined (the "auto" device choice), so the
+ * wrapper is free for non-Ollama providers and the default user
+ * config.
+ */
+function withDevicePin(base: LlmProvider, numGpu: number | undefined): LlmProvider {
+  if (numGpu == null) return base;
+  return new Proxy(base, {
+    get(target, prop, receiver) {
+      const orig = Reflect.get(target, prop, receiver);
+      if (prop === 'generate' || prop === 'generateStream') {
+        return (opts: { numGpu?: number; [k: string]: unknown }) =>
+          (orig as (o: unknown) => unknown).call(target, {
+            ...opts,
+            numGpu: opts.numGpu ?? numGpu,
+          });
+      }
+      if (prop === 'embed') {
+        return (
+          model: string,
+          input: string,
+          signal?: AbortSignal,
+          callerNumGpu?: number,
+        ) =>
+          (orig as LlmProvider['embed']).call(
+            target,
+            model,
+            input,
+            signal,
+            callerNumGpu ?? numGpu,
+          );
+      }
+      return typeof orig === 'function' ? orig.bind(target) : orig;
+    },
+  });
+}
 
 type Role = 'generation' | 'embedding' | 'vision';
 
@@ -82,10 +140,19 @@ export async function resolveProviderForUser(
     cfgRole === 'generation'
       ? ((cfg.generation?.params as GenerationParamOverrides | undefined) ?? {})
       : {};
+  // Device pinning is also per-role. Vision follows generation's
+  // device — the vision model and the gen model share VRAM either
+  // way, so they should be on the same side.
+  const deviceCfg = cfg[cfgRole]?.device as 'auto' | 'gpu' | 'cpu' | undefined;
+  const numGpu = deviceToNumGpu(deviceCfg);
 
   if (providerId === 'ollama') {
     const baseUrl = ollamaUrlForRole(cfg.ollama ?? undefined, role);
-    return { provider: buildProvider({ id: 'ollama', baseUrl }), providerId, model, params };
+    const provider = withDevicePin(
+      buildProvider({ id: 'ollama', baseUrl }),
+      numGpu,
+    );
+    return { provider, providerId, model, params, numGpu };
   }
 
   if (providerId === 'anthropic') {

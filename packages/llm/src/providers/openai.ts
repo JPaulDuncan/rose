@@ -91,7 +91,12 @@ export class OpenAIProvider implements LlmProvider {
     return out;
   }
 
-  async embed(model: string, input: string, signal?: AbortSignal): Promise<number[]> {
+  async embed(
+    model: string,
+    input: string,
+    signal?: AbortSignal,
+    _numGpu?: number,
+  ): Promise<number[]> {
     const baseUrl = this.cfg.baseUrl ?? DEFAULT_BASE;
     const res = await fetch(`${baseUrl}/v1/embeddings`, {
       method: 'POST',

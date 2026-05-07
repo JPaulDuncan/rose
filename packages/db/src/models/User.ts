@@ -216,6 +216,18 @@ const userSchema = new Schema(
         },
         model: { type: String, default: 'llama3.1:8b-instruct' },
         /**
+         * Where to run the model on Ollama. `auto` lets Ollama decide
+         * based on free VRAM; `gpu` pins all layers to the GPU;
+         * `cpu` pins everything to CPU (useful for small embedding
+         * models so the gen model has the GPU to itself). Ignored by
+         * Anthropic / OpenAI — their inference is remote.
+         */
+        device: {
+          type: String,
+          enum: ['auto', 'gpu', 'cpu'],
+          default: 'auto',
+        },
+        /**
          * Optional sampling overrides for every generate-page-style call.
          * Anything left null falls back to the per-call default in the
          * worker (0.2 for JSON mode, 0.4 for narrative writes). topK,
@@ -234,6 +246,11 @@ const userSchema = new Schema(
       embedding: {
         provider: { type: String, enum: ['ollama', 'openai'], default: 'ollama' },
         model: { type: String, default: 'nomic-embed-text' },
+        device: {
+          type: String,
+          enum: ['auto', 'gpu', 'cpu'],
+          default: 'auto',
+        },
       },
       ollama: {
         /** Default Ollama endpoint when no role-specific override is set. */

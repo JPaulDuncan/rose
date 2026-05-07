@@ -22,11 +22,56 @@ export type ResolvedProvider = {
   providerId: ProviderId;
   model: string;
   params: GenerationParamOverrides;
+  /** Ollama-only layer-offload target, derived from
+   *  `User.providers.<role>.device`. See applyParamOverrides for how
+   *  callers thread this into provider.generate / .embed calls. */
+  numGpu?: number;
 };
 
 type Role = 'generation' | 'embedding' | 'vision';
 
 type DecryptedKey = { v: string };
+
+/** auto → undefined, gpu → 999, cpu → 0. See API mirror for context. */
+function deviceToNumGpu(device: 'auto' | 'gpu' | 'cpu' | undefined): number | undefined {
+  if (device === 'gpu') return 999;
+  if (device === 'cpu') return 0;
+  return undefined;
+}
+
+/** Inject numGpu on every generate/embed call so call-sites don't
+ *  have to thread the role's device choice manually. */
+function withDevicePin(base: LlmProvider, numGpu: number | undefined): LlmProvider {
+  if (numGpu == null) return base;
+  return new Proxy(base, {
+    get(target, prop, receiver) {
+      const orig = Reflect.get(target, prop, receiver);
+      if (prop === 'generate' || prop === 'generateStream') {
+        return (opts: { numGpu?: number; [k: string]: unknown }) =>
+          (orig as (o: unknown) => unknown).call(target, {
+            ...opts,
+            numGpu: opts.numGpu ?? numGpu,
+          });
+      }
+      if (prop === 'embed') {
+        return (
+          model: string,
+          input: string,
+          signal?: AbortSignal,
+          callerNumGpu?: number,
+        ) =>
+          (orig as LlmProvider['embed']).call(
+            target,
+            model,
+            input,
+            signal,
+            callerNumGpu ?? numGpu,
+          );
+      }
+      return typeof orig === 'function' ? orig.bind(target) : orig;
+    },
+  });
+}
 
 function ollamaUrlForRole(
   cfg: { baseUrl?: string; generationBaseUrl?: string; embeddingBaseUrl?: string; visionBaseUrl?: string } | undefined,
@@ -64,10 +109,16 @@ export async function resolveProviderForUser(
     cfgRole === 'generation'
       ? ((cfg.generation?.params as GenerationParamOverrides | undefined) ?? {})
       : {};
+  const deviceCfg = cfg[cfgRole]?.device as 'auto' | 'gpu' | 'cpu' | undefined;
+  const numGpu = deviceToNumGpu(deviceCfg);
 
   if (providerId === 'ollama') {
     const baseUrl = ollamaUrlForRole(cfg.ollama ?? undefined, role);
-    return { provider: buildProvider({ id: 'ollama', baseUrl }), providerId, model, params };
+    const provider = withDevicePin(
+      buildProvider({ id: 'ollama', baseUrl }),
+      numGpu,
+    );
+    return { provider, providerId, model, params, numGpu };
   }
 
   if (providerId === 'anthropic') {
@@ -107,12 +158,19 @@ export async function resolveProviderForUser(
  * the user's saved overrides — non-null user values win. Returns the
  * full merged set so call sites can spread every supported sampler
  * field into `provider.generate()` whether the user set it or not.
+ *
+ * If `resolved` is supplied, its `numGpu` (the device-pin layer
+ * count derived from the user's Auto/GPU/CPU setting) is folded in
+ * so the spread carries it automatically.
  */
 export function applyParamOverrides(
   defaults: GenerationParamOverrides,
   overrides: GenerationParamOverrides,
-): Required<{ [K in keyof GenerationParamOverrides]: number | null }> {
-  const merged: Record<string, number | null> = {
+  resolved?: { numGpu?: number },
+): Required<{ [K in keyof GenerationParamOverrides]: number | null }> & {
+  numGpu?: number;
+} {
+  const merged: Record<string, number | null | undefined> = {
     temperature: null,
     maxTokens: null,
     topP: null,
@@ -124,5 +182,8 @@ export function applyParamOverrides(
   for (const [k, v] of Object.entries(overrides)) {
     if (v != null) merged[k] = v;
   }
-  return merged as Required<{ [K in keyof GenerationParamOverrides]: number | null }>;
+  if (resolved?.numGpu != null) merged.numGpu = resolved.numGpu;
+  return merged as Required<{
+    [K in keyof GenerationParamOverrides]: number | null;
+  }> & { numGpu?: number };
 }

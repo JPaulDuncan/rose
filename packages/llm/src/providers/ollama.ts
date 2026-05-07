@@ -60,6 +60,10 @@ export class OllamaProvider implements LlmProvider {
     if (opts.topK != null) samplerOptions.top_k = opts.topK;
     if (opts.repeatPenalty != null) samplerOptions.repeat_penalty = opts.repeatPenalty;
     if (opts.maxTokens != null) samplerOptions.num_predict = opts.maxTokens;
+    // Device pinning — present only when the user has overridden the
+    // role's device in Settings → Models. `num_gpu` accepts a layer
+    // count; we use 0 (CPU) and 999 (force-GPU) as the two ends.
+    if (opts.numGpu != null) samplerOptions.num_gpu = opts.numGpu;
     const res = await fetch(`${this.cfg.baseUrl}/api/generate`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -88,11 +92,18 @@ export class OllamaProvider implements LlmProvider {
     return out;
   }
 
-  async embed(model: string, input: string, signal?: AbortSignal): Promise<number[]> {
+  async embed(
+    model: string,
+    input: string,
+    signal?: AbortSignal,
+    numGpu?: number,
+  ): Promise<number[]> {
+    const body: Record<string, unknown> = { model, prompt: input };
+    if (numGpu != null) body.options = { num_gpu: numGpu };
     const res = await fetch(`${this.cfg.baseUrl}/api/embeddings`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ model, prompt: input }),
+      body: JSON.stringify(body),
       signal,
     });
     if (!res.ok) {
