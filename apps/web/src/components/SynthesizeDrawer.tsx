@@ -7,8 +7,8 @@ import { useAuth } from '../lib/auth';
 type LabeledPage = { label: string; _id: string; slug: string; title: string };
 
 /**
- * Streaming drawer that synthesizes a user-selected set of wiki
- * entries into a single meta-page. Hits POST /api/pages/synthesize
+ * Streaming drawer that synthesizes a user-selected set of
+ * articles into a single meta-article. Hits POST /api/pages/synthesize
  * over SSE and shows tokens live; on completion offers a link to the
  * new page.
  */
@@ -180,7 +180,7 @@ export function SynthesizeDrawer({
 
         {created && (
           <div className="flex items-center justify-between rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-xs dark:border-emerald-800 dark:bg-emerald-950/30">
-            <span>Saved as a wiki page.</span>
+            <span>Filed as an article.</span>
             <button
               type="button"
               className="btn-primary"

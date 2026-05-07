@@ -4,7 +4,7 @@ import { Star } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useApi } from '../lib/api';
 
-/** Star toggle for a wiki page. Hits /api/pages/:id/favorite and
+/** Star toggle for an article. Hits /api/pages/:id/favorite and
  *  optimistically flips state; failures snap back. Initial state is
  *  hydrated from /api/page-state/lookup so we don't need to add a
  *  field to the page payload itself. */

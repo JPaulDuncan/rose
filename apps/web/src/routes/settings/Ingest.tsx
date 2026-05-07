@@ -106,7 +106,7 @@ export default function IngestPage() {
           <p className="text-xs text-ink-500">
             Live view of every email pulled in by your sources, with the
             generation status for each. Use this when something didn't
-            land on a wiki page and you need to see why.
+            land on an article and you need to see why.
           </p>
         </div>
         <span className="text-sm text-ink-500">{data?.emails.length ?? 0} emails</span>
@@ -515,7 +515,7 @@ function EmptyIngest() {
         <h3 className="font-semibold">No emails yet</h3>
         <p className="mt-1 text-sm text-ink-500">
           Connect a mail source to start ingesting. Each email flows
-          through the worker into a wiki page.
+          through the worker into an article.
         </p>
       </div>
       <Link to="/settings/sources" className="btn-primary">

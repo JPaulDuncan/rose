@@ -42,7 +42,7 @@ export default function LoginPage() {
           <img src="/rose.svg" className="h-9 w-9" alt="" />
           <div>
             <h1 className="text-xl font-semibold">Welcome back to Rose</h1>
-            <p className="text-sm text-ink-500">Sign in to your wiki.</p>
+            <p className="text-sm text-ink-500">Sign in to your archive.</p>
           </div>
         </div>
         <form className="space-y-3" onSubmit={submit}>

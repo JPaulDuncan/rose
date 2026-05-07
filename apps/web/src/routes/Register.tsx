@@ -43,7 +43,7 @@ export default function RegisterPage() {
           <img src="/rose.svg" className="h-9 w-9" alt="" />
           <div>
             <h1 className="text-xl font-semibold">Create your Rose account</h1>
-            <p className="text-sm text-ink-500">Local-first email-to-wiki.</p>
+            <p className="text-sm text-ink-500">Your personal newspaper, filed from your inbox.</p>
           </div>
         </div>
         <form className="space-y-3" onSubmit={submit}>

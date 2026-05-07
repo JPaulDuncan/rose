@@ -68,7 +68,7 @@ export default function SendersSettings() {
         <p className="text-sm text-ink-500">
           The address book Rose builds as it learns about each sender:
           logos, websites referenced, an AI-written "who is this" brief,
-          and what they've contributed to your wiki. Edit a sender to
+          and what they've contributed to your archive. Edit a sender to
           override its logo or summary; Rose will respect your override.
         </p>
       </div>
@@ -104,7 +104,7 @@ export default function SendersSettings() {
 
       {!data?.senders.length ? (
         <div className="card text-sm text-ink-500">
-          No senders yet. As emails arrive and get turned into wiki pages,
+          No senders yet. As emails arrive and get turned into articles,
           their senders show up here.
         </div>
       ) : (
@@ -282,7 +282,7 @@ function SenderDetailPanel({ brandKey }: { brandKey: string }) {
           {data.pages.length > 0 && (
             <div>
               <div className="mb-1 text-[10px] uppercase tracking-widest text-ink-500">
-                Wiki pages
+                Articles
               </div>
               <ul className="space-y-1">
                 {data.pages.slice(0, 5).map((p) => (

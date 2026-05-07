@@ -81,7 +81,7 @@ export default function MapsSettingsPage() {
         <p className="text-sm text-ink-500">
           When enabled, the worker geocodes the locations it extracts
           from your incoming events and the named places it finds in
-          your generated wiki pages, and the UI renders small map
+          your generated articles, and the UI renders small map
           insets in the home edition, calendar, and individual pages.
           Off by default; flipping it on doesn't backfill — only newly
           processed pages and events pick up coordinates.
@@ -181,7 +181,7 @@ export default function MapsSettingsPage() {
             asking.
           </li>
           <li>
-            <strong>Wiki pages.</strong> After a page generates, an
+            <strong>Articles.</strong> After an article generates, an
             LLM step pulls up to six named places out of the body and
             geocodes the new ones. The right-rail "Places" card on a
             page renders the result.

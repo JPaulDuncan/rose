@@ -86,7 +86,7 @@ function BriefingCard() {
       api.post<{ jobId: string }>('/api/me/briefing/generate-now'),
     onSuccess: () =>
       toast.success(
-        'Briefing queued — show up in the wiki under groupingMode "briefing" in a moment',
+        'Briefing queued — show up in the archive under groupingMode "briefing" in a moment',
       ),
     onError: (e: Error) => toast.error(e.message),
   });
@@ -99,9 +99,9 @@ function BriefingCard() {
       </div>
       <p className="text-sm text-ink-500">
         On a configurable cadence, the LLM writes a short narrative
-        editor's note over your recent wiki entries — clusters them
+        editor's note over your recent articles — clusters them
         into themes and produces a 3–5 paragraph briefing that lives as
-        a wiki page (groupingMode <code>briefing</code>) and is
+        an article (groupingMode <code>briefing</code>) and is
         linkable from anywhere.
       </p>
       <label className="mt-4 flex items-center gap-2 text-sm">

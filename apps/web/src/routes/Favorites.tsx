@@ -35,7 +35,7 @@ export default function FavoritesPage() {
           <div>
             <h2 className="font-serif text-2xl">No favorites yet</h2>
             <p className="text-sm text-ink-500">
-              Star any wiki page from its header to pin it here.
+              Star any article from its header to pin it here.
             </p>
           </div>
         </div>

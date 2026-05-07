@@ -467,7 +467,7 @@ export default function SourcesSettings() {
                       onClick={() => {
                         if (
                           confirm(
-                            `Pull every message from "${s.name}"? This re-walks the entire mailbox and may take a long time and burn LLM tokens on each new email's wiki page.`,
+                            `Pull every message from "${s.name}"? This re-walks the entire mailbox and may take a long time and burn LLM tokens on each new email's article.`,
                           )
                         ) {
                           backfillAll.mutate(s._id);
@@ -990,8 +990,8 @@ function RssForm({
         {mode === 'create' ? 'Add an RSS or Atom feed' : `Edit "${initial.name}"`}
       </h3>
       <p className="text-xs text-ink-500">
-        Feed entries become wiki pages grouped by topic. The LLM derives
-        tags from each item, and matching topics roll up into the same page.
+        Feed entries become articles grouped by topic. The LLM derives
+        tags from each item, and matching topics roll up into the same article.
       </p>
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -1206,7 +1206,7 @@ function WebsiteForm({
       </h3>
       <p className="text-xs text-ink-500">
         Rose re-fetches the page on the schedule below, extracts the readable
-        article text, and only generates a wiki page when the content has
+        article text, and only generates an article when the content has
         actually changed since the last poll.
       </p>
 

@@ -80,7 +80,7 @@ export default function LibrarySettings() {
         <p className="text-sm text-ink-500">
           A user-curated source corpus the worker crawls, indexes, and
           exposes both as a standalone search surface (
-          <code>/library</code>) and as a Daydream adapter so wiki-page
+          <code>/library</code>) and as a Daydream adapter so article
           Background notes can pull from sources you trust. Off by
           default; once enabled, runs on the worker's schedule.
         </p>
@@ -123,7 +123,7 @@ export default function LibrarySettings() {
             <span>
               Use Library in Daydream
               <span className="block text-[11px] text-ink-500">
-                Lets daydream pull library documents into wiki-page
+                Lets daydream pull library documents into article
                 Background notes.
               </span>
             </span>

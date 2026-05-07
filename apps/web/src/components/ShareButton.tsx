@@ -4,7 +4,7 @@ import { Share2, Copy, X, Lock, ExternalLink } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useApi } from '../lib/api';
 
-/** Inline Share-link creator for a single wiki page. Pops a small
+/** Inline Share-link creator for a single article. Pops a small
  *  drawer with optional password / expiry / label, and on save shows
  *  the new public URL with a copy button. */
 export function ShareButton({ pageId, pageTitle }: { pageId: string; pageTitle: string }) {

@@ -77,7 +77,7 @@ export default function EmailView() {
     enabled: !!id,
   });
 
-  // Look up the wiki page slug if this email contributed to one.
+  // Look up the article slug if this email contributed to one.
   const { data: pageInfo } = useQuery({
     queryKey: ['email-page', data?.pageId],
     queryFn: () =>
@@ -275,7 +275,7 @@ export default function EmailView() {
               to={`/p/${pageInfo.slug}`}
               className="ml-auto inline-flex items-center gap-1 rounded-full border border-rose-300 px-2 py-0.5 font-medium text-rose-700 hover:bg-rose-50 dark:border-rose-800 dark:text-rose-300 dark:hover:bg-rose-950/30"
             >
-              Open wiki page <ExternalLink className="h-3 w-3" />
+              Open article <ExternalLink className="h-3 w-3" />
             </Link>
           )}
         </div>
@@ -307,7 +307,7 @@ export default function EmailView() {
         onBlock={() => {
           if (
             confirm(
-              `Block ${senderAddr}?\n\n• Future mail from this sender is dropped during ingest (no Email row, no wiki page).\n• Existing emails from this sender are deleted; pages where they were the only contributor are deleted too.\n• Reversible — unblock from Settings → Spam.`,
+              `Block ${senderAddr}?\n\n• Future mail from this sender is dropped during ingest (no Email row, no article).\n• Existing emails from this sender are deleted; articles where they were the only contributor are deleted too.\n• Reversible — unblock from Settings → Spam.`,
             )
           ) {
             blockSender.mutate();

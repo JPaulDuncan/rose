@@ -364,7 +364,7 @@ function ChatThread({
               onClick={() => conversation && setRenamingTitle(conversation.title)}
               disabled={!conversation}
             >
-              {conversation?.title ?? 'Ask the wiki'}
+              {conversation?.title ?? 'Ask the archive'}
               {conversation && (
                 <Pencil className="ml-1.5 inline-block h-3 w-3 text-ink-400" />
               )}
@@ -402,7 +402,7 @@ function ChatThread({
                 send();
               }
             }}
-            placeholder="Ask anything about your wiki…"
+            placeholder="Ask anything about your archive…"
             className="input min-h-[44px] flex-1 resize-none"
             rows={1}
             disabled={pending}
@@ -458,11 +458,11 @@ function EmptyState() {
     <div className="mx-auto mt-16 max-w-md text-center">
       <MessageSquare className="mx-auto h-10 w-10 text-rose-500" />
       <h2 className="mt-3 font-serif text-2xl font-bold tracking-tight">
-        Ask the wiki
+        Ask the archive
       </h2>
       <p className="mt-2 text-sm text-ink-500">
-        Ask a question and Rose will answer using your wiki entries,
-        citing the pages it pulled context from. Your knowledge base
+        Ask a question and Rose will answer using your articles,
+        citing the sources it pulled context from. Your archive
         becomes a workspace.
       </p>
       <div className="mt-4 flex flex-wrap justify-center gap-2 text-xs">

@@ -33,8 +33,8 @@ const TRIGGERS: {
   },
   {
     kind: 'page.created',
-    label: 'When a wiki page is created',
-    description: 'Fires the first time generation produces a page.',
+    label: 'When an article is created',
+    description: 'Fires the first time generation produces an article.',
     defaultConfig: {},
   },
   {

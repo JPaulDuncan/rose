@@ -105,7 +105,7 @@ function WebhooksCard() {
         </button>
       </div>
       <p className="text-sm text-ink-500">
-        Fire HTTP POSTs to your own endpoints when wiki pages are
+        Fire HTTP POSTs to your own endpoints when articles are
         created, updated, or flagged. Each delivery is HMAC-SHA256
         signed with the per-subscription secret in the
         <code className="ml-1 text-[11px]">X-Rose-Signature</code>
@@ -366,7 +366,7 @@ function ShareLinksCard() {
         <h2 className="font-semibold">Share links</h2>
       </div>
       <p className="text-sm text-ink-500">
-        Public read-only links to wiki pages. Create one from any page
+        Public read-only links to articles. Create one from any article
         view via the Share button. Active links serve a stripped-down
         HTML page at <code>/share/&lt;slug&gt;</code>.
       </p>

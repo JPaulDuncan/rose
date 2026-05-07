@@ -160,7 +160,7 @@ export default function SenderPage() {
           )}
           <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-[11px] uppercase tracking-widest text-ink-500">
             <span>
-              {s.pageCount} {s.pageCount === 1 ? 'wiki entry' : 'wiki entries'}
+              {s.pageCount} {s.pageCount === 1 ? 'article' : 'articles'}
             </span>
             <span>
               {s.emailCount} {s.emailCount === 1 ? 'message' : 'messages'}
@@ -235,14 +235,14 @@ export default function SenderPage() {
             )}
           </section>
 
-          {/* Wiki entries */}
+          {/* Articles */}
           <section>
             <h2 className="border-b border-ink-200 pb-2 text-[10px] uppercase tracking-[0.25em] text-ink-500 dark:border-ink-800">
-              Wiki entries
+              Articles
             </h2>
             {data.pages.length === 0 ? (
               <p className="mt-2 text-sm italic text-ink-500">
-                No wiki pages yet for this sender.
+                No articles yet for this sender.
               </p>
             ) : (
               <ul className="mt-3 divide-y divide-ink-200 dark:divide-ink-800">

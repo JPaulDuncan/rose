@@ -644,7 +644,7 @@ function EventBody({ e, compact }: { e: CalendarEventDoc; compact?: boolean }) {
             to={`/p/${e.pageSlug}`}
             className="inline-flex items-center gap-1 text-rose-600 hover:underline dark:text-rose-300"
           >
-            Open wiki page <ExternalLink className="h-3 w-3" />
+            Open article <ExternalLink className="h-3 w-3" />
           </Link>
         )}
         <Link

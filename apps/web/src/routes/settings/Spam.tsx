@@ -99,7 +99,7 @@ export default function SpamSettings() {
         </div>
         <p className="mb-3 text-xs text-ink-500">
           The strongest filter: future mail from these senders is dropped
-          during ingest — no Email row, no wiki page. Add new entries from
+          during ingest — no Email row, no article. Add new entries from
           an email's "Block sender" toolbar action.
         </p>
         {data.blockedSenders.length === 0 ? (

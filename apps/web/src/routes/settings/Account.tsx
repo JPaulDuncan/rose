@@ -399,7 +399,7 @@ function ReadTrackingCard() {
     <div className="card">
       <h2 className="mb-2 font-semibold">Track which pages I've read</h2>
       <p className="text-sm text-ink-500">
-        Off by default. When on, Rose remembers which wiki pages you've
+        Off by default. When on, Rose remembers which articles you've
         opened so unread items can be highlighted in lists. Doesn't
         affect anything else; favorites work either way.
       </p>
@@ -484,7 +484,7 @@ function PortabilityCard() {
     <div className="card">
       <h2 className="mb-2 font-semibold">Export &amp; import</h2>
       <p className="text-sm text-ink-500">
-        Take your wiki with you. Export downloads everything portable
+        Take your archive with you. Export downloads everything portable
         (pages, revisions, conversations, events, senders, rules,
         saved searches, preferences) as a single JSON file. Source
         credentials and push subscriptions are excluded — they're
@@ -570,9 +570,9 @@ function DangerZone() {
         <h2 className="font-semibold text-red-700 dark:text-red-300">Danger zone</h2>
       </div>
       <p className="text-sm text-ink-500">
-        Reset your wiki. By default this deletes every page + revision and
+        Reset your archive. By default this deletes every article + revision and
         marks every ingested email as <code>parsed</code> so the worker can
-        rebuild the wiki under the current grouping rules. Toggle the boxes
+        rebuild the archive under the current grouping rules. Toggle the boxes
         below to extend the scope.
       </p>
 
@@ -656,7 +656,7 @@ function DangerZone() {
           }}
         >
           {alsoEmails ? <Trash2 className="h-4 w-4" /> : <RefreshCw className={`h-4 w-4 ${reset.isPending ? 'animate-spin' : ''}`} />}
-          {reset.isPending ? 'Resetting…' : alsoEmails ? 'Delete pages + emails' : 'Reset wiki pages'}
+          {reset.isPending ? 'Resetting…' : alsoEmails ? 'Delete articles + emails' : 'Reset articles'}
         </button>
       </div>
     </div>

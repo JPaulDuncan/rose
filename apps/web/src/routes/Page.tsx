@@ -177,7 +177,7 @@ export default function PageView() {
     {
       extensions: [
         StarterKit,
-        Placeholder.configure({ placeholder: 'Write your wiki page in markdown…' }),
+        Placeholder.configure({ placeholder: 'Write your article in markdown…' }),
         TiptapLink.configure({ openOnClick: false }),
       ],
       content: '',
@@ -810,13 +810,28 @@ function SourcesSection({
     }
   }
 
+  const senderCount = new Set(groups.map((g) => g.sender)).size;
+  const dates = all
+    .map((s) => (s.data.date ? new Date(s.data.date).getTime() : NaN))
+    .filter((t) => Number.isFinite(t));
+  const dateRange = (() => {
+    if (dates.length === 0) return null;
+    const min = new Date(Math.min(...dates));
+    const max = new Date(Math.max(...dates));
+    const fmt = (d: Date) =>
+      d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+    return min.toDateString() === max.toDateString() ? fmt(min) : `${fmt(min)} – ${fmt(max)}`;
+  })();
+  const summary = `Compiled from ${all.length} ${all.length === 1 ? 'email' : 'emails'} across ${senderCount} ${senderCount === 1 ? 'sender' : 'senders'}${dateRange ? `, ${dateRange}` : ''}.`;
+
   return (
     <CountedSection
       icon={<Mail className="h-4 w-4 text-rose-500" />}
-      title="Sources"
+      title="Sources cited"
       count={all.length}
       collapseAt={8}
     >
+      <p className="mb-3 text-xs italic text-ink-500">{summary}</p>
       <ol className="space-y-2 text-sm">
         {groups.map((g, idx) => (
           <SourceGroup key={`${g.sender}-${idx}`} group={g} />
@@ -1139,7 +1154,7 @@ type RelatedPage = {
 };
 
 /**
- * "Related Articles" — up to 5 wiki pages with the highest cosine
+ * "Related Articles" — up to 5 articles with the highest cosine
  * similarity to this page's embedding. The endpoint applies the
  * floor (>= 0.55) so an empty list here means "nothing close
  * enough", which is correct UX (better silent than misleading).

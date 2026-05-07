@@ -119,7 +119,7 @@ export default function DaydreamSettings() {
         <p className="text-sm text-ink-500">
           When the rest of the pipeline is idle, the worker can quietly
           fetch encyclopedic context for the topics, senders, and tags
-          on your wiki pages and synthesize a short "Background" panel
+          on your articles and synthesize a short "Background" panel
           using your configured generation model. Off by default; when
           on, runs only while there's no other work to do.
         </p>
@@ -139,7 +139,7 @@ export default function DaydreamSettings() {
             </>,
             <>
               Daydream notes live in their own collection; they don't
-              modify your existing wiki pages.
+              modify your existing articles.
             </>,
           ]}
         />
@@ -718,7 +718,7 @@ function ExternalSearchCard({
         bullets={[
           <>
             Your daydream queries (topics + entity names from your
-            wiki pages) will be sent to whichever adapters you tick
+            articles) will be sent to whichever adapters you tick
             below.
           </>,
           <>

@@ -141,7 +141,7 @@ export default function RulesSettings() {
       ) : rules.length === 0 ? (
         <div className="card text-sm text-ink-500">
           No rules yet. Add one to start automating how mail flows
-          through your wiki.
+          through your archive.
         </div>
       ) : (
         <ul className="space-y-2">

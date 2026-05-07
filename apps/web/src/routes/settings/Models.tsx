@@ -482,7 +482,7 @@ function VisionCard({ installedOllama }: { installedOllama: string[] }) {
       <p className="text-sm text-ink-500">
         When enabled, the worker asks your generation provider's vision
         model to describe images embedded in emails — those descriptions
-        flow through to the wiki page as enhanced alt text. Off by
+        flow through to the article as enhanced alt text. Off by
         default because the cost profile differs from text generation.
         Defaults: Ollama <code>llava</code>, Anthropic Claude Haiku 4.5,
         OpenAI <code>gpt-4o-mini</code>.
@@ -664,7 +664,7 @@ function RoleCard({
       </div>
       <p className="text-xs text-ink-500">
         {role === 'generation'
-          ? 'Used to draft wiki pages from emails.'
+          ? 'Used to draft articles from emails.'
           : 'Used for semantic search. Anthropic does not offer embeddings — choose Ollama or OpenAI.'}
       </p>
 
@@ -761,7 +761,7 @@ function RoleCard({
           </summary>
           <p className="mt-2 text-xs text-ink-500">
             Leave a field blank to use the per-task default the worker
-            applies (<code>0.2</code> for JSON-mode wiki generation,{' '}
+            applies (<code>0.2</code> for JSON-mode article generation,{' '}
             <code>0.4</code> for the narrative briefing). <strong>Heads up:</strong>{' '}
             temperatures above ~0.4 noticeably increase the rate of
             malformed JSON, which makes generate-page jobs fail with{' '}

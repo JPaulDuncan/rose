@@ -121,7 +121,7 @@ export default function HomePage() {
             <h3 className="font-semibold">No edition yet</h3>
             <p className="text-sm text-ink-500">
               Connect a mail source to get started. Each email flows
-              through the worker into a wiki entry, and Today's Edition
+              through the worker into an article, and Today's Edition
               assembles them here.
             </p>
           </div>
@@ -896,7 +896,7 @@ function FeaturedSections({
         const pages = s.pages.filter((p) => !suppressIds.has(p._id));
         // When a tag-digest exists, it becomes the section's lede —
         // a newspaper section editor's brief, headline + dek + body
-        // — and the wiki pages live under it as a carousel of
+        // — and the articles live under it as a carousel of
         // related entries. When there's no digest yet, fall back to
         // the prior lead-page card so the section never empties.
         const digest = s.digest ?? null;
@@ -1535,7 +1535,7 @@ function UpcomingEventRow({ e }: { e: UpcomingEvent }) {
           hour: 'numeric',
           minute: start.getMinutes() === 0 ? undefined : '2-digit',
         });
-  // Prefer the wiki page link when one exists — that's where the
+  // Prefer the article link when one exists — that's where the
   // user gets the full context. Fall back to the source email so the
   // row is always actionable.
   const href = e.pageSlug ? `/p/${e.pageSlug}` : `/e/${e.sourceEmailId}`;

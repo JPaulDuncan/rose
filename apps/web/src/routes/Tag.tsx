@@ -150,8 +150,8 @@ export default function TagPage() {
         </div>
         <p className="mt-1 text-sm text-ink-500">
           {data.pageCount === 0
-            ? 'No pages yet. As emails matching this tag arrive, they will land here.'
-            : `Wiki pages tagged or extracted with #${data.tag}, aggregated from ${data.totalEmails} source email${data.totalEmails === 1 ? '' : 's'}.`}
+            ? 'No articles yet. As emails matching this tag arrive, they will land here.'
+            : `Articles tagged or extracted with #${data.tag}, aggregated from ${data.totalEmails} source email${data.totalEmails === 1 ? '' : 's'}.`}
         </p>
       </header>
 
@@ -243,7 +243,7 @@ export default function TagPage() {
 
 /**
  * Newspaper-style daily section nameplate. Sits at the top of the
- * tag page above the list of contributing wiki entries. Shows the
+ * tag page above the list of contributing articles. Shows the
  * day's section editor's brief from TagDigest — headline, dek, body
  * paragraph — with a "Regenerate today's brief" affordance for
  * pulling a fresh brief on demand.

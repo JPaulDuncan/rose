@@ -14,12 +14,12 @@ export default function SavePage() {
           Capture
         </div>
         <h1 className="mt-0.5 font-serif text-4xl font-black tracking-tight">
-          Save to wiki
+          File a story
         </h1>
         <p className="mt-2 text-sm text-ink-500">
           Drop in a URL or upload a document. Rose runs the same
-          parse → embed → generate pipeline as your inbox: a wiki
-          page lands a few seconds later, searchable and chat-ready.
+          parse → embed → generate pipeline as your inbox: an article
+          lands a few seconds later, searchable and chat-ready.
         </p>
       </header>
 

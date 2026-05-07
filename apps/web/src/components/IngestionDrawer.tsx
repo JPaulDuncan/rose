@@ -46,7 +46,7 @@ export function IngestionDrawer({
     <div className="fixed inset-y-0 right-0 z-40 flex w-[480px] max-w-full flex-col border-l border-ink-200 bg-white shadow-soft dark:border-ink-800 dark:bg-ink-900 animate-slide-up">
       <div className="flex items-center justify-between border-b border-ink-200 px-4 py-3 dark:border-ink-800">
         <div>
-          <div className="text-sm font-semibold">Generating wiki page…</div>
+          <div className="text-sm font-semibold">Filing article…</div>
           <div className="text-xs text-ink-500">Job {jobId}</div>
         </div>
         <button className="btn-ghost" onClick={onClose} aria-label="Close">

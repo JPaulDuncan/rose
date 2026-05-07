@@ -34,7 +34,7 @@ type LibrarySettings = {
 
 /**
  * Standalone search-and-browse surface for the user's curated
- * Library. Different question than /search (which is wiki-only):
+ * Library. Different question than /search (which is archive-only):
  * this is "search the corpus I follow." Empty state nudges to
  * Settings → Library so the user knows where to add sources.
  */
