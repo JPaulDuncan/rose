@@ -395,6 +395,113 @@ pagesRouter.delete('/:id/merge-suggestions/:targetId', async (req, res) => {
   res.json({ ok: true });
 });
 
+/** Cosine similarity between two equal-length vectors. Inlined here
+ *  to keep the hot path one Mongo round-trip + an in-process scan;
+ *  copying the helper from chat.ts is the same five lines. */
+function cosineSim(a: number[], b: number[]): number {
+  if (!a.length || a.length !== b.length) return 0;
+  let dot = 0;
+  let na = 0;
+  let nb = 0;
+  for (let i = 0; i < a.length; i += 1) {
+    dot += a[i]! * b[i]!;
+    na += a[i]! * a[i]!;
+    nb += b[i]! * b[i]!;
+  }
+  return na && nb ? dot / (Math.sqrt(na) * Math.sqrt(nb)) : 0;
+}
+
+/**
+ * Up to 5 wiki pages most semantically similar to the target page.
+ * Exact cosine over `Page.embedding`, scoped to the same user, with
+ * the same `embeddingModel` (so we never compare incompatible
+ * vector spaces). Excludes the page itself, spam-flagged pages,
+ * and notification-stream pages so a page about deploys doesn't
+ * recommend a wall of CI noise.
+ *
+ * Cheap-O: pulls every embedding for the user. The full-corpus
+ * scan is fine up to ~10k pages; if/when it stops being fine,
+ * pre-compute neighbors during embedPage instead.
+ */
+pagesRouter.get('/:id/related', async (req, res) => {
+  const userId = new Types.ObjectId(userIdOf(req));
+  if (!Types.ObjectId.isValid(req.params.id)) {
+    res.status(400).json({ error: 'invalid_request', message: 'Invalid id' });
+    return;
+  }
+  const page = await Page.findOne({ _id: req.params.id, userId })
+    .select('+embedding embeddingModel')
+    .lean();
+  if (!page) {
+    res.status(404).json({ error: 'not_found', message: 'Page not found' });
+    return;
+  }
+  const vec = (page as { embedding?: number[] | null }).embedding;
+  if (!vec || vec.length === 0) {
+    // Page hasn't been embedded yet (worker hasn't gotten to it,
+    // user disabled the embedding role, etc.). Don't fail the
+    // page render — just return an empty list.
+    res.json({ related: [] });
+    return;
+  }
+
+  const candidates = await Page.find({
+    userId,
+    _id: { $ne: page._id },
+    embedding: { $ne: null },
+    embeddingModel: page.embeddingModel,
+    'flags.userMarkedSpam': { $ne: true },
+    'flags.hasLikelySpam': { $ne: true },
+    'flags.autoQuarantined': { $ne: true },
+    'flags.isNotificationStream': { $ne: true },
+  })
+    .select('+embedding slug title summary heroImageUrl tags updatedAt')
+    .lean();
+
+  const scored = (
+    candidates as unknown as Array<{
+      _id: Types.ObjectId;
+      slug: string;
+      title: string;
+      summary: string;
+      heroImageUrl: string | null;
+      tags: string[];
+      updatedAt: Date;
+      embedding: number[] | null;
+    }>
+  )
+    .map((c) => ({
+      _id: String(c._id),
+      slug: c.slug,
+      title: c.title,
+      summary: c.summary,
+      heroImageUrl: c.heroImageUrl ?? null,
+      tags: c.tags ?? [],
+      updatedAt: c.updatedAt,
+      score: c.embedding ? cosineSim(vec, c.embedding) : 0,
+    }))
+    // Threshold guards against "the closest page in the corpus is
+    // still wildly unrelated" — happens with tiny corpora. 0.55 is
+    // empirical; a Q4-quantized nomic-embed-text gets sibling pages
+    // around 0.7+ and thematically-adjacent ones around 0.55–0.7.
+    .filter((c) => c.score >= 0.55)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 5);
+
+  res.json({
+    related: scored.map((s) => ({
+      _id: s._id,
+      slug: s.slug,
+      title: s.title,
+      summary: s.summary,
+      heroImageUrl: s.heroImageUrl,
+      tags: s.tags,
+      updatedAt: s.updatedAt,
+      score: Number(s.score.toFixed(3)),
+    })),
+  });
+});
+
 pagesRouter.get('/:id/revisions', async (req, res) => {
   const userId = new Types.ObjectId(userIdOf(req));
   const page = await Page.findOne({ _id: req.params.id, userId }).select('_id').lean();

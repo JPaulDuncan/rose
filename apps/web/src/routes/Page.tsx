@@ -366,6 +366,7 @@ export default function PageView() {
               sourceEmailIds={page.sourceEmailIds ?? []}
             />
             <BackgroundPanel pageId={page._id} />
+            <RelatedArticles pageId={page._id} />
             <Provenance page={page} />
           </div>
           {/* Right column (~30%) — reference cards: topics, images, links,
@@ -1125,6 +1126,82 @@ function DaydreamNoteCard({
  * any pages the entry was synthesized from. Always rendered for transparency
  * about data lineage even on hand-edited pages (the badge flips to "Human").
  */
+
+type RelatedPage = {
+  _id: string;
+  slug: string;
+  title: string;
+  summary: string;
+  heroImageUrl: string | null;
+  tags: string[];
+  updatedAt: string;
+  score: number;
+};
+
+/**
+ * "Related Articles" — up to 5 wiki pages with the highest cosine
+ * similarity to this page's embedding. The endpoint applies the
+ * floor (>= 0.55) so an empty list here means "nothing close
+ * enough", which is correct UX (better silent than misleading).
+ */
+function RelatedArticles({ pageId }: { pageId: string }) {
+  const api = useApi();
+  const { data, isLoading } = useQuery({
+    queryKey: ['page-related', pageId],
+    queryFn: () =>
+      api.get<{ related: RelatedPage[] }>(`/api/pages/${pageId}/related`),
+    staleTime: 5 * 60_000,
+  });
+  if (isLoading) return null;
+  const related = data?.related ?? [];
+  if (related.length === 0) return null;
+  return (
+    <section className="mt-6">
+      <h2 className="mb-2 text-xs font-semibold uppercase tracking-widest text-ink-500">
+        Related Articles
+      </h2>
+      <ul className="grid gap-2 sm:grid-cols-2">
+        {related.map((p) => (
+          <li key={p._id}>
+            <Link
+              to={`/p/${p.slug}`}
+              className="group flex h-full gap-3 rounded-lg border border-ink-200 p-3 transition-colors hover:border-rose-300 dark:border-ink-800 dark:hover:border-rose-800"
+            >
+              {p.heroImageUrl && (
+                <img
+                  src={p.heroImageUrl}
+                  alt=""
+                  className="h-16 w-16 shrink-0 rounded border border-ink-200 bg-ink-50 object-cover dark:border-ink-700 dark:bg-ink-900"
+                  onError={(e) => {
+                    (e.currentTarget as HTMLImageElement).style.display = 'none';
+                  }}
+                />
+              )}
+              <div className="min-w-0 flex-1">
+                <h3 className="font-serif text-sm font-semibold leading-snug group-hover:text-rose-700 dark:group-hover:text-rose-300">
+                  {p.title}
+                </h3>
+                {p.summary && (
+                  <p className="mt-0.5 line-clamp-2 text-xs text-ink-600 dark:text-ink-300">
+                    {p.summary}
+                  </p>
+                )}
+                {p.tags.length > 0 && (
+                  <div className="mt-1 flex flex-wrap gap-1 text-[10px] uppercase tracking-widest text-ink-400">
+                    {p.tags.slice(0, 3).map((t) => (
+                      <span key={t}>#{t}</span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 function Provenance({ page }: { page: PageDoc }) {
   const by = page.generatedBy ?? null;
   const model = page.generationModel ?? null;
