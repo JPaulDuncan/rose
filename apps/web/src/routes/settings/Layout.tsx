@@ -8,7 +8,6 @@ const TABS = [
   { to: 'newsletter', label: 'Newsletter' },
   { to: 'sources', label: 'Sources' },
   { to: 'ingest', label: 'Ingest' },
-  { to: 'senders', label: 'Senders' },
   { to: 'rules', label: 'Rules' },
   { to: 'recipes', label: 'Recipes' },
   { to: 'integrations', label: 'Integrations' },

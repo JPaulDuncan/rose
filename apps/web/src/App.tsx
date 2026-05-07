@@ -38,7 +38,6 @@ const PromoCodesPage = lazy(() => import('./routes/PromoCodes'));
 const SettingsLayout = lazy(() => import('./routes/settings/Layout'));
 const AccountSettings = lazy(() => import('./routes/settings/Account'));
 const SourcesSettings = lazy(() => import('./routes/settings/Sources'));
-const SendersSettings = lazy(() => import('./routes/settings/Senders'));
 const RulesSettings = lazy(() => import('./routes/settings/Rules'));
 const RecipesSettings = lazy(() => import('./routes/settings/Recipes'));
 const IntegrationsSettings = lazy(() => import('./routes/settings/Integrations'));
@@ -134,7 +133,13 @@ export default function App() {
           <Route index element={<Navigate to="account" replace />} />
           <Route path="account" element={<AccountSettings />} />
           <Route path="sources" element={<SourcesSettings />} />
-          <Route path="senders" element={<SendersSettings />} />
+          {/* Settings → Senders consolidated into Browse → Senders tab.
+              Keep an explicit redirect so old bookmarks land somewhere
+              useful rather than the catch-all home redirect. */}
+          <Route
+            path="senders"
+            element={<Navigate to="/browse?tab=senders" replace />}
+          />
           <Route path="rules" element={<RulesSettings />} />
           <Route path="recipes" element={<RecipesSettings />} />
           <Route path="integrations" element={<IntegrationsSettings />} />
