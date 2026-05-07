@@ -141,10 +141,19 @@ digestRouter.get('/', async (req, res) => {
     { label: 'Older', pages: [] },
   ];
   for (const p of allPages) {
-    const updated = new Date(p.updatedAt);
-    if (updated >= today) buckets[0]!.pages.push(p);
-    else if (updated >= yesterday) buckets[1]!.pages.push(p);
-    else if (updated >= thisWeek) buckets[2]!.pages.push(p);
+    // Bucket on the article's "as-of" date (the latest contributing
+    // email's received date), falling back to updatedAt only when the
+    // page is a legacy row from before articleDate was populated.
+    // Using updatedAt directly puts month-old articles into "Today"
+    // every time the worker touches them — entity extraction, merge,
+    // recategorise, daydream, etc. all bump updatedAt without changing
+    // the underlying story date.
+    const ref = new Date(
+      (p as { articleDate?: Date | null }).articleDate ?? p.updatedAt,
+    );
+    if (ref >= today) buckets[0]!.pages.push(p);
+    else if (ref >= yesterday) buckets[1]!.pages.push(p);
+    else if (ref >= thisWeek) buckets[2]!.pages.push(p);
     else buckets[3]!.pages.push(p);
   }
 
