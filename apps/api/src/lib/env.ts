@@ -43,6 +43,12 @@ export const env = {
   VAPID_PUBLIC_KEY: process.env.VAPID_PUBLIC_KEY ?? '',
   VAPID_PRIVATE_KEY: process.env.VAPID_PRIVATE_KEY ?? '',
   VAPID_SUBJECT: process.env.VAPID_SUBJECT ?? 'mailto:admin@rose.local',
+  /**
+   * Where to spool incoming GGUF uploads before pushing them to
+   * Ollama's blob endpoint. Defaults to the OS temp dir; override
+   * if /tmp doesn't have enough room for 10+ GB models.
+   */
+  GGUF_UPLOAD_DIR: process.env.GGUF_UPLOAD_DIR ?? '',
 } as const;
 
 export type Env = typeof env;

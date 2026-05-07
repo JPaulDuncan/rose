@@ -11,6 +11,7 @@ import {
   KeyRound,
   PlugZap,
   Trash2,
+  Upload,
   XCircle,
   Zap,
 } from 'lucide-react';
@@ -1134,15 +1135,18 @@ function OllamaCard({
       <div>
         <h3 className="mb-2 text-sm font-medium">Pull a model</h3>
         <p className="mb-2 text-xs text-ink-500">
-          Ollama refs (<code>llama3.1:8b-instruct</code>) or Hugging Face GGUF
-          (<code>unsloth/Qwen3.5-9B-GGUF</code> — auto-prefixed with{' '}
-          <code>hf.co/</code>).
+          Paste an Ollama tag (<code>qwen2.5:14b-instruct-q4_K_M</code>),
+          a Hugging Face shorthand (<code>Qwen/Qwen2.5-14B-Instruct-GGUF:Q4_K_M</code>),
+          or a full Hugging Face URL — including a direct file URL like{' '}
+          <code>https://huggingface.co/.../blob/main/model-q4_k_m.gguf</code>.
+          Casing is normalized for you (<code>Q4_K_M</code> and{' '}
+          <code>q4_k_m</code> both resolve).
         </p>
         <div className="flex gap-2">
           <input
             className="input"
             list="ollama-suggestions"
-            placeholder="llama3.1:8b-instruct or owner/repo-GGUF"
+            placeholder="model:tag, owner/repo, or huggingface.co URL"
             value={pullName}
             onChange={(e) => setPullName(e.target.value)}
             disabled={!!pullProgress}
@@ -1183,6 +1187,9 @@ function OllamaCard({
           </div>
         )}
       </div>
+
+      <UploadGgufRow />
+
 
       <div>
         <div className="mb-2 flex items-center justify-between">
@@ -1232,4 +1239,155 @@ function formatBytes(n: number): string {
     i += 1;
   }
   return `${v.toFixed(1)} ${units[i]}`;
+}
+
+/**
+ * "Upload .gguf" — for cases where the user has a custom model on
+ * disk (downloaded directly from HF, fine-tuned locally, etc.) and
+ * doesn't want to go through Ollama's pull. Uses XHR rather than
+ * fetch so we get upload-progress events; fetch can't do that.
+ */
+function UploadGgufRow() {
+  const qc = useQueryClient();
+  const { token } = useAuth();
+  const [file, setFile] = useState<File | null>(null);
+  const [name, setName] = useState('');
+  const [progress, setProgress] = useState<number | null>(null);
+  const [phase, setPhase] = useState<'idle' | 'uploading' | 'creating'>('idle');
+
+  function pickFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0] ?? null;
+    setFile(f);
+    if (f && !name) {
+      // Default the model name to the filename without extension,
+      // lowercased — matches the Ollama tag convention.
+      const base = f.name.replace(/\.gguf$/i, '').toLowerCase();
+      setName(base);
+    }
+  }
+
+  function startUpload() {
+    if (!file || !name.trim()) return;
+    if (!/\.gguf$/i.test(file.name)) {
+      toast.error('File must be a .gguf');
+      return;
+    }
+    const xhr = new XMLHttpRequest();
+    const fd = new FormData();
+    fd.append('name', name.trim());
+    fd.append('file', file);
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) {
+        setProgress(Math.round((e.loaded / e.total) * 100));
+      }
+    };
+    xhr.upload.onload = () => {
+      // Upload done — the server is now hashing + creating the
+      // model. We can't see that progress (fetch streams it but XHR
+      // doesn't surface response events for the same request well).
+      setPhase('creating');
+      setProgress(null);
+    };
+    xhr.onload = () => {
+      setPhase('idle');
+      setProgress(null);
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try {
+          const r = JSON.parse(xhr.responseText) as { ok: true; model: string };
+          toast.success(`Imported ${r.model}`);
+        } catch {
+          toast.success('Imported');
+        }
+        setFile(null);
+        setName('');
+        qc.invalidateQueries({ queryKey: ['ollama-models'] });
+      } else {
+        try {
+          const r = JSON.parse(xhr.responseText) as { message?: string };
+          toast.error(r.message ?? `Upload failed (${xhr.status})`);
+        } catch {
+          toast.error(`Upload failed (${xhr.status})`);
+        }
+      }
+    };
+    xhr.onerror = () => {
+      setPhase('idle');
+      setProgress(null);
+      toast.error('Upload failed (network)');
+    };
+    xhr.open('POST', '/api/models/upload');
+    if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+    xhr.send(fd);
+    setPhase('uploading');
+    setProgress(0);
+  }
+
+  const busy = phase !== 'idle';
+  return (
+    <div>
+      <h3 className="mb-2 text-sm font-medium">Upload a model</h3>
+      <p className="mb-2 text-xs text-ink-500">
+        Already have a <code>.gguf</code> on disk? Upload it directly. The
+        file is hashed and pushed to Ollama as a blob, then registered under
+        the name you choose.
+      </p>
+      <div className="flex flex-wrap items-center gap-2">
+        <label
+          className={
+            'btn-secondary cursor-pointer ' + (busy ? 'pointer-events-none opacity-50' : '')
+          }
+        >
+          <Upload className="h-4 w-4" />
+          {file ? 'Change file' : 'Choose .gguf'}
+          <input
+            type="file"
+            accept=".gguf,application/octet-stream"
+            className="hidden"
+            onChange={pickFile}
+            disabled={busy}
+          />
+        </label>
+        {file && (
+          <span className="text-xs text-ink-500">
+            <code>{file.name}</code> · {formatBytes(file.size)}
+          </span>
+        )}
+        <input
+          className="input flex-1"
+          placeholder="model name (e.g. qwen-14b-mine)"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          disabled={busy}
+        />
+        <button
+          className="btn-primary"
+          onClick={startUpload}
+          disabled={!file || !name.trim() || busy}
+        >
+          <Upload className="h-4 w-4" />
+          Import
+        </button>
+      </div>
+      {phase === 'uploading' && progress != null && (
+        <div className="mt-2 rounded-lg border border-ink-200 bg-ink-50 p-2 text-xs dark:border-ink-800 dark:bg-ink-900">
+          <div className="flex items-center justify-between">
+            <span>Uploading…</span>
+            <span>{progress}%</span>
+          </div>
+          <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-ink-200 dark:bg-ink-800">
+            <div
+              className="h-full bg-rose-500 transition-all"
+              style={{ width: `${progress}%` }}
+            />
+          </div>
+        </div>
+      )}
+      {phase === 'creating' && (
+        <div className="mt-2 flex items-center gap-2 rounded-lg border border-ink-200 bg-ink-50 p-2 text-xs dark:border-ink-800 dark:bg-ink-900">
+          <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-rose-500" />
+          Hashing + registering with Ollama… (one-time, can take a minute on big models)
+        </div>
+      )}
+    </div>
+  );
 }
