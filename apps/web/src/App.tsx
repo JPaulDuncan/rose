@@ -33,6 +33,7 @@ const SavePage = lazy(() => import('./routes/Save'));
 const FavoritesPage = lazy(() => import('./routes/Favorites'));
 const LibraryPage = lazy(() => import('./routes/Library'));
 const ShipmentsPage = lazy(() => import('./routes/Shipments'));
+const PromoCodesPage = lazy(() => import('./routes/PromoCodes'));
 
 const SettingsLayout = lazy(() => import('./routes/settings/Layout'));
 const AccountSettings = lazy(() => import('./routes/settings/Account'));
@@ -127,6 +128,7 @@ export default function App() {
         <Route path="/favorites" element={<FavoritesPage />} />
         <Route path="/library" element={<LibraryPage />} />
         <Route path="/shipments" element={<ShipmentsPage />} />
+        <Route path="/promo-codes" element={<PromoCodesPage />} />
         <Route path="/settings" element={<SettingsLayout />}>
           <Route index element={<Navigate to="account" replace />} />
           <Route path="account" element={<AccountSettings />} />

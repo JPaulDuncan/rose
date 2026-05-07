@@ -17,6 +17,7 @@ import {
   CloudSun,
   MoonStar,
   Package,
+  Tag as TagIcon,
 } from 'lucide-react';
 import { useApi } from '../lib/api';
 
@@ -90,6 +91,9 @@ export function CommandPalette({
               </Command.Item>
               <Command.Item onSelect={() => go('/shipments')}>
                 <Package className="h-4 w-4" /> Shipment Statuses
+              </Command.Item>
+              <Command.Item onSelect={() => go('/promo-codes')}>
+                <TagIcon className="h-4 w-4" /> Promotional Codes
               </Command.Item>
               <Command.Item onSelect={() => go('/quarantine')}>
                 <ShieldAlert className="h-4 w-4" /> Quarantine

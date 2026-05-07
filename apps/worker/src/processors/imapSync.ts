@@ -8,6 +8,7 @@ import { redis } from '../lib/redis.js';
 import { logger } from '../lib/logger.js';
 import { emitRecipeEvent } from '../lib/recipeEmit.js';
 import { detectShipmentsForEmail } from '../shipments/upsert.js';
+import { detectPromoCodesForEmail } from '@rose/promo-codes';
 import type { ImapConfig } from '@rose/shared';
 
 const QUEUE = 'rose.imap-sync';
@@ -162,6 +163,11 @@ export function startImapSyncWorker() {
                 await detectShipmentsForEmail(String(created._id));
               } catch (err) {
                 logger.warn({ err, emailId: String(created._id) }, 'shipment detection failed');
+              }
+              try {
+                await detectPromoCodesForEmail(String(created._id));
+              } catch (err) {
+                logger.warn({ err, emailId: String(created._id) }, 'promo-code detection failed');
               }
               ingested += 1;
             } catch (perMsgErr) {

@@ -1,0 +1,32 @@
+{
+  "name": "@rose/promo-codes",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit",
+    "lint": "echo 'no-op'",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@rose/db": "workspace:*",
+    "@rose/email-parser": "workspace:*",
+    "mongoose": "^8.8.0",
+    "pino": "^9.5.0"
+  },
+  "devDependencies": {
+    "@rose/config": "workspace:*",
+    "@types/node": "^22.7.5",
+    "typescript": "^5.6.3"
+  }
+}

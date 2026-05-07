@@ -17,6 +17,7 @@
     "@rose/db": "workspace:*",
     "@rose/email-parser": "workspace:*",
     "@rose/llm": "workspace:*",
+    "@rose/promo-codes": "workspace:*",
     "@rose/shared": "workspace:*",
     "@rose/shipments": "workspace:*",
     "bullmq": "^5.21.2",

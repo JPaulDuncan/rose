@@ -32,6 +32,9 @@ importers:
       '@rose/llm':
         specifier: workspace:*
         version: link:../../packages/llm
+      '@rose/promo-codes':
+        specifier: workspace:*
+        version: link:../../packages/promo-codes
       '@rose/shared':
         specifier: workspace:*
         version: link:../../packages/shared
@@ -244,6 +247,9 @@ importers:
       '@rose/llm':
         specifier: workspace:*
         version: link:../../packages/llm
+      '@rose/promo-codes':
+        specifier: workspace:*
+        version: link:../../packages/promo-codes
       '@rose/shared':
         specifier: workspace:*
         version: link:../../packages/shared
@@ -372,6 +378,31 @@ importers:
       zod:
         specifier: ^3.23.8
         version: 3.25.76
+    devDependencies:
+      '@rose/config':
+        specifier: workspace:*
+        version: link:../config
+      '@types/node':
+        specifier: ^22.7.5
+        version: 22.19.17
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+
+  packages/promo-codes:
+    dependencies:
+      '@rose/db':
+        specifier: workspace:*
+        version: link:../db
+      '@rose/email-parser':
+        specifier: workspace:*
+        version: link:../email-parser
+      mongoose:
+        specifier: ^8.8.0
+        version: 8.23.1(socks@2.8.8)
+      pino:
+        specifier: ^9.5.0
+        version: 9.14.0
     devDependencies:
       '@rose/config':
         specifier: workspace:*

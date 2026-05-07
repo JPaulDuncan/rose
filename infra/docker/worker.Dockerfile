@@ -11,6 +11,7 @@ COPY packages/db/package.json ./packages/db/
 COPY packages/email-parser/package.json ./packages/email-parser/
 COPY packages/llm/package.json ./packages/llm/
 COPY packages/shipments/package.json ./packages/shipments/
+COPY packages/promo-codes/package.json ./packages/promo-codes/
 COPY apps/worker/package.json ./apps/worker/
 RUN pnpm install --frozen-lockfile
 
@@ -22,6 +23,7 @@ RUN pnpm --filter @rose/shared build \
  && pnpm --filter @rose/email-parser build \
  && pnpm --filter @rose/llm build \
  && pnpm --filter @rose/shipments build \
+ && pnpm --filter @rose/promo-codes build \
  && pnpm --filter @rose/worker build
 
 FROM node:${NODE_VERSION} AS runner

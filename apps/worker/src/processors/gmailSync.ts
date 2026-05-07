@@ -9,6 +9,7 @@ import { env } from '../lib/env.js';
 import { logger } from '../lib/logger.js';
 import { emitRecipeEvent } from '../lib/recipeEmit.js';
 import { detectShipmentsForEmail } from '../shipments/upsert.js';
+import { detectPromoCodesForEmail } from '@rose/promo-codes';
 
 const QUEUE = 'rose.gmail-sync';
 const generateQueue = new Queue('rose.generate-page', { connection: redis });
@@ -131,6 +132,11 @@ export function startGmailSyncWorker() {
           await detectShipmentsForEmail(String(created._id));
         } catch (err) {
           logger.warn({ err, emailId: String(created._id) }, 'shipment detection failed');
+        }
+        try {
+          await detectPromoCodesForEmail(String(created._id));
+        } catch (err) {
+          logger.warn({ err, emailId: String(created._id) }, 'promo-code detection failed');
         }
       }
       source.lastSyncAt = new Date();

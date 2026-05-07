@@ -16,6 +16,7 @@
     "@rose/db": "workspace:*",
     "@rose/email-parser": "workspace:*",
     "@rose/llm": "workspace:*",
+    "@rose/promo-codes": "workspace:*",
     "@rose/shared": "workspace:*",
     "@rose/shipments": "workspace:*",
     "argon2": "^0.41.1",
