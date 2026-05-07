@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { Types } from 'mongoose';
 import { z } from 'zod';
-import { User } from '@rose/db';
+import { User, WeatherSnapshot } from '@rose/db';
 import { webFetchJson } from '@rose/llm';
 import { userIdOf } from '../middleware/auth.js';
 import { validateBody } from '../middleware/validate.js';
@@ -402,12 +402,45 @@ weatherRouter.get('/', async (req, res, next) => {
       { lat: loc.lat, lon: loc.lon, label: loc.label },
       periods,
     );
+    const fetchedAtTs = Date.now();
     briefCache.set(cacheKey, {
-      fetchedAt: Date.now(),
+      fetchedAt: fetchedAtTs,
       current,
       periods,
       brief,
     });
+    // Persist a snapshot for the trend chart on /weather. Globally
+    // shared (rounded lat/lon dedupes concurrent users on the same
+    // point) and fire-and-forget so a transient Mongo blip doesn't
+    // sink the response.
+    if (current) {
+      const lat3 = roundCoord(loc.lat);
+      const lon3 = roundCoord(loc.lon);
+      void WeatherSnapshot.updateOne(
+        { lat: lat3, lon: lon3, fetchedAt: new Date(fetchedAtTs) },
+        {
+          $setOnInsert: {
+            lat: lat3,
+            lon: lon3,
+            fetchedAt: new Date(fetchedAtTs),
+            label: loc.label,
+            temperature: current.temperature,
+            temperatureUnit: current.temperatureUnit,
+            shortForecast: current.shortForecast,
+            windSpeed: current.windSpeed ?? '',
+            windDirection: current.windDirection ?? '',
+            isDaytime: current.isDaytime,
+            icon: current.icon ?? null,
+            startTime: current.startTime ? new Date(current.startTime) : null,
+            endTime: current.endTime ? new Date(current.endTime) : null,
+          },
+          $set: { label: loc.label },
+        },
+        { upsert: true },
+      ).catch((err) => {
+        logger.warn({ err, lat: lat3, lon: lon3 }, 'weather: snapshot upsert failed');
+      });
+    }
     res.json({
       configured: true,
       location: shape(loc),
@@ -415,10 +448,68 @@ weatherRouter.get('/', async (req, res, next) => {
       current,
       periods: periods.slice(0, 4),
       brief,
-      fetchedAt: new Date().toISOString(),
+      fetchedAt: new Date(fetchedAtTs).toISOString(),
       cached: false,
     });
   } catch (err) {
     next(err);
   }
+});
+
+/** 3 d.p. ≈ 110 m. Rounding here matches the snapshot's stored key
+ *  so the same physical point dedupes across users / minor jitter. */
+function roundCoord(n: number): number {
+  return Math.round(n * 1000) / 1000;
+}
+
+/**
+ * Snapshot history for a saved location, ordered oldest-first so the
+ * SPA can drop the array straight into a chart. Caps at 1000 points
+ * per request — a 30-minute poll cadence over a year is ~17,500, so
+ * the SPA should pass `from`/`to` for ranges deeper than ~3 weeks.
+ *
+ * Returns `[]` when the location id isn't recognised (so the SPA
+ * can render an empty-state without a 404 round-trip).
+ */
+weatherRouter.get('/history', async (req, res) => {
+  const userId = new Types.ObjectId(userIdOf(req));
+  const id = ((req.query.id as string | undefined) ?? '').trim();
+  const fromQ = (req.query.from as string | undefined) ?? '';
+  const toQ = (req.query.to as string | undefined) ?? '';
+  const user = await User.findById(userId).select('weatherLocations').lean();
+  const locations = (user?.weatherLocations as unknown as StoredLocation[]) ?? [];
+  const loc = pickLocation(locations, id || null);
+  if (!loc) {
+    res.json({ snapshots: [] });
+    return;
+  }
+  const lat3 = roundCoord(loc.lat);
+  const lon3 = roundCoord(loc.lon);
+  const filter: Record<string, unknown> = { lat: lat3, lon: lon3 };
+  const range: Record<string, Date> = {};
+  if (fromQ) {
+    const d = new Date(fromQ);
+    if (!Number.isNaN(d.getTime())) range.$gte = d;
+  }
+  if (toQ) {
+    const d = new Date(toQ);
+    if (!Number.isNaN(d.getTime())) range.$lte = d;
+  }
+  if (Object.keys(range).length) filter.fetchedAt = range;
+  const rows = await WeatherSnapshot.find(filter)
+    .sort({ fetchedAt: 1 })
+    .limit(1000)
+    .lean();
+  res.json({
+    location: shape(loc),
+    snapshots: rows.map((r) => ({
+      fetchedAt: r.fetchedAt instanceof Date ? r.fetchedAt.toISOString() : r.fetchedAt,
+      temperature: r.temperature,
+      temperatureUnit: r.temperatureUnit,
+      shortForecast: r.shortForecast,
+      windSpeed: r.windSpeed,
+      isDaytime: r.isDaytime,
+      icon: r.icon ?? null,
+    })),
+  });
 });

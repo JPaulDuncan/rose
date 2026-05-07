@@ -58,4 +58,6 @@ export {
 export type { TagCanonicalDoc } from './models/TagCanonical.js';
 export { Entity, ENTITY_TYPES, daydreamSubjectKey } from './models/Entity.js';
 export type { EntityDoc, EntityType } from './models/Entity.js';
+export { WeatherSnapshot } from './models/WeatherSnapshot.js';
+export type { WeatherSnapshotDoc } from './models/WeatherSnapshot.js';
 export { uniqueSlug } from './util/uniqueSlug.js';

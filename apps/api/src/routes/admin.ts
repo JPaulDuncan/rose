@@ -6,6 +6,7 @@ import {
   Category,
   Conversation,
   DaydreamNote,
+  WeatherSnapshot,
   Email,
   Entity,
   LibraryDocument,
@@ -89,6 +90,14 @@ const SCOPES: Scope[] = [
     description:
       'Brand-global names, logos, and "who is this" briefs. Affects every user; the worker rebuilds these from incoming mail.',
     run: () => deleteAllAndReport(SenderBrand),
+  },
+  {
+    id: 'weather-snapshots',
+    group: 'global',
+    label: 'Weather snapshots',
+    description:
+      'Per-fetch weather observations that drive the trend chart on /weather. Dropping these resets the chart; new data accumulates as the home weather panel polls.',
+    run: () => deleteAllAndReport(WeatherSnapshot),
   },
 
   // ── Content (all users) ────────────────────────────────────

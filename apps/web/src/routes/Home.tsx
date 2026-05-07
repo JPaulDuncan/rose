@@ -1242,13 +1242,20 @@ function WeatherCard({ compact = false }: { compact?: boolean }) {
   if (compact) {
     return (
       <section className={wrapper}>
-        <div className="flex flex-col gap-2 p-3">
+        {/* The card body is a Link to the full weather page. The
+            location-switcher chips below are siblings (not children
+            of the link) so chip clicks don't trigger navigation. */}
+        <Link
+          to={`/weather?id=${encodeURIComponent(ok.location.id)}`}
+          className="block p-3 transition-colors hover:bg-white/40 dark:hover:bg-ink-900/40"
+          title="Open the full weather page"
+        >
           <div className="flex items-center gap-2 text-[10px] uppercase tracking-widest text-ink-500">
             <CloudSun className="h-3.5 w-3.5 text-rose-500" />
             <span className="truncate">Weather · {ok.location.label}</span>
           </div>
           {cur && (
-            <div className="flex items-center gap-2">
+            <div className="mt-2 flex items-center gap-2">
               {cur.icon && (
                 <img
                   src={cur.icon}
@@ -1268,7 +1275,7 @@ function WeatherCard({ compact = false }: { compact?: boolean }) {
             </div>
           )}
           {ok.periods.length > 1 && (
-            <ul className="space-y-0.5 text-xs text-ink-500">
+            <ul className="mt-2 space-y-0.5 text-xs text-ink-500">
               {ok.periods.slice(1, 4).map((p: WeatherPeriod) => (
                 <li key={p.number} className="flex items-baseline justify-between gap-2">
                   <span className="truncate font-medium text-ink-700 dark:text-ink-200">
@@ -1281,30 +1288,30 @@ function WeatherCard({ compact = false }: { compact?: boolean }) {
               ))}
             </ul>
           )}
-          {ok.locations && ok.locations.length > 1 && (
-            <div className="flex flex-wrap gap-1 pt-1">
-              {ok.locations.map((l) => {
-                const isActive = l.id === ok.location.id;
-                return (
-                  <button
-                    key={l.id}
-                    type="button"
-                    onClick={() => setActiveId(l.id)}
-                    className={
-                      'rounded-full px-2 py-0.5 text-[10px] transition-colors ' +
-                      (isActive
-                        ? 'bg-rose-600 text-white'
-                        : 'bg-white/70 text-ink-700 hover:bg-white dark:bg-ink-900/70 dark:text-ink-200 dark:hover:bg-ink-900')
-                    }
-                    title={l.label}
-                  >
-                    {l.label.split(',')[0]}
-                  </button>
-                );
-              })}
-            </div>
-          )}
-        </div>
+        </Link>
+        {ok.locations && ok.locations.length > 1 && (
+          <div className="flex flex-wrap gap-1 px-3 pb-3">
+            {ok.locations.map((l) => {
+              const isActive = l.id === ok.location.id;
+              return (
+                <button
+                  key={l.id}
+                  type="button"
+                  onClick={() => setActiveId(l.id)}
+                  className={
+                    'rounded-full px-2 py-0.5 text-[10px] transition-colors ' +
+                    (isActive
+                      ? 'bg-rose-600 text-white'
+                      : 'bg-white/70 text-ink-700 hover:bg-white dark:bg-ink-900/70 dark:text-ink-200 dark:hover:bg-ink-900')
+                  }
+                  title={l.label}
+                >
+                  {l.label.split(',')[0]}
+                </button>
+              );
+            })}
+          </div>
+        )}
       </section>
     );
   }
