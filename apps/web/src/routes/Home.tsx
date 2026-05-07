@@ -17,6 +17,7 @@ import {
   Plus,
   X,
   MapPin as MapPinIcon,
+  CloudSun,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { moonPhase, MOON_PHASE_LABEL } from '@rose/shared';
@@ -167,7 +168,6 @@ export default function HomePage() {
         stats={data.stats}
         showMoonPhase={!!data.showMoonPhases}
       />
-      <WeatherCard />
 
       {/* 20/60/20 newspaper layout via a 5-column grid with explicit
           col-spans. Stacks to a single column at <lg so the rails
@@ -192,6 +192,7 @@ export default function HomePage() {
         </div>
 
         <aside className="space-y-6 lg:col-span-1">
+          <WeatherCard compact />
           <UpcomingEvents />
           <Sidebar
             topSenders={data.topSenders}
@@ -427,32 +428,35 @@ function TopStories({ lead }: { lead: DigestPage }) {
 function HeroLead({ page }: { page: DigestPage }) {
   return (
     <Link to={`/p/${page.slug}`} className="group block">
-      {page.heroImageUrl ? (
-        <div className="overflow-hidden rounded-md border border-ink-200 bg-ink-50 dark:border-ink-800 dark:bg-ink-900">
-          <SafeImage
-            src={page.heroImageUrl}
-            alt={page.title}
-            className="aspect-[16/9] w-full object-cover transition-transform duration-300 group-hover:scale-[1.02]"
-          />
-        </div>
-      ) : null}
-      <div className={page.heroImageUrl ? 'mt-4' : ''}>
-        <Eyebrow page={page} size="md" />
-        <h1 className="mt-2 font-serif text-5xl font-black leading-[1.05] tracking-tight text-ink-900 group-hover:text-rose-700 dark:text-ink-50 dark:group-hover:text-rose-300">
-          {page.title}
-        </h1>
-        <p className="mt-3 text-lg leading-relaxed text-ink-700 first-letter:font-serif first-letter:text-4xl first-letter:font-bold first-letter:leading-none first-letter:mr-1.5 first-letter:float-left first-letter:mt-1 dark:text-ink-200">
-          {page.summary}
-        </p>
-        <div className="mt-3">
-          <Byline page={page} size="md" />
-        </div>
-        {page.pullQuote && (
-          <blockquote className="mt-5 border-l-4 border-rose-500 pl-4 font-serif text-xl italic leading-snug text-ink-800 dark:border-rose-400 dark:text-ink-100">
-            “{page.pullQuote}”
-          </blockquote>
-        )}
+      <Eyebrow page={page} size="md" />
+      <h1 className="mt-2 font-serif text-5xl font-black leading-[1.05] tracking-tight text-ink-900 group-hover:text-rose-700 dark:text-ink-50 dark:group-hover:text-rose-300">
+        {page.title}
+      </h1>
+      <div className="mt-3">
+        <Byline page={page} size="md" />
       </div>
+      {/* Float the hero left so the lede prose wraps around it like a
+          newspaper article. Native aspect ratio preserved (no
+          object-cover crop, no forced 16:9). On the smallest screens
+          we drop the float so the image stacks above the text. */}
+      {page.heroImageUrl ? (
+        <SafeImage
+          src={page.heroImageUrl}
+          alt={page.title}
+          className="mt-4 block w-full max-w-full rounded-md border border-ink-200 bg-ink-50 transition-transform duration-300 group-hover:scale-[1.01] dark:border-ink-800 dark:bg-ink-900 sm:float-left sm:mr-5 sm:mt-1 sm:w-1/2 sm:max-w-[420px]"
+        />
+      ) : null}
+      <p className="mt-3 text-lg leading-relaxed text-ink-700 first-letter:font-serif first-letter:text-4xl first-letter:font-bold first-letter:leading-none first-letter:mr-1.5 first-letter:float-left first-letter:mt-1 dark:text-ink-200">
+        {page.summary}
+      </p>
+      {page.pullQuote && (
+        <blockquote className="mt-5 border-l-4 border-rose-500 pl-4 font-serif text-xl italic leading-snug text-ink-800 dark:border-rose-400 dark:text-ink-100">
+          “{page.pullQuote}”
+        </blockquote>
+      )}
+      {/* Clear the float so any sibling sections below don't tuck under
+          the still-flowing image when the summary is short. */}
+      <div className="clear-both" />
     </Link>
   );
 }
@@ -1178,7 +1182,7 @@ type WeatherErr = { configured: true; error: string; message?: string };
 type WeatherUnconfigured = { configured: false };
 type Weather = WeatherUnconfigured | WeatherOk | WeatherErr;
 
-function WeatherCard() {
+function WeatherCard({ compact = false }: { compact?: boolean }) {
   const api = useApi();
   // Selected location id; null = use the user's primary (server picks).
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -1192,9 +1196,21 @@ function WeatherCard() {
     staleTime: 5 * 60_000,
   });
 
+  // The right-rail "compact" variant drops the wide-format margins and
+  // the side-by-side icon layout — everything stacks vertically in a
+  // narrow column. The full-bleed variant is preserved for callers
+  // that still want it (none today, but the prop keeps the option).
+  const wrapper = compact
+    ? 'overflow-hidden rounded-xl border border-ink-200 bg-gradient-to-br from-sky-50 via-white to-rose-50 dark:border-ink-800 dark:from-sky-950/30 dark:via-ink-900 dark:to-rose-950/20'
+    : '-mt-4 mb-8 overflow-hidden rounded-xl border border-ink-200 bg-gradient-to-r from-sky-50 via-white to-rose-50 dark:border-ink-800 dark:from-sky-950/30 dark:via-ink-900 dark:to-rose-950/20';
+
   if (!data || data.configured === false) {
     return (
-      <div className="-mt-4 mb-8 rounded-xl border border-dashed border-ink-300 px-4 py-3 text-xs text-ink-500 dark:border-ink-700">
+      <div className={
+        compact
+          ? 'rounded-xl border border-dashed border-ink-300 px-3 py-2.5 text-xs text-ink-500 dark:border-ink-700'
+          : '-mt-4 mb-8 rounded-xl border border-dashed border-ink-300 px-4 py-3 text-xs text-ink-500 dark:border-ink-700'
+      }>
         Set your location in{' '}
         <Link
           to="/settings/newsletter"
@@ -1210,7 +1226,11 @@ function WeatherCard() {
   if (data.error) {
     const err = data as WeatherErr;
     return (
-      <div className="-mt-4 mb-8 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-xs text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100">
+      <div className={
+        compact
+          ? 'rounded-xl border border-amber-300 bg-amber-50 px-3 py-2.5 text-xs text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100'
+          : '-mt-4 mb-8 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-xs text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100'
+      }>
         Weather temporarily unavailable: {err.message ?? err.error}
       </div>
     );
@@ -1218,8 +1238,79 @@ function WeatherCard() {
 
   const ok = data as WeatherOk;
   const cur = ok.current;
+
+  if (compact) {
+    return (
+      <section className={wrapper}>
+        <div className="flex flex-col gap-2 p-3">
+          <div className="flex items-center gap-2 text-[10px] uppercase tracking-widest text-ink-500">
+            <CloudSun className="h-3.5 w-3.5 text-rose-500" />
+            <span className="truncate">Weather · {ok.location.label}</span>
+          </div>
+          {cur && (
+            <div className="flex items-center gap-2">
+              {cur.icon && (
+                <img
+                  src={cur.icon}
+                  alt={cur.shortForecast}
+                  className="h-10 w-10 shrink-0 rounded border border-ink-200 bg-white object-cover dark:border-ink-700"
+                  referrerPolicy="no-referrer"
+                />
+              )}
+              <div className="min-w-0 flex-1">
+                <div className="font-serif text-2xl font-bold leading-none tracking-tight">
+                  {cur.temperature}°{cur.temperatureUnit}
+                </div>
+                <div className="mt-0.5 truncate text-xs text-ink-700 dark:text-ink-200">
+                  {cur.shortForecast}
+                </div>
+              </div>
+            </div>
+          )}
+          {ok.periods.length > 1 && (
+            <ul className="space-y-0.5 text-xs text-ink-500">
+              {ok.periods.slice(1, 4).map((p: WeatherPeriod) => (
+                <li key={p.number} className="flex items-baseline justify-between gap-2">
+                  <span className="truncate font-medium text-ink-700 dark:text-ink-200">
+                    {p.name}
+                  </span>
+                  <span className="shrink-0 tabular-nums">
+                    {p.temperature}°
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+          {ok.locations && ok.locations.length > 1 && (
+            <div className="flex flex-wrap gap-1 pt-1">
+              {ok.locations.map((l) => {
+                const isActive = l.id === ok.location.id;
+                return (
+                  <button
+                    key={l.id}
+                    type="button"
+                    onClick={() => setActiveId(l.id)}
+                    className={
+                      'rounded-full px-2 py-0.5 text-[10px] transition-colors ' +
+                      (isActive
+                        ? 'bg-rose-600 text-white'
+                        : 'bg-white/70 text-ink-700 hover:bg-white dark:bg-ink-900/70 dark:text-ink-200 dark:hover:bg-ink-900')
+                    }
+                    title={l.label}
+                  >
+                    {l.label.split(',')[0]}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </section>
+    );
+  }
+
   return (
-    <section className="-mt-4 mb-8 overflow-hidden rounded-xl border border-ink-200 bg-gradient-to-r from-sky-50 via-white to-rose-50 dark:border-ink-800 dark:from-sky-950/30 dark:via-ink-900 dark:to-rose-950/20">
+    <section className={wrapper}>
       <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center">
         {cur?.icon && (
           <img
