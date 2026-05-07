@@ -162,13 +162,17 @@ export default function HomePage() {
     <div className="mx-auto w-full max-w-7xl px-6 py-10">
       <Masthead edition={data.edition} stats={data.stats} />
 
-      {/* 90 / 10 two-panel layout. Stacks to a single column at <lg so
-          the right rail flows naturally below the body on mobile.
-          The right rail is `sticky` from below the top bar, so the
-          left column scrolls independently while pinned widgets stay
-          visible. items-start prevents the grid from stretching the
-          aside to match the main column's height. */}
-      <div className="mt-10 grid items-start gap-6 lg:grid-cols-[90fr_10fr]">
+      {/* Two-panel layout: main column flexes, right rail is a fixed
+          300 px so the moon / weather / upcoming widgets stay
+          legible regardless of viewport. (Pure 90/10 was tried and
+          left the rail too narrow to fit the weather card.) Stacks
+          to a single column at <lg so the rail flows naturally
+          below the body on mobile. The right rail is `sticky` from
+          below the top bar, so the left column scrolls independently
+          while pinned widgets stay visible. items-start prevents the
+          grid from stretching the aside to match the main column's
+          height. */}
+      <div className="mt-10 grid items-start gap-6 lg:grid-cols-[1fr_300px]">
         <div className="min-w-0 space-y-10">
           {data.topStories && data.topStories.lead && (
             <TopStories lead={data.topStories.lead} />
