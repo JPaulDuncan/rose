@@ -81,10 +81,19 @@ digestRouter.get('/', async (req, res) => {
     .lean()) as
     | {
         featuredTags?: string[];
-        settings?: { hidePromotions?: boolean; showMoonPhases?: boolean };
+        settings?: {
+          hidePromotions?: boolean;
+          showMoonPhases?: boolean;
+          trendingBlocklist?: string[];
+        };
       }
     | null;
   const hidePromotions = !includePromotions && userPrefs?.settings?.hidePromotions !== false;
+  // Lowercased lookup so case differences in `Page.topics` don't
+  // sneak boilerplate like "Unsubscribe" past the filter.
+  const trendingBlocklist = new Set(
+    (userPrefs?.settings?.trendingBlocklist ?? []).map((t) => t.toLowerCase()),
+  );
 
   const filter: Record<string, unknown> = { userId };
   if (!includeSpam) {
@@ -235,7 +244,11 @@ digestRouter.get('/', async (req, res) => {
       };
     }
   }
+  // Drop user-muted topics before slicing so the trending card
+  // always shows 12 *signal* entries — muting `unsubscribe` shouldn't
+  // leave a hole, it should let the next-most-popular topic surface.
   const topTopics = [...topicCounts.entries()]
+    .filter(([topic]) => !trendingBlocklist.has(topic.toLowerCase()))
     .sort((a, b) => b[1] - a[1])
     .slice(0, 12)
     .map(([topic, count]) => ({ topic, count }));

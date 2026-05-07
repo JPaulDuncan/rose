@@ -817,6 +817,7 @@ function Sidebar({
   topTopics: Digest['topTopics'];
 }) {
   const api = useApi();
+  const qc = useQueryClient();
   // Hide the "Connect a source" CTA once the user has at least one
   // source connected; it's a first-run nudge, not a permanent slot.
   const { data: sources } = useQuery({
@@ -824,6 +825,18 @@ function Sidebar({
     queryFn: () => api.get<{ sources: { _id: string }[] }>('/api/sources'),
   });
   const hasAnySource = (sources?.sources?.length ?? 0) > 0;
+
+  const mute = useMutation({
+    mutationFn: async (topic: string) =>
+      api.post<{ ok: true }>('/api/me/trending/mute', { topic }),
+    onSuccess: (_r, topic) => {
+      toast.success(`Muted "${topic}" from Trending — manage in Settings → Tags`);
+      void qc.invalidateQueries({ queryKey: ['digest'] });
+      void qc.invalidateQueries({ queryKey: ['me'] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
   return (
     <>
       {topTopics.length > 0 && (
@@ -834,16 +847,38 @@ function Sidebar({
           </div>
           <div className="flex flex-wrap gap-1.5">
             {topTopics.map((t) => (
-              <Link
+              <span
                 key={t.topic}
-                to={`/t/${encodeURIComponent(t.topic)}`}
-                className="pill text-[11px] hover:bg-rose-100 hover:text-rose-800 dark:hover:bg-rose-950/40 dark:hover:text-rose-300"
+                className="group inline-flex items-center rounded-full bg-ink-100 text-[11px] dark:bg-ink-800"
               >
-                {t.topic}
-                <span className="ml-1 text-ink-400">{t.count}</span>
-              </Link>
+                <Link
+                  to={`/t/${encodeURIComponent(t.topic)}`}
+                  className="px-2 py-0.5 hover:text-rose-800 dark:hover:text-rose-300"
+                >
+                  {t.topic}
+                  <span className="ml-1 text-ink-400">{t.count}</span>
+                </Link>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    mute.mutate(t.topic);
+                  }}
+                  className="rounded-r-full px-1.5 py-0.5 text-ink-400 opacity-0 transition-opacity hover:text-rose-600 group-hover:opacity-100"
+                  aria-label={`Mute ${t.topic} from Trending`}
+                  title="Mute from Trending"
+                  disabled={mute.isPending}
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </span>
             ))}
           </div>
+          <p className="mt-2 text-[10px] text-ink-400">
+            Hover a topic to mute it from Trending. Manage muted topics in
+            Settings → Tags.
+          </p>
         </div>
       )}
 

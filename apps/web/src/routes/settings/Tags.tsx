@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Tag as TagIcon,
   Pencil,
@@ -10,6 +10,8 @@ import {
   X as XIcon,
   Search as SearchIcon,
   AlertTriangle,
+  TrendingUp,
+  Plus,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useApi } from '../../lib/api';
@@ -96,6 +98,9 @@ export default function TagsSettings() {
           corpus.
         </p>
       </div>
+
+      <TrendingMutes />
+
 
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-semibold text-ink-700 dark:text-ink-200">
@@ -354,5 +359,115 @@ function TagRow({
         <Pencil className="h-3.5 w-3.5" />
       </button>
     </li>
+  );
+}
+
+/**
+ * Manage which topics can surface in Home → Trending. Reads
+ * `settings.trendingBlocklist` from /api/me; mutates via the
+ * single-topic /api/me/trending/{mute,unmute} endpoints so toggle
+ * actions stay race-free even if the user double-clicks. Free-text
+ * input lets the user pre-emptively mute boilerplate ("unsubscribe",
+ * "privacy-policy", "help") before it ever shows up.
+ */
+function TrendingMutes() {
+  const api = useApi();
+  const qc = useQueryClient();
+  const me = useQuery({
+    queryKey: ['me'],
+    queryFn: () =>
+      api.get<{ settings: { trendingBlocklist?: string[] } }>('/api/me'),
+  });
+  const muted = me.data?.settings?.trendingBlocklist ?? [];
+  const [input, setInput] = useState('');
+
+  const mute = useMutation({
+    mutationFn: async (topic: string) =>
+      api.post<{ ok: true }>('/api/me/trending/mute', { topic }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['me'] });
+      void qc.invalidateQueries({ queryKey: ['digest'] });
+      setInput('');
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const unmute = useMutation({
+    mutationFn: async (topic: string) =>
+      api.post<{ ok: true }>('/api/me/trending/unmute', { topic }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['me'] });
+      void qc.invalidateQueries({ queryKey: ['digest'] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  return (
+    <div className="card">
+      <div className="mb-2 flex items-center gap-2">
+        <TrendingUp className="h-5 w-5 text-rose-500" />
+        <h2 className="font-semibold">Trending mutes</h2>
+      </div>
+      <p className="text-sm text-ink-500">
+        Topics on this list are filtered out of Home → Trending. Useful for
+        boilerplate like <code>unsubscribe</code>, <code>privacy-policy</code>,
+        or <code>help</code> that carry no editorial weight. Topics still
+        exist on their own pages and in search — they just don't bubble to
+        the trending widget.
+      </p>
+
+      <form
+        className="mt-3 flex gap-2"
+        onSubmit={(e) => {
+          e.preventDefault();
+          const v = input.trim().toLowerCase();
+          if (!v) return;
+          mute.mutate(v);
+        }}
+      >
+        <input
+          className="input flex-1 text-sm"
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          placeholder="topic to mute (e.g. unsubscribe)"
+          maxLength={120}
+          disabled={mute.isPending}
+        />
+        <button
+          type="submit"
+          className="btn-secondary text-xs"
+          disabled={!input.trim() || mute.isPending}
+        >
+          <Plus className="h-3.5 w-3.5" /> Mute
+        </button>
+      </form>
+
+      {muted.length === 0 ? (
+        <p className="mt-3 text-xs italic text-ink-500">
+          Nothing muted yet.
+        </p>
+      ) : (
+        <ul className="mt-3 flex flex-wrap gap-1.5">
+          {muted.map((topic) => (
+            <li
+              key={topic}
+              className="inline-flex items-center gap-1 rounded-full bg-ink-100 px-2 py-0.5 text-xs dark:bg-ink-800"
+            >
+              <span>{topic}</span>
+              <button
+                type="button"
+                onClick={() => unmute.mutate(topic)}
+                className="text-ink-400 hover:text-rose-600"
+                aria-label={`Unmute ${topic}`}
+                title="Unmute"
+                disabled={unmute.isPending}
+              >
+                <XIcon className="h-3 w-3" />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }

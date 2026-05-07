@@ -28,6 +28,15 @@ const userSchema = new Schema(
        */
       showMoonPhases: { type: Boolean, default: false },
       /**
+       * Topics / tags the user has muted from the home page's
+       * "Trending topics" card. Stored lowercased; filtered out at
+       * the digest endpoint so the topic still exists on its own
+       * page but never bubbles to the trending widget. Useful for
+       * boilerplate like "unsubscribe" or "privacy-policy" that
+       * carry no editorial weight.
+       */
+      trendingBlocklist: { type: [String], default: [] },
+      /**
        * When and where to mail the daily/weekly digest. Disabled by
        * default; the user opts in from Settings → Newsletter. We
        * schedule a coarse hourly worker that consults this struct

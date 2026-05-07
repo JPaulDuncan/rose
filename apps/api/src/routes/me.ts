@@ -56,6 +56,42 @@ meRouter.patch('/', async (req, res) => {
 });
 
 /**
+ * Atomic mute/unmute for the home page's "Trending topics" widget.
+ * The user surface is one click per pill, so we expose both
+ * operations as single-topic POSTs against settings.trendingBlocklist
+ * rather than asking the client to send the whole array. Topics are
+ * lowercased before storage so case differences in `Page.topics`
+ * don't sneak the same boilerplate past the filter twice.
+ */
+meRouter.post('/trending/mute', async (req, res) => {
+  const userId = new Types.ObjectId(userIdOf(req));
+  const raw = ((req.body as { topic?: string })?.topic ?? '').trim().toLowerCase();
+  if (!raw) {
+    res.status(400).json({ error: 'invalid_request', message: 'topic required' });
+    return;
+  }
+  await User.updateOne(
+    { _id: userId },
+    { $addToSet: { 'settings.trendingBlocklist': raw } },
+  );
+  res.json({ ok: true, topic: raw });
+});
+
+meRouter.post('/trending/unmute', async (req, res) => {
+  const userId = new Types.ObjectId(userIdOf(req));
+  const raw = ((req.body as { topic?: string })?.topic ?? '').trim().toLowerCase();
+  if (!raw) {
+    res.status(400).json({ error: 'invalid_request', message: 'topic required' });
+    return;
+  }
+  await User.updateOne(
+    { _id: userId },
+    { $pull: { 'settings.trendingBlocklist': raw } },
+  );
+  res.json({ ok: true, topic: raw });
+});
+
+/**
  * Destructive: wipe every wiki page + revision the user owns, and reset
  * every ingested email back to `parsed` so the next regenerate cycle can
  * rebuild the wiki from scratch under the current grouping rules.
