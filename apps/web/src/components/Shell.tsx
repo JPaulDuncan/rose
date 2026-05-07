@@ -46,7 +46,7 @@ const PRIMARY_NAV: NavItem[] = [
   { to: '/', label: 'Home', icon: HomeIcon, key: 'g h' },
   { to: '/chat', label: 'Ask', icon: Sparkles, key: 'g a' },
   { to: '/calendar', label: 'Calendar', icon: CalendarIcon, key: 'g c' },
-  { to: '/browse', label: 'Browse', icon: BookOpen, key: 'g b' },
+  { to: '/codex', label: 'Codex', icon: BookOpen, key: 'g b' },
 ];
 
 const SECONDARY_NAV: NavItem[] = [
@@ -90,10 +90,10 @@ export function Shell({ children }: { children: ReactNode }) {
     'g i': () => navigate('/settings/ingest'),
     'g a': () => navigate('/chat'),
     'g c': () => navigate('/calendar'),
-    'g b': () => navigate('/browse'),
-    // Old hotkeys kept as muscle-memory shortcuts to specific Browse tabs.
-    'g t': () => navigate('/browse?tab=streams'),
-    'g x': () => navigate('/browse?tab=categories'),
+    'g b': () => navigate('/codex'),
+    // Old hotkeys kept as muscle-memory shortcuts to specific Codex tabs.
+    'g t': () => navigate('/codex?tab=streams'),
+    'g x': () => navigate('/codex?tab=categories'),
     'g l': () => navigate('/library'),
     'g k': () => navigate('/shipments'),
     'g d': () => navigate('/promo-codes'),

@@ -1,6 +1,6 @@
 import { Types } from 'mongoose';
 import { Queue } from 'bullmq';
-import { Sender, SenderBrand, type EmailDoc, type PageDoc } from '@rose/db';
+import { Sender, SenderBrand, Entity, type EmailDoc, type PageDoc } from '@rose/db';
 import { senderDomainTag } from '@rose/email-parser';
 import { redis } from '../lib/redis.js';
 import { logger } from '../lib/logger.js';
@@ -223,6 +223,35 @@ export async function upsertSendersFromPage(
         'sender-brand upsert failed (continuing)',
       );
     }
+    try {
+      // Plan: senders ARE organization entities. Upsert an Entity
+      // row of type 'organization' keyed on the brandKey so the
+      // /n/<key> page, the auto-linker, and the Codex Entities tab
+      // all see one consistent record. Idempotent — the unique
+      // (userId, key) index dedupes concurrent writes.
+      await Entity.updateOne(
+        { userId, key: b.brandKey },
+        {
+          $set: {
+            displayName: b.name || b.brandKey,
+            type: 'organization',
+            lastSeenAt: new Date(),
+          },
+          $setOnInsert: {
+            userId,
+            key: b.brandKey,
+            pageCount: 0,
+          },
+        },
+        { upsert: true },
+      );
+    } catch (err) {
+      logger.warn(
+        { err, brandKey: b.brandKey, userId: String(userId) },
+        'sender → entity upsert failed (continuing)',
+      );
+    }
+
     try {
       const existing = await Sender.findOne({ userId, brandKey: b.brandKey });
       const now = new Date();

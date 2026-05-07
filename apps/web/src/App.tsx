@@ -20,7 +20,7 @@ const SearchPage = lazy(() => import('./routes/Search'));
 const CalendarPage = lazy(() => import('./routes/Calendar'));
 const WeatherPage = lazy(() => import('./routes/Weather'));
 const MoonPage = lazy(() => import('./routes/Moon'));
-const BrowsePage = lazy(() => import('./routes/Browse'));
+const CodexPage = lazy(() => import('./routes/Codex'));
 const TagPage = lazy(() => import('./routes/Tag'));
 const EntityPage = lazy(() => import('./routes/Entity'));
 const EmailView = lazy(() => import('./routes/Email'));
@@ -113,11 +113,12 @@ export default function App() {
         <Route path="/calendar" element={<CalendarPage />} />
         <Route path="/weather" element={<WeatherPage />} />
         <Route path="/moon" element={<MoonPage />} />
-        <Route path="/browse" element={<BrowsePage />} />
-        {/* Old discovery surfaces folded into /browse — keep redirects so
+        <Route path="/codex" element={<CodexPage />} />
+        {/* Old discovery surfaces folded into /codex — keep redirects so
             existing bookmarks land on the right tab. */}
-        <Route path="/streams" element={<Navigate to="/browse?tab=streams" replace />} />
-        <Route path="/codex" element={<Navigate to="/browse?tab=categories" replace />} />
+        <Route path="/browse" element={<Navigate to="/codex" replace />} />
+        <Route path="/browse/*" element={<Navigate to="/codex" replace />} />
+        <Route path="/streams" element={<Navigate to="/codex?tab=streams" replace />} />
         <Route path="/s/:brandKey" element={<SenderPage />} />
         <Route path="/quarantine" element={<QuarantinePage />} />
         <Route path="/promotions" element={<PromotionsPage />} />
@@ -138,7 +139,7 @@ export default function App() {
               useful rather than the catch-all home redirect. */}
           <Route
             path="senders"
-            element={<Navigate to="/browse?tab=senders" replace />}
+            element={<Navigate to="/codex?tab=senders" replace />}
           />
           <Route path="rules" element={<RulesSettings />} />
           <Route path="recipes" element={<RecipesSettings />} />

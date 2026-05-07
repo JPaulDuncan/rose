@@ -77,8 +77,8 @@ export function CommandPalette({
               <Command.Item onSelect={() => go('/calendar')}>
                 <CalendarIcon className="h-4 w-4" /> Calendar
               </Command.Item>
-              <Command.Item onSelect={() => go('/browse')}>
-                <BookOpen className="h-4 w-4" /> Browse
+              <Command.Item onSelect={() => go('/codex')}>
+                <BookOpen className="h-4 w-4" /> Codex
               </Command.Item>
               <Command.Item onSelect={() => go('/weather')}>
                 <CloudSun className="h-4 w-4" /> Weather

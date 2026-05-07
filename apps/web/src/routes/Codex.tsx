@@ -19,6 +19,11 @@ import {
   Trash2,
   AtSign,
   Globe,
+  Tag,
+  User as UserIcon,
+  Building2,
+  Film,
+  MapPin,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useApi } from '../lib/api';
@@ -87,11 +92,12 @@ type TimelineEntry = {
 };
 type StreamsResponse = { streams: Stream[]; timeline: TimelineEntry[] };
 
-type TabKey = 'pinned' | 'categories' | 'senders' | 'index' | 'streams';
+type TabKey = 'pinned' | 'categories' | 'senders' | 'entities' | 'index' | 'streams';
 const TABS: { key: TabKey; label: string; icon: typeof BookOpen }[] = [
   { key: 'pinned', label: 'Pinned', icon: Star },
   { key: 'categories', label: 'Categories', icon: BookOpen },
   { key: 'senders', label: 'Senders', icon: Users },
+  { key: 'entities', label: 'Entities', icon: Tag },
   { key: 'index', label: 'Index', icon: Bookmark },
   { key: 'streams', label: 'Streams', icon: Activity },
 ];
@@ -104,7 +110,7 @@ const TABS: { key: TabKey; label: string; icon: typeof BookOpen }[] = [
  *
  * Tab is persisted in `?tab=…` so links and bookmarks land on the right view.
  */
-export default function BrowsePage() {
+export default function CodexPage() {
   const [params, setParams] = useSearchParams();
   const tabParam = params.get('tab') as TabKey | null;
   const tab: TabKey = TABS.some((t) => t.key === tabParam) ? (tabParam as TabKey) : 'categories';
@@ -118,12 +124,12 @@ export default function BrowsePage() {
   return (
     <div className="mx-auto w-full max-w-6xl px-6 py-8">
       <header className="mb-6 border-b border-ink-200 pb-4 dark:border-ink-800">
-        <h1 className="text-3xl font-bold tracking-tight">Browse</h1>
+        <h1 className="text-3xl font-bold tracking-tight">Codex</h1>
         <p className="mt-1 text-sm text-ink-500">
-          One surface for pinned topics, categories, senders, the A–Z index, and
-          your notification timeline.
+          One surface for pinned topics, categories, senders, entities, the A–Z
+          index, and your notification timeline.
         </p>
-        <nav className="mt-4 flex flex-wrap gap-1" aria-label="Browse views">
+        <nav className="mt-4 flex flex-wrap gap-1" aria-label="Codex views">
           {TABS.map(({ key, label, icon: Icon }) => {
             const active = tab === key;
             return (
@@ -149,8 +155,128 @@ export default function BrowsePage() {
       {tab === 'pinned' && <PinnedTab />}
       {tab === 'categories' && <CategoriesTab />}
       {tab === 'senders' && <SendersTab />}
+      {tab === 'entities' && <EntitiesTab />}
       {tab === 'index' && <IndexTab />}
       {tab === 'streams' && <StreamsTab />}
+    </div>
+  );
+}
+
+/* ---------------- Entities ------------------------------------------------ */
+
+type EntityRow = {
+  key: string;
+  displayName: string;
+  type: 'person' | 'work' | 'organization' | 'place';
+  pageCount: number;
+  lastSeenAt: string | null;
+};
+
+const ENTITY_TYPE_LABEL: Record<EntityRow['type'], string> = {
+  person: 'People',
+  work: 'Works',
+  organization: 'Organizations',
+  place: 'Places',
+};
+
+const ENTITY_TYPE_ICON: Record<EntityRow['type'], typeof UserIcon> = {
+  person: UserIcon,
+  work: Film,
+  organization: Building2,
+  place: MapPin,
+};
+
+/**
+ * Cross-type entity registry. Senders are upserted as `organization`
+ * entities by the worker so this view collapses what used to be the
+ * separate Settings → Entities and Settings → Senders surfaces into
+ * one. Filterable by type; clicking a row routes to /n/<key> where
+ * the per-entity page lists every contributing article + email.
+ */
+function EntitiesTab() {
+  const api = useApi();
+  const [typeFilter, setTypeFilter] = useState<EntityRow['type'] | 'all'>('all');
+  const { data, isLoading } = useQuery({
+    queryKey: ['entities', typeFilter],
+    queryFn: () => {
+      const url =
+        typeFilter === 'all'
+          ? '/api/entities?limit=500'
+          : `/api/entities?type=${typeFilter}&limit=500`;
+      return api.get<{ entities: EntityRow[] }>(url);
+    },
+  });
+
+  if (isLoading) {
+    return <div className="text-sm text-ink-500">Loading…</div>;
+  }
+  const entities = data?.entities ?? [];
+  const grouped = new Map<EntityRow['type'], EntityRow[]>();
+  for (const e of entities) {
+    const arr = grouped.get(e.type) ?? [];
+    arr.push(e);
+    grouped.set(e.type, arr);
+  }
+  const order: EntityRow['type'][] = ['person', 'organization', 'work', 'place'];
+  const visible = order.filter((t) => grouped.has(t));
+
+  return (
+    <div className="space-y-5">
+      <div className="flex flex-wrap gap-1 text-xs">
+        {(['all', 'person', 'organization', 'work', 'place'] as const).map((t) => (
+          <button
+            key={t}
+            type="button"
+            onClick={() => setTypeFilter(t)}
+            className={
+              'rounded-full px-3 py-1 ' +
+              (typeFilter === t
+                ? 'bg-rose-100 text-rose-800 dark:bg-rose-950/40 dark:text-rose-200'
+                : 'text-ink-500 hover:text-ink-700 dark:hover:text-ink-200')
+            }
+          >
+            {t === 'all' ? 'All' : ENTITY_TYPE_LABEL[t as EntityRow['type']]}
+            {t !== 'all' && grouped.has(t as EntityRow['type']) && (
+              <span className="ml-1 text-ink-400">
+                {grouped.get(t as EntityRow['type'])!.length}
+              </span>
+            )}
+          </button>
+        ))}
+      </div>
+      {entities.length === 0 ? (
+        <EmptyHint label="No entities yet — once articles are filed, names and brands appear here." />
+      ) : (
+        visible.map((t) => (
+          <section key={t}>
+            <h3 className="mb-2 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.25em] text-ink-500">
+              {(() => {
+                const Icon = ENTITY_TYPE_ICON[t];
+                return <Icon className="h-3 w-3" />;
+              })()}
+              {ENTITY_TYPE_LABEL[t]}
+              <span className="text-ink-400">{grouped.get(t)!.length}</span>
+            </h3>
+            <ul className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+              {grouped.get(t)!.map((e) => (
+                <li key={e.key}>
+                  <Link
+                    to={`/n/${encodeURIComponent(e.key)}`}
+                    className="flex items-center justify-between gap-2 rounded-lg border border-ink-200 px-3 py-2 text-sm hover:border-rose-300 dark:border-ink-800 dark:hover:border-rose-800"
+                  >
+                    <span className="min-w-0 flex-1 truncate font-medium">
+                      {e.displayName}
+                    </span>
+                    <span className="text-xs text-ink-500">
+                      {e.pageCount} {e.pageCount === 1 ? 'article' : 'articles'}
+                    </span>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </section>
+        ))
+      )}
     </div>
   );
 }
