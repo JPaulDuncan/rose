@@ -349,6 +349,53 @@ const userSchema = new Schema(
       ],
       default: [],
     },
+    /**
+     * Retention windows (in days). The cleanup worker consults these
+     * nightly and deletes data older than the configured age in each
+     * collection. `0` means "keep forever". Defaults are conservative
+     * — most users won't notice them, but a busy mailbox will.
+     *
+     * The fields aren't gated behind an "enabled" toggle; the worker
+     * only touches collections whose setting is > 0, and `0` is the
+     * disable sentinel. This keeps the settings UI dead simple
+     * (number inputs in days) without a parallel boolean for each.
+     */
+    retention: {
+      /** Email rows + their attachments. */
+      emails: { type: Number, default: 365, min: 0, max: 3650 },
+      /** Per-page revision history (oldest revisions pruned first;
+       *  the latest revision is always retained). */
+      pageRevisions: { type: Number, default: 180, min: 0, max: 3650 },
+      /** Daydream encyclopedia notes. */
+      daydream: { type: Number, default: 90, min: 0, max: 3650 },
+      /** Recipe firing audit log. */
+      recipeAudit: { type: Number, default: 30, min: 0, max: 365 },
+      /** Chat conversations + messages — older threads dropped. */
+      conversations: { type: Number, default: 365, min: 0, max: 3650 },
+      /** Per-day-per-tag digest snippets. */
+      tagDigests: { type: Number, default: 60, min: 0, max: 365 },
+      /** Snapshotted weather forecasts. */
+      weatherSnapshots: { type: Number, default: 30, min: 0, max: 365 },
+      /** Email vector embeddings. Once dropped the email is still
+       *  searchable via Mongo text index; only semantic search loses
+       *  it. Defaults to dropping older than 6 months. */
+      emailEmbeddings: { type: Number, default: 180, min: 0, max: 3650 },
+      /** Page rows. Almost everyone wants articles forever — the
+       *  default is "keep all" (0), but power users with very large
+       *  archives can opt in. */
+      pages: { type: Number, default: 0, min: 0, max: 3650 },
+      /** When set, Email.text + html columns are nulled out for any
+       *  email older than this AND that already produced a Page —
+       *  the article preserves the gist while the raw body shrinks
+       *  to its hash + headers. Only the body is stripped; the row
+       *  itself stays so backlinks (page.sourceEmailIds) still
+       *  resolve. */
+      stripOldEmailBodiesDays: { type: Number, default: 0, min: 0, max: 3650 },
+      /** Last completed cleanup run, surfaced in the settings UI. */
+      lastCleanupAt: { type: Date, default: null },
+      /** Last cleanup result (counts per collection) for the UI. */
+      lastCleanupSummary: { type: Schema.Types.Mixed, default: null },
+    },
   },
   { timestamps: true },
 );

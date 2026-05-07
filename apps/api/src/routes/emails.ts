@@ -4,7 +4,7 @@ import { ImapFlow } from 'imapflow';
 import { google } from 'googleapis';
 import { userIdOf } from '../middleware/auth.js';
 import { Email, Page, Source } from '@rose/db';
-import type { ImapConfig } from '@rose/shared';
+import { priorityForDate, type ImapConfig } from '@rose/shared';
 import { generatePageQueue } from '../lib/queues.js';
 import { decryptJson, encryptJson } from '../lib/crypto.js';
 import { env } from '../lib/env.js';
@@ -255,7 +255,14 @@ emailsRouter.post('/:id/regenerate', async (req, res) => {
   const job = await generatePageQueue.add(
     'generate',
     { emailId: email._id.toString(), userId: userId.toString() },
-    { attempts: 3, removeOnComplete: 500, removeOnFail: 500 },
+    {
+      attempts: 3,
+      removeOnComplete: 500,
+      removeOnFail: 500,
+      // Use the email's received date so a manual retry on a fresh
+      // email still beats older backfill items in the queue.
+      priority: priorityForDate(email.date ?? new Date()),
+    },
   );
   res.status(202).json({ jobId: job.id });
 });
@@ -268,15 +275,22 @@ emailsRouter.post('/regenerate-stuck', async (req, res) => {
   const userId = new Types.ObjectId(userIdOf(req));
   const limit = Math.min(Number((req.body as { limit?: number })?.limit ?? 500), 5000);
   const stuck = await Email.find({ userId, ingestStatus: 'parsed' })
-    .sort({ createdAt: -1 })
+    .sort({ date: -1, createdAt: -1 })
     .limit(limit)
-    .select('_id')
+    .select('_id date')
     .lean();
   for (const e of stuck) {
     await generatePageQueue.add(
       'generate',
       { emailId: String(e._id), userId: userId.toString() },
-      { attempts: 3, removeOnComplete: 500, removeOnFail: 500 },
+      {
+        attempts: 3,
+        removeOnComplete: 500,
+        removeOnFail: 500,
+        // Bulk re-enqueue inherits each email's date so the freshest
+        // ones still hop the queue ahead of older entries.
+        priority: priorityForDate(e.date ?? new Date()),
+      },
     );
   }
   res.status(202).json({ enqueued: stuck.length });

@@ -1,6 +1,7 @@
 import { Types } from 'mongoose';
 import { parseEmail, type CleanedEmail } from '@rose/email-parser';
 import { Email } from '@rose/db';
+import { priorityForDate } from '@rose/shared';
 import { parseEmailQueue, generatePageQueue } from '../lib/queues.js';
 import { logger } from '../lib/logger.js';
 
@@ -66,7 +67,15 @@ export async function ingestRawEmail(input: IngestInput): Promise<IngestResult> 
   const job = await generatePageQueue.add(
     'generate',
     { emailId: doc._id.toString(), userId: input.userId.toString() },
-    { removeOnComplete: 500, removeOnFail: 500, attempts: 3, backoff: { type: 'exponential', delay: 5000 } },
+    {
+      removeOnComplete: 500,
+      removeOnFail: 500,
+      attempts: 3,
+      backoff: { type: 'exponential', delay: 5000 },
+      // Manual uploads / inbound webhooks pass through here; treat as
+      // freshly arrived so they sit at the front of the queue.
+      priority: priorityForDate(cleaned.date ?? new Date()),
+    },
   );
 
   logger.info({ emailId: doc._id.toString(), jobId: job.id }, 'email ingested, generation queued');

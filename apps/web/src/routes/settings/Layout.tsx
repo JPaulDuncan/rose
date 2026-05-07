@@ -20,6 +20,7 @@ const TABS = [
   { to: 'entities', label: 'Entities' },
   { to: 'library', label: 'Library' },
   { to: 'spam', label: 'Spam' },
+  { to: 'storage', label: 'Storage' },
 ];
 
 export default function SettingsLayout() {

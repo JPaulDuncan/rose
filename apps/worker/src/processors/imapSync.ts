@@ -9,7 +9,7 @@ import { logger } from '../lib/logger.js';
 import { emitRecipeEvent } from '../lib/recipeEmit.js';
 import { detectShipmentsForEmail } from '../shipments/upsert.js';
 import { detectPromoCodesForEmail } from '@rose/promo-codes';
-import type { ImapConfig } from '@rose/shared';
+import { priorityForDate, type ImapConfig } from '@rose/shared';
 
 const QUEUE = 'rose.imap-sync';
 const generateQueue = new Queue('rose.generate-page', { connection: redis });
@@ -138,7 +138,16 @@ export function startImapSyncWorker() {
               await generateQueue.add(
                 'generate',
                 { emailId: created._id.toString(), userId: userId.toString() },
-                { attempts: 3, removeOnComplete: 500, removeOnFail: 500 },
+                {
+                  attempts: 3,
+                  removeOnComplete: 500,
+                  removeOnFail: 500,
+                  // Newer emails jump the queue ahead of older
+                  // backfill items so a fresh message visible in the
+                  // user's mailbox lands in the UI without waiting
+                  // for a 30-day archive sweep to drain.
+                  priority: priorityForDate(cleaned.date ?? new Date()),
+                },
               );
               // Recipes — fire-and-forget, won't block ingest if it
               // fails. brand-key is derived from the from-address so

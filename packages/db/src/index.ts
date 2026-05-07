@@ -69,3 +69,9 @@ export type { ShipmentDoc } from './models/Shipment.js';
 export { PromoCode } from './models/PromoCode.js';
 export type { PromoCodeDoc } from './models/PromoCode.js';
 export { uniqueSlug } from './util/uniqueSlug.js';
+export {
+  applyRetentionForUser,
+  runRetentionCleanup,
+  emptyCleanupSummary,
+  type CleanupSummary,
+} from './util/retention.js';

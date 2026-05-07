@@ -10,6 +10,7 @@ import { logger } from '../lib/logger.js';
 import { emitRecipeEvent } from '../lib/recipeEmit.js';
 import { detectShipmentsForEmail } from '../shipments/upsert.js';
 import { detectPromoCodesForEmail } from '@rose/promo-codes';
+import { priorityForDate } from '@rose/shared';
 
 const QUEUE = 'rose.gmail-sync';
 const generateQueue = new Queue('rose.generate-page', { connection: redis });
@@ -112,7 +113,12 @@ export function startGmailSyncWorker() {
         await generateQueue.add(
           'generate',
           { emailId: created._id.toString(), userId: userId.toString() },
-          { attempts: 3, removeOnComplete: 500, removeOnFail: 500 },
+          {
+            attempts: 3,
+            removeOnComplete: 500,
+            removeOnFail: 500,
+            priority: priorityForDate(cleaned.date ?? new Date()),
+          },
         );
         const recipeFromAddr = cleaned.from?.address ?? null;
         const recipeBrandKey = recipeFromAddr

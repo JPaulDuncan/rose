@@ -11,6 +11,7 @@ type DomDocument = {
   querySelector(selector: string): { getAttribute?(name: string): string | null; textContent?: string | null } | null;
 };
 import { Email } from '@rose/db';
+import { priorityForDate } from '@rose/shared';
 import { senderDomainTag } from '@rose/email-parser';
 import { safeFetch, UnsafeUrlError } from '../lib/safeFetch.js';
 import { redis } from '../lib/redis.js';
@@ -177,7 +178,12 @@ async function ingestUrl(
   await generateQueue.add(
     'generate',
     { emailId: String(created._id), userId: String(userId) },
-    { attempts: 3, removeOnComplete: 500, removeOnFail: 500 },
+    {
+      attempts: 3,
+      removeOnComplete: 500,
+      removeOnFail: 500,
+      priority: priorityForDate(new Date()),
+    },
   );
   return created._id as Types.ObjectId;
 }
@@ -290,7 +296,12 @@ async function ingestDocument(
   await generateQueue.add(
     'generate',
     { emailId: String(created._id), userId: String(userId) },
-    { attempts: 3, removeOnComplete: 500, removeOnFail: 500 },
+    {
+      attempts: 3,
+      removeOnComplete: 500,
+      removeOnFail: 500,
+      priority: priorityForDate(new Date()),
+    },
   );
   return created._id as Types.ObjectId;
 }

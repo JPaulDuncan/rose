@@ -30,6 +30,7 @@ import { moonRouter } from './routes/moon.js';
 import { recipesRouter } from './routes/recipes.js';
 import { shipmentsRouter } from './routes/shipments.js';
 import { promoCodesRouter } from './routes/promoCodes.js';
+import { retentionRouter } from './routes/retention.js';
 import { webhookRouter } from './routes/webhook.js';
 import { providersRouter } from './routes/providers.js';
 import { modelsRouter, modelsStreamRouter } from './routes/models.js';
@@ -114,6 +115,7 @@ export async function createServer(): Promise<Express> {
   app.use('/api/recipes', requireAuth, recipesRouter);
   app.use('/api/shipments', requireAuth, shipmentsRouter);
   app.use('/api/promo-codes', requireAuth, promoCodesRouter);
+  app.use('/api/retention', requireAuth, retentionRouter);
   app.use('/api/providers', requireAuth, providersRouter);
   app.use('/api/system', requireAuth, systemRouter);
   app.use('/api/daydream', requireAuth, daydreamRouter);

@@ -5,7 +5,7 @@ import { Readability } from '@mozilla/readability';
 import { parseHTML } from 'linkedom';
 import TurndownService from 'turndown';
 import { Source, Email } from '@rose/db';
-import type { WebsiteConfig } from '@rose/shared';
+import { priorityForDate, type WebsiteConfig } from '@rose/shared';
 import { senderDomainTag } from '@rose/email-parser';
 import { decryptJson } from '../lib/crypto.js';
 import { emitRecipeEvent } from '../lib/recipeEmit.js';
@@ -288,7 +288,12 @@ export function startWebsiteSyncWorker() {
       await generateQueue.add(
         'generate',
         { emailId: String(created._id), userId: String(userId) },
-        { attempts: 3, removeOnComplete: 500, removeOnFail: 500 },
+        {
+          attempts: 3,
+          removeOnComplete: 500,
+          removeOnFail: 500,
+          priority: priorityForDate(new Date()),
+        },
       );
       await emitRecipeEvent({
         kind: 'email.ingested',

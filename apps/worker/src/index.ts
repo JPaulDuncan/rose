@@ -30,6 +30,7 @@ import { startLibraryEmbedWorker } from './processors/libraryEmbed.js';
 import { startTagDigestWorker, startTagDigestSweeper } from './processors/tagDigest.js';
 import { startPostWriteHooksWorker } from './processors/postWriteHooks.js';
 import { startRecipesWorker } from './processors/recipes.js';
+import { startCleanupWorker, scheduleCleanupSweeper } from './processors/cleanup.js';
 import { startReputationDecaySweep } from './services/reputationSweep.js';
 import { startDaydreamSweeper } from './services/daydreamSweeper.js';
 import { getVapidKeys } from './lib/vapid.js';
@@ -85,6 +86,10 @@ async function bootstrap() {
     { repeat: { every: 60 * 60 * 1000 }, jobId: 'briefing:sweep' },
   );
   await briefingQueue.add('sweep', {}, { attempts: 1, removeOnComplete: 10 });
+  // Daily retention sweep — prunes emails / revisions / daydream
+  // notes / etc. older than the per-user retention windows.
+  startCleanupWorker();
+  await scheduleCleanupSweeper();
   logger.info('rose worker started');
 }
 

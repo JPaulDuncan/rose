@@ -2,7 +2,7 @@ import { Worker, type Job, Queue } from 'bullmq';
 import { Types } from 'mongoose';
 import { createHash } from 'node:crypto';
 import { Source, Email } from '@rose/db';
-import type { SlackConfig } from '@rose/shared';
+import { priorityForDate, type SlackConfig } from '@rose/shared';
 import { decryptJson, encryptJson } from '../lib/crypto.js';
 import { redis } from '../lib/redis.js';
 import { logger } from '../lib/logger.js';
@@ -142,7 +142,12 @@ export function startSlackSyncWorker() {
             await generateQueue.add(
               'generate',
               { emailId: String(created._id), userId: userId.toString() },
-              { attempts: 3, removeOnComplete: 500, removeOnFail: 500 },
+              {
+                attempts: 3,
+                removeOnComplete: 500,
+                removeOnFail: 500,
+                priority: priorityForDate(new Date()),
+              },
             );
             ingested += 1;
           }

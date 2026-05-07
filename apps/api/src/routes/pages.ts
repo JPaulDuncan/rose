@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { Types } from 'mongoose';
 import { z } from 'zod';
-import { PageUpdateRequest } from '@rose/shared';
+import { PageUpdateRequest, priorityForDate } from '@rose/shared';
 import { userIdOf } from '../middleware/auth.js';
 import { validateBody } from '../middleware/validate.js';
 import { Page, SenderBrand, DaydreamNote, TagCanonical, Email, titleCaseTag, Category, normalizeCategoryName } from '@rose/db';
@@ -393,6 +393,8 @@ pagesRouter.post('/:id/merge', validateBody(MergeRequest), async (req, res) => {
         removeOnComplete: 200,
         removeOnFail: 200,
         attempts: 3,
+        // User-triggered merge — front of the queue.
+        priority: priorityForDate(new Date()),
         // Custom jobIds use `__` as the delimiter (BullMQ rejects `:`).
         jobId: `merge-rewrite__${String(target._id)}__${Date.now()}`,
       },
