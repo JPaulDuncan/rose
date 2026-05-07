@@ -301,6 +301,50 @@ sourcesRouter.post('/:id/sync', async (req, res) => {
 });
 
 /**
+ * One-shot "pull every message" trigger for an IMAP source.
+ *
+ * Flips the encrypted config to historicalBackfillDays=0 (the
+ * pull-everything sentinel) and maxPerSync=0 (unlimited), clears
+ * `lastSyncAt` so the worker uses the unbounded search rather than
+ * an incremental one, and queues an immediate sync.
+ *
+ * The poll interval and other config stay untouched, so once the
+ * backfill finishes subsequent runs are incremental as before.
+ */
+sourcesRouter.post('/:id/backfill-all', async (req, res) => {
+  const userId = new Types.ObjectId(userIdOf(req));
+  const src = await Source.findOne({ _id: req.params.id, userId }).select('+encryptedConfig');
+  if (!src) {
+    res.status(404).json({ error: 'not_found', message: 'Source not found' });
+    return;
+  }
+  if (src.type !== 'imap' || !src.encryptedConfig) {
+    res.status(400).json({
+      error: 'invalid_request',
+      message: 'Backfill-all only applies to IMAP sources',
+    });
+    return;
+  }
+  const current = decryptJson<ImapConfig>(src.encryptedConfig);
+  const merged: ImapConfig = {
+    ...current,
+    historicalBackfillDays: 0,
+    maxPerSync: 0,
+  };
+  src.encryptedConfig = encryptJson(merged);
+  src.lastSyncAt = null;
+  src.lastError = null;
+  src.status = 'active';
+  await src.save();
+  const job = await imapSyncQueue.add(
+    'sync',
+    { sourceId: src._id.toString(), userId: userId.toString() },
+    { attempts: 3, removeOnComplete: 50, removeOnFail: 50 },
+  );
+  res.status(202).json({ jobId: job.id });
+});
+
+/**
  * Connect to an IMAP server with the supplied config and report whether
  * authentication + mailbox listing succeed. Does not persist anything.
  */

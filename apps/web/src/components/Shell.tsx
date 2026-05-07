@@ -40,7 +40,6 @@ type NavItem = {
 const PRIMARY_NAV: NavItem[] = [
   { to: '/', label: 'Home', icon: HomeIcon, key: 'g h' },
   { to: '/chat', label: 'Ask', icon: Sparkles, key: 'g a' },
-  { to: '/search', label: 'Search', icon: Search, key: '/' },
   { to: '/calendar', label: 'Calendar', icon: CalendarIcon, key: 'g c' },
   { to: '/browse', label: 'Browse', icon: BookOpen, key: 'g b' },
 ];

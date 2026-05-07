@@ -21,8 +21,10 @@ export const ImapConfig = z.object({
   mailbox: z.string().default('INBOX'),
   pollIntervalMinutes: z.number().int().min(1).max(1440).default(5),
   /** On the first sync, look back this many days. Subsequent syncs are
-   *  incremental from the last successful sync time. */
-  historicalBackfillDays: z.number().int().min(1).max(3650).default(30),
+   *  incremental from the last successful sync time. `0` is the "pull
+   *  everything" sentinel — drops the date filter entirely so the
+   *  worker walks the whole mailbox. */
+  historicalBackfillDays: z.number().int().min(0).max(3650).default(30),
   /** Hard cap per sync run to keep memory bounded. Older messages get the
    *  next pass. 0 = unlimited (not recommended for large mailboxes). */
   maxPerSync: z.number().int().min(0).max(50_000).default(2000),
@@ -138,7 +140,8 @@ export const ImapUpdateConfig = z.object({
   password: z.string().min(1).optional(),
   mailbox: z.string().min(1).optional(),
   pollIntervalMinutes: z.number().int().min(1).max(1440).optional(),
-  historicalBackfillDays: z.number().int().min(1).max(3650).optional(),
+  /** 0 = pull everything; otherwise capped at 3650. */
+  historicalBackfillDays: z.number().int().min(0).max(3650).optional(),
   maxPerSync: z.number().int().min(0).max(50_000).optional(),
 });
 export type ImapUpdateConfig = z.infer<typeof ImapUpdateConfig>;

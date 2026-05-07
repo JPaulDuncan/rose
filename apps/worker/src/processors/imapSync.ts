@@ -39,14 +39,27 @@ export function startImapSyncWorker() {
         try {
           const backfillDays = cfg.historicalBackfillDays ?? 30;
           const cap = cfg.maxPerSync ?? 2000;
-          const since =
-            source.lastSyncAt ?? new Date(Date.now() - backfillDays * 24 * 3600 * 1000);
-          const uids = (await client.search({ since })) as number[];
+          // historicalBackfillDays=0 + no prior sync = "pull everything":
+          // search the whole mailbox with no date filter. Once lastSyncAt
+          // is set the next run is incremental from there regardless.
+          const since = source.lastSyncAt
+            ?? (backfillDays > 0
+              ? new Date(Date.now() - backfillDays * 24 * 3600 * 1000)
+              : null);
+          const uids = (await client.search(
+            since ? { since } : { all: true },
+          )) as number[];
           // Newest first so user sees recent mail in the UI sooner.
           const ordered = [...uids].sort((a, b) => b - a);
           const toFetch = cap > 0 ? ordered.slice(0, cap) : ordered;
           logger.info(
-            { sourceId: String(source._id), found: uids.length, fetching: toFetch.length, backfillDays },
+            {
+              sourceId: String(source._id),
+              found: uids.length,
+              fetching: toFetch.length,
+              backfillDays,
+              mode: since ? 'incremental' : 'all',
+            },
             'imap-sync: starting fetch',
           );
           for (const uid of toFetch) {

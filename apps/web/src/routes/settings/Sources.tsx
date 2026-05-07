@@ -16,6 +16,7 @@ import {
   Hash,
   MessageCircle,
   CalendarDays,
+  Archive,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useApi } from '../../lib/api';
@@ -74,6 +75,10 @@ type ImapConfig = {
   password: string;
   mailbox: string;
   pollIntervalMinutes: number;
+  /** 0 = pull every message; otherwise the first sync looks back this many days. */
+  historicalBackfillDays: number;
+  /** Hard cap per run. 0 = unlimited. */
+  maxPerSync: number;
 };
 
 type WebsiteConfig = {
@@ -108,6 +113,8 @@ const DEFAULT_IMAP: ImapFormValues = {
   password: '',
   mailbox: 'INBOX',
   pollIntervalMinutes: 5,
+  historicalBackfillDays: 30,
+  maxPerSync: 2000,
 };
 
 export default function SourcesSettings() {
@@ -168,6 +175,18 @@ export default function SourcesSettings() {
       api.post<{ jobId: string }>(`/api/sources/${id}/sync`),
     onSuccess: () => {
       toast.success('Sync queued — new mail will appear in the inbox shortly');
+      qc.invalidateQueries({ queryKey: ['sources'] });
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
+
+  const backfillAll = useMutation({
+    mutationFn: async (id: string) =>
+      api.post<{ jobId: string }>(`/api/sources/${id}/backfill-all`),
+    onSuccess: () => {
+      toast.success(
+        'Backfill queued — every message in the mailbox will be ingested. This may take a while.',
+      );
       qc.invalidateQueries({ queryKey: ['sources'] });
     },
     onError: (err: Error) => toast.error(err.message),
@@ -442,6 +461,27 @@ export default function SourcesSettings() {
                       />
                     </button>
                   )}
+                  {s.type === 'imap' && (
+                    <button
+                      className="btn-ghost"
+                      onClick={() => {
+                        if (
+                          confirm(
+                            `Pull every message from "${s.name}"? This re-walks the entire mailbox and may take a long time and burn LLM tokens on each new email's wiki page.`,
+                          )
+                        ) {
+                          backfillAll.mutate(s._id);
+                        }
+                      }}
+                      disabled={backfillAll.isPending}
+                      aria-label="Backfill all"
+                      title="Backfill all — pull every message in the mailbox"
+                    >
+                      <Archive
+                        className={`h-4 w-4 ${backfillAll.isPending ? 'animate-pulse' : ''}`}
+                      />
+                    </button>
+                  )}
                   <button
                     className="btn-ghost text-red-600"
                     onClick={() => {
@@ -494,6 +534,8 @@ function EditImapForm({
     password: '',
     mailbox: cfg.mailbox,
     pollIntervalMinutes: cfg.pollIntervalMinutes,
+    historicalBackfillDays: cfg.historicalBackfillDays ?? 30,
+    maxPerSync: cfg.maxPerSync ?? 2000,
   };
   return (
     <ImapForm
@@ -695,6 +737,34 @@ function ImapForm({
             max={1440}
             value={values.pollIntervalMinutes}
             onChange={(e) => set('pollIntervalMinutes', Number(e.target.value))}
+            required
+          />
+        </Field>
+        <Field
+          label="Backfill days"
+          hint="On the first sync, look back this far. Set to 0 to pull every message in the mailbox."
+        >
+          <input
+            className="input"
+            type="number"
+            min={0}
+            max={3650}
+            value={values.historicalBackfillDays}
+            onChange={(e) => set('historicalBackfillDays', Number(e.target.value))}
+            required
+          />
+        </Field>
+        <Field
+          label="Max per sync"
+          hint="Hard cap per run so a huge mailbox doesn't blow the worker. 0 = unlimited."
+        >
+          <input
+            className="input"
+            type="number"
+            min={0}
+            max={50000}
+            value={values.maxPerSync}
+            onChange={(e) => set('maxPerSync', Number(e.target.value))}
             required
           />
         </Field>
