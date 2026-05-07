@@ -363,7 +363,11 @@ export default function PageView() {
               The hero floats inside the article so text wraps newspaper-
               style around its native dimensions. */}
           <div className="min-w-0 space-y-6">
-            <article className="card prose prose-rose max-w-none dark:prose-invert">
+            {/* `flow-root` establishes a new block formatting context
+                so the floated hero is contained — without it, a tall
+                portrait image extends past the body text and overlaps
+                the Sources card sitting underneath. */}
+            <article className="card prose prose-rose max-w-none flow-root dark:prose-invert">
               {page.heroImageUrl && <FloatedHero url={page.heroImageUrl} alt={page.title} />}
               <MarkdownWithCitations
                 md={page.contentMd}
