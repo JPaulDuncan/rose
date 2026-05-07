@@ -3,6 +3,8 @@ import { Types } from 'mongoose';
 import { createHash } from 'node:crypto';
 import { Source, Email } from '@rose/db';
 import { priorityForDate, type SlackConfig } from '@rose/shared';
+import { detectPromoCodesForEmail } from '@rose/promo-codes';
+import { detectShipmentsForEmail } from '@rose/shipments';
 import { decryptJson, encryptJson } from '../lib/crypto.js';
 import { redis } from '../lib/redis.js';
 import { logger } from '../lib/logger.js';
@@ -149,6 +151,16 @@ export function startSlackSyncWorker() {
                 priority: priorityForDate(new Date()),
               },
             );
+            try {
+              await detectPromoCodesForEmail(String(created._id));
+            } catch (err) {
+              logger.warn({ err, emailId: String(created._id) }, 'promo-code detection failed');
+            }
+            try {
+              await detectShipmentsForEmail(String(created._id));
+            } catch (err) {
+              logger.warn({ err, emailId: String(created._id) }, 'shipment detection failed');
+            }
             ingested += 1;
           }
           // Advance the cursor to the newest message we saw.

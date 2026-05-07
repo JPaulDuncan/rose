@@ -21,10 +21,13 @@ import {
   ShieldOff,
   ShieldCheck,
   ChevronDown,
+  Zap,
+  X as XIcon,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useApi } from '../lib/api';
 import { DraftReply } from '../components/DraftReply';
+import { RecipeWizard, type RecipeFormValues } from '../components/RecipeWizard';
 
 type EmailDetail = {
   _id: string;
@@ -71,6 +74,7 @@ export default function EmailView() {
   const qc = useQueryClient();
   const navigate = useNavigate();
   const [replyOpen, setReplyOpen] = useState(false);
+  const [recipeSeed, setRecipeSeed] = useState<RecipeFormValues | null>(null);
   const { data, isLoading, error } = useQuery({
     queryKey: ['email', id],
     queryFn: () => api.get<EmailDetail>(`/api/emails/${id}`),
@@ -285,8 +289,12 @@ export default function EmailView() {
         canDeleteOnSource={!!data.sourceId && !!data.messageId}
         unsubscribeUrl={data.unsubscribeUrls?.[0] ?? null}
         senderAddr={senderAddr}
+        subject={data.subject ?? ''}
         isSpamMarked={isSpamMarked}
         isBlocked={isBlocked}
+        onAddToRecipe={(kind) =>
+          setRecipeSeed(seedFromEmail(kind, senderAddr, data.subject ?? ''))
+        }
         onReply={() => setReplyOpen(true)}
         onDeleteLocal={() => {
           if (confirm('Remove this email from your inbox? It stays on the source mailbox.')) {
@@ -332,6 +340,13 @@ export default function EmailView() {
       </div>
 
       <DraftReply email={data} open={replyOpen} onOpenChange={setReplyOpen} />
+
+      {recipeSeed && (
+        <AddToRecipePanel
+          seed={recipeSeed}
+          onClose={() => setRecipeSeed(null)}
+        />
+      )}
 
       {data.topics && data.topics.length > 0 && (
         <Section title="Topics" icon={<TagIcon className="h-4 w-4 text-rose-500" />}>
@@ -436,6 +451,7 @@ function EmailActionsBar({
   canDeleteOnSource,
   unsubscribeUrl,
   senderAddr,
+  subject,
   isSpamMarked,
   isBlocked,
   onReply,
@@ -445,11 +461,13 @@ function EmailActionsBar({
   onUnmarkSpam,
   onBlock,
   onUnblock,
+  onAddToRecipe,
   busy,
 }: {
   canDeleteOnSource: boolean;
   unsubscribeUrl: string | null;
   senderAddr: string;
+  subject: string;
   isSpamMarked: boolean;
   isBlocked: boolean;
   onReply: () => void;
@@ -459,6 +477,7 @@ function EmailActionsBar({
   onUnmarkSpam: () => void;
   onBlock: () => void;
   onUnblock: () => void;
+  onAddToRecipe: (kind: 'sender' | 'subject') => void;
   busy: boolean;
 }) {
   const [deleteMenu, setDeleteMenu] = useState(false);
@@ -648,6 +667,42 @@ function EmailActionsBar({
                 <span className="font-medium">Copy link</span>
                 <span className="block text-[11px] text-ink-500">
                   This email's URL.
+                </span>
+              </span>
+            </button>
+            <div className="my-1 border-t border-ink-200 dark:border-ink-800" />
+            <button
+              type="button"
+              onClick={() => {
+                setMoreMenu(false);
+                onAddToRecipe('sender');
+              }}
+              disabled={!senderAddr}
+              className="flex w-full items-start gap-2 rounded px-2 py-1.5 text-left hover:bg-ink-100 disabled:opacity-50 dark:hover:bg-ink-800"
+            >
+              <Zap className="mt-0.5 h-3.5 w-3.5 shrink-0 text-rose-500" />
+              <span>
+                <span className="font-medium">Add recipe — match this sender</span>
+                <span className="block text-[11px] text-ink-500 truncate">
+                  Pre-fills a recipe trigger on{' '}
+                  <code className="text-[10px]">{senderAddr || '(no sender)'}</code>.
+                </span>
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setMoreMenu(false);
+                onAddToRecipe('subject');
+              }}
+              disabled={!subject}
+              className="flex w-full items-start gap-2 rounded px-2 py-1.5 text-left hover:bg-ink-100 disabled:opacity-50 dark:hover:bg-ink-800"
+            >
+              <Zap className="mt-0.5 h-3.5 w-3.5 shrink-0 text-rose-500" />
+              <span>
+                <span className="font-medium">Add recipe — match this subject</span>
+                <span className="block text-[11px] text-ink-500 truncate">
+                  Pre-fills a recipe trigger on the subject text.
                 </span>
               </span>
             </button>
@@ -845,4 +900,98 @@ function formatBytes(n: number): string {
     i += 1;
   }
   return `${v.toFixed(1)} ${u[i]}`;
+}
+
+/* ─── Add-to-recipe ─────────────────────────────────────────────── */
+
+/**
+ * Build a wizard-shaped seed from an email so the user lands in the
+ * trigger-and-conditions step with the right filter pre-filled. The
+ * returned shape matches RecipeFormValues so the wizard can drop
+ * straight into edit mode.
+ */
+function seedFromEmail(
+  kind: 'sender' | 'subject',
+  senderAddr: string,
+  subject: string,
+): RecipeFormValues {
+  const sender = senderAddr.trim();
+  const subj = subject.trim();
+  const config: Record<string, unknown> = {};
+  if (kind === 'sender' && sender) {
+    config.senderContains = sender;
+  }
+  if (kind === 'subject' && subj) {
+    // Take the first 80 chars so the regex stays sane; the user can
+    // still edit it down before saving.
+    config.subjectContains = subj.slice(0, 80);
+  }
+  return {
+    name:
+      kind === 'sender'
+        ? `Sender: ${sender || 'unknown'}`
+        : `Subject: ${subj.slice(0, 40) || 'unknown'}`,
+    description:
+      kind === 'sender'
+        ? 'Created from an email — match this sender.'
+        : 'Created from an email — match this subject.',
+    enabled: true,
+    trigger: { kind: 'email.ingested', config },
+    conditions: [],
+    actions: [],
+    cooldownSeconds: 0,
+    fireLimitPerHour: 60,
+  };
+}
+
+/**
+ * Inline RecipeWizard host. Posts to /api/recipes on save and links
+ * out to /settings/recipes for further editing. Slots into the email
+ * detail view so the user never has to leave the message they were
+ * looking at to author the rule.
+ */
+function AddToRecipePanel({
+  seed,
+  onClose,
+}: {
+  seed: RecipeFormValues;
+  onClose: () => void;
+}) {
+  const api = useApi();
+  const qc = useQueryClient();
+  const create = useMutation({
+    mutationFn: async (body: RecipeFormValues) =>
+      api.post<{ _id: string }>('/api/recipes', body),
+    onSuccess: () => {
+      toast.success('Recipe created');
+      void qc.invalidateQueries({ queryKey: ['recipes'] });
+      onClose();
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  return (
+    <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50/40 p-3 dark:border-rose-900/60 dark:bg-rose-950/20">
+      <div className="mb-3 flex items-center justify-between">
+        <div className="flex items-center gap-2 text-sm font-semibold">
+          <Zap className="h-4 w-4 text-rose-500" />
+          Add to recipe
+        </div>
+        <button
+          type="button"
+          className="btn-ghost text-xs"
+          onClick={onClose}
+          aria-label="Cancel"
+        >
+          <XIcon className="h-3.5 w-3.5" />
+        </button>
+      </div>
+      <RecipeWizard
+        initial={seed}
+        onCancel={onClose}
+        onSubmit={(values) => create.mutate(values)}
+        submitting={create.isPending}
+      />
+    </div>
+  );
 }

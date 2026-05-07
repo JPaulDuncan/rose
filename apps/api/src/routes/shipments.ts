@@ -1,12 +1,12 @@
 import { Router } from 'express';
 import { Types } from 'mongoose';
-import { Shipment } from '@rose/db';
+import { Shipment, Email } from '@rose/db';
 import {
   type Carrier,
   type ShipmentStatus,
   type TrackingEvent,
 } from '@rose/shared';
-import { adapterFor } from '@rose/shipments';
+import { adapterFor, detectShipmentsForEmail } from '@rose/shipments';
 import { userIdOf } from '../middleware/auth.js';
 import { logger } from '../lib/logger.js';
 
@@ -128,4 +128,32 @@ shipmentsRouter.delete('/:id', async (req, res) => {
   }
   await Shipment.deleteOne({ _id: req.params.id, userId });
   res.json({ ok: true });
+});
+
+/**
+ * Backfill scan: walk the user's recent emails and run shipment
+ * detection. Mirrors `POST /api/promo-codes/scan` so the Shipments
+ * page can offer a one-click harvest from existing inbox without
+ * waiting for the next ingest.
+ */
+shipmentsRouter.post('/scan', async (req, res, next) => {
+  try {
+    const userId = new Types.ObjectId(userIdOf(req));
+    const limit = Math.min(
+      Number((req.body as { limit?: number })?.limit ?? 2000),
+      5000,
+    );
+    const emails = await Email.find({ userId })
+      .select('_id')
+      .sort({ createdAt: -1 })
+      .limit(limit)
+      .lean();
+    let total = 0;
+    for (const e of emails) {
+      total += await detectShipmentsForEmail(String(e._id));
+    }
+    res.json({ ok: true, scannedEmails: emails.length, shipmentsUpserted: total });
+  } catch (err) {
+    next(err);
+  }
 });

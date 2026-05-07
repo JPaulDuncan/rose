@@ -8,7 +8,7 @@ import { redis } from '../lib/redis.js';
 import { env } from '../lib/env.js';
 import { logger } from '../lib/logger.js';
 import { emitRecipeEvent } from '../lib/recipeEmit.js';
-import { detectShipmentsForEmail } from '../shipments/upsert.js';
+import { detectShipmentsForEmail } from '@rose/shipments';
 import { detectPromoCodesForEmail } from '@rose/promo-codes';
 import { priorityForDate } from '@rose/shared';
 

@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { PageUpdateRequest, priorityForDate } from '@rose/shared';
 import { userIdOf } from '../middleware/auth.js';
 import { validateBody } from '../middleware/validate.js';
-import { Page, SenderBrand, DaydreamNote, TagCanonical, Email, titleCaseTag, normalizeTagKey, Category, normalizeCategoryName, Shipment, PromoCode } from '@rose/db';
+import { Page, SenderBrand, DaydreamNote, TagCanonical, Email, titleCaseTag, normalizeTagKey, Category, normalizeCategoryName, displayCategoryName, Shipment, PromoCode } from '@rose/db';
 import { PageRevision } from '@rose/db';
 import { SYSTEM_PROMPT_BASE, extractJson } from '@rose/llm';
 import { resolveProviderForUser } from '../lib/providers.js';
@@ -614,7 +614,7 @@ pagesRouter.get('/:id/related', async (req, res) => {
     // around 0.7+ and thematically-adjacent ones around 0.55–0.7.
     .filter((c) => c.score >= 0.55)
     .sort((a, b) => b.score - a.score)
-    .slice(0, 5);
+    .slice(0, 6);
 
   res.json({
     related: scored.map((s) => ({
@@ -929,17 +929,26 @@ pagesRouter.post(
         }
 
         let newCategoryId: Types.ObjectId | null = null;
-        if (newName) {
-          const normalized = normalizeCategoryName(newName);
+        const titledName = displayCategoryName(newName ?? '');
+        if (titledName) {
+          const normalized = normalizeCategoryName(titledName);
           const existing =
             (await Category.findOne({ userId, normalizedName: normalized })) ??
-            (await Category.findOne({ userId, name: newName }));
+            (await Category.findOne({ userId, name: titledName }));
           if (existing) {
+            // Rewrite legacy rows whose stored name still looks like a
+            // slug ("email-marketing") so subsequent reads use the
+            // Title Case form.
+            const display = displayCategoryName(existing.name);
+            if (existing.name !== display) {
+              existing.name = display;
+              await existing.save();
+            }
             newCategoryId = existing._id as Types.ObjectId;
           } else {
             const created = await Category.create({
               userId,
-              name: newName,
+              name: titledName,
               normalizedName: normalized,
             });
             newCategoryId = created._id as Types.ObjectId;

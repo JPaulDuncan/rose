@@ -6,6 +6,8 @@ import { parseHTML } from 'linkedom';
 import TurndownService from 'turndown';
 import { Source, Email } from '@rose/db';
 import { priorityForDate, type WebsiteConfig } from '@rose/shared';
+import { detectPromoCodesForEmail } from '@rose/promo-codes';
+import { detectShipmentsForEmail } from '@rose/shipments';
 import { senderDomainTag } from '@rose/email-parser';
 import { decryptJson } from '../lib/crypto.js';
 import { emitRecipeEvent } from '../lib/recipeEmit.js';
@@ -305,6 +307,16 @@ export function startWebsiteSyncWorker() {
         priority: 'normal',
         tags: topics,
       });
+      try {
+        await detectPromoCodesForEmail(String(created._id));
+      } catch (err) {
+        logger.warn({ err, emailId: String(created._id) }, 'promo-code detection failed');
+      }
+      try {
+        await detectShipmentsForEmail(String(created._id));
+      } catch (err) {
+        logger.warn({ err, emailId: String(created._id) }, 'shipment detection failed');
+      }
 
       source.websiteContentHash = contentHash;
       source.lastSyncAt = new Date();

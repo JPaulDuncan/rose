@@ -2,6 +2,8 @@ import { Types } from 'mongoose';
 import { parseEmail, type CleanedEmail } from '@rose/email-parser';
 import { Email } from '@rose/db';
 import { priorityForDate } from '@rose/shared';
+import { detectPromoCodesForEmail } from '@rose/promo-codes';
+import { detectShipmentsForEmail } from '@rose/shipments';
 import { parseEmailQueue, generatePageQueue } from '../lib/queues.js';
 import { logger } from '../lib/logger.js';
 
@@ -77,6 +79,22 @@ export async function ingestRawEmail(input: IngestInput): Promise<IngestResult> 
       priority: priorityForDate(cleaned.date ?? new Date()),
     },
   );
+
+  // Best-effort sidecar detection — failures don't block ingest.
+  // Same pattern as IMAP / Gmail sync; runs against text + subject
+  // and upserts PromoCode / Shipment rows so the per-page rail
+  // cards have something to render the next time the article is
+  // viewed.
+  try {
+    await detectPromoCodesForEmail(String(doc._id));
+  } catch (err) {
+    logger.warn({ err, emailId: String(doc._id) }, 'promo-code detection failed');
+  }
+  try {
+    await detectShipmentsForEmail(String(doc._id));
+  } catch (err) {
+    logger.warn({ err, emailId: String(doc._id) }, 'shipment detection failed');
+  }
 
   logger.info({ emailId: doc._id.toString(), jobId: job.id }, 'email ingested, generation queued');
   return { kind: 'created', emailId: doc._id.toString(), jobId: job.id! };

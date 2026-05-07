@@ -1,7 +1,13 @@
 import { useEffect, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { Search, BookOpen, ExternalLink, Settings as SettingsIcon } from 'lucide-react';
+import {
+  Search,
+  BookOpen,
+  ExternalLink,
+  Settings as SettingsIcon,
+  Sparkles,
+} from 'lucide-react';
 import { useApi } from '../lib/api';
 
 type LibrarySource = {
@@ -30,6 +36,19 @@ type LibrarySettings = {
   enabled: boolean;
   dailyCrawlCap: number;
   useInDaydream: boolean;
+};
+
+type DaydreamNote = {
+  _id: string;
+  kind: string;
+  subjectKey: string;
+  displayName: string;
+  summary: string;
+  sources: { adapter: string; url: string; title: string }[];
+  confidence: number;
+  generatedAt: string | null;
+  failed: boolean;
+  contributedBy: string;
 };
 
 /**
@@ -176,7 +195,83 @@ export default function LibraryPage() {
           ))}
         </ul>
       )}
+
+      {/* Daydream notes belong in the Library — they're encyclopedic
+          context on topics / senders / entities just like a curated
+          source's articles, not a separate catalog. Hide the section
+          entirely when daydream is off or has nothing yet. */}
+      {!q && !tag && <DaydreamSection />}
     </div>
+  );
+}
+
+function DaydreamSection() {
+  const api = useApi();
+  const { data, isLoading } = useQuery({
+    queryKey: ['library-daydream'],
+    queryFn: () =>
+      api.get<{ notes: DaydreamNote[] }>('/api/daydream/recent?limit=50'),
+  });
+  const notes = (data?.notes ?? []).filter((n) => !n.failed && n.summary);
+  if (isLoading || notes.length === 0) return null;
+  return (
+    <section className="mt-10">
+      <div className="mb-3 flex items-baseline justify-between gap-3 border-b border-ink-200 pb-2 dark:border-ink-800">
+        <div className="flex items-center gap-2">
+          <Sparkles className="h-4 w-4 text-rose-500" />
+          <h2 className="text-sm font-semibold uppercase tracking-widest text-ink-700 dark:text-ink-200">
+            Daydream notes
+          </h2>
+          <span className="text-xs text-ink-500">{notes.length}</span>
+        </div>
+        <Link
+          to="/settings/daydream"
+          className="text-[11px] uppercase tracking-widest text-ink-500 hover:text-rose-600"
+        >
+          Configure →
+        </Link>
+      </div>
+      <ul className="divide-y divide-ink-200 dark:divide-ink-800">
+        {notes.map((n) => (
+          <li key={n._id} className="py-3">
+            <DaydreamNoteRow note={n} />
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+function DaydreamNoteRow({ note }: { note: DaydreamNote }) {
+  return (
+    <article className="flex items-start gap-3">
+      <div className="min-w-0 flex-1">
+        <h3 className="font-serif text-lg font-semibold leading-snug">
+          {note.displayName}
+        </h3>
+        <p className="mt-1 text-sm text-ink-600 line-clamp-3 dark:text-ink-300">
+          {note.summary}
+        </p>
+        <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[11px] uppercase tracking-widest text-ink-500">
+          <span>{note.kind}</span>
+          {note.generatedAt && (
+            <span>· {new Date(note.generatedAt).toLocaleDateString()}</span>
+          )}
+          {note.contributedBy && <span>· via {note.contributedBy}</span>}
+          {note.sources.slice(0, 3).map((s, i) => (
+            <a
+              key={`${note._id}-${i}`}
+              href={s.url}
+              target="_blank"
+              rel="noreferrer"
+              className="hover:text-rose-600"
+            >
+              {s.adapter}
+            </a>
+          ))}
+        </div>
+      </div>
+    </article>
   );
 }
 

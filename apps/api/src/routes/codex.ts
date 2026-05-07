@@ -1,6 +1,13 @@
 import { Router } from 'express';
 import { Types } from 'mongoose';
-import { Page, Category, Sender, SenderBrand, normalizeCategoryName } from '@rose/db';
+import {
+  Page,
+  Category,
+  Sender,
+  SenderBrand,
+  normalizeCategoryName,
+  displayCategoryName,
+} from '@rose/db';
 import { userIdOf } from '../middleware/auth.js';
 
 export const codexRouter: Router = Router();
@@ -125,7 +132,10 @@ codexRouter.get('/', async (req, res) => {
       const key = c.normalizedName?.trim() || normalizeCategoryName(c.name ?? '');
       return {
         _id: String(c._id),
-        name: c.name,
+        // Title-case + de-slug at the seam so the UI never has to
+        // guess. Legacy rows whose stored `name` is "email-marketing"
+        // still come back as "Email Marketing".
+        name: displayCategoryName(c.name),
         parentId: c.parentId ? String(c.parentId) : null,
         icon: c.icon ?? null,
         color: c.color ?? null,

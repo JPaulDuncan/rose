@@ -1,8 +1,8 @@
+import type { Logger } from 'pino';
 import { Types } from 'mongoose';
 import { Email, Shipment } from '@rose/db';
 import { trackingUrlFor, type Carrier } from '@rose/shared';
-import { matchShipments, inferStatusFromEmail } from '@rose/shipments';
-import { logger } from '../lib/logger.js';
+import { matchShipments, inferStatusFromEmail } from './extract.js';
 
 /**
  * Scan a single email row for tracking numbers and upsert any
@@ -25,9 +25,12 @@ const STATUS_RANK: Record<string, number> = {
   delivered: 6,
 };
 
-export async function detectShipmentsForEmail(emailId: string): Promise<number> {
+export async function detectShipmentsForEmail(
+  emailId: string,
+  logger?: Pick<Logger, 'debug'>,
+): Promise<number> {
   const email = await Email.findById(emailId)
-    .select('userId subject text from createdAt')
+    .select('userId subject text from createdAt date')
     .lean();
   if (!email) return 0;
   const userId = email.userId as unknown as Types.ObjectId;
@@ -37,7 +40,8 @@ export async function detectShipmentsForEmail(emailId: string): Promise<number> 
   if (matches.length === 0) return 0;
 
   const inferred = inferStatusFromEmail(haystack, subject);
-  const eventDate = (email as { createdAt?: Date }).createdAt ?? new Date();
+  const eventDate =
+    email.date ?? (email as { createdAt?: Date }).createdAt ?? new Date();
   let count = 0;
 
   for (const match of matches) {
@@ -77,7 +81,7 @@ export async function detectShipmentsForEmail(emailId: string): Promise<number> 
         count += 1;
       } catch (err) {
         // Race on the unique index — fall through to update path.
-        logger.debug({ err, trackingNumber: match.trackingNumber }, 'shipment upsert race');
+        logger?.debug({ err, trackingNumber: match.trackingNumber }, 'shipment upsert race');
       }
       continue;
     }

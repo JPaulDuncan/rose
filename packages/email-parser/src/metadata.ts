@@ -1,4 +1,5 @@
 import type { ParsedMail } from 'mailparser';
+import { parse as parseTld } from 'tldts';
 
 export type EmailPriority = 'high' | 'normal' | 'low';
 
@@ -610,6 +611,20 @@ const COMMON_SENDER_PREFIXES = new Set([
   'contact',
 ]);
 
+/**
+ * Brand label for a sender address. Resolves to the registrable
+ * domain's main label (eTLD+1 minus the public suffix), so
+ * `noreply@sender.ally.com` and `thisguy@creditcard.ally.com` both
+ * collapse onto "Ally" — and `news.example.co.uk` yields "Example",
+ * not "co".
+ *
+ * Built on top of the public suffix list via `tldts.parse` so we
+ * don't have to maintain our own multi-part-TLD heuristic.
+ *
+ * Returns null for personal-mail providers (gmail.com, icloud.com,
+ * etc.) — we treat those as "this individual person" rather than a
+ * brand, and the caller falls back to the local part.
+ */
 export function senderDomainTag(addr: string | null | undefined): string | null {
   if (!addr) return null;
   const at = addr.lastIndexOf('@');
@@ -617,19 +632,31 @@ export function senderDomainTag(addr: string | null | undefined): string | null 
   const host = addr.slice(at + 1).toLowerCase().trim();
   if (!host || host.includes(' ') || host.startsWith('[')) return null;
   if (PERSONAL_EMAIL_DOMAINS.has(host)) return null;
-  // Strip common mail-routing subdomain prefixes like "mail.", "email.",
-  // "notifications." so we land on the brand domain.
+  const parsed = parseTld(host, { allowPrivateDomains: false });
+  // domainWithoutSuffix is the registrable domain stripped of its
+  // public suffix — "ally" for "creditcard.ally.com",
+  // "example" for "news.example.co.uk", "github" for "noreply.github.com".
+  // Falls back to the legacy second-label rule when tldts can't
+  // identify the suffix (rare, e.g. local TLDs).
+  const label = parsed.domainWithoutSuffix ?? legacyLabel(host);
+  if (!label || label.length < 2 || label.length > 32) return null;
+  // The full registrable domain (e.g. "ally.com") gets the same
+  // personal-mail check so a corporate-routed gmail.com still bows
+  // out gracefully.
+  const registrable = parsed.domain ?? '';
+  if (PERSONAL_EMAIL_DOMAINS.has(registrable)) return null;
+  return label.charAt(0).toUpperCase() + label.slice(1);
+}
+
+/** Mirrors the pre-`tldts` heuristic so unknown TLDs still produce
+ *  *some* label. Reused as a fallback inside `senderDomainTag`. */
+function legacyLabel(host: string): string | null {
   const parts = host.split('.').filter(Boolean);
   if (parts.length < 2) return null;
   while (parts.length > 2 && COMMON_SENDER_PREFIXES.has(parts[0]!)) {
     parts.shift();
   }
-  // The brand is the second-level label. e.g. medium.com → "medium",
-  // notion.so → "notion", news.ycombinator.com → "ycombinator".
-  const label = parts[parts.length - 2];
-  if (!label || label.length < 2 || label.length > 32) return null;
-  if (PERSONAL_EMAIL_DOMAINS.has(parts.slice(-2).join('.'))) return null;
-  return label.charAt(0).toUpperCase() + label.slice(1);
+  return parts[parts.length - 2] ?? null;
 }
 
 /**

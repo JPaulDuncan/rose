@@ -7,6 +7,7 @@ import {
   Instruction,
   Category,
   normalizeCategoryName,
+  displayCategoryName,
   User,
   Sender,
   SenderBrand,
@@ -765,19 +766,33 @@ export function startGeneratePageWorker() {
       // variants ("Email Marketing", "email-marketing") collapse onto
       // a single Category row.
       let categoryId: Types.ObjectId | null = null;
-      const categoryName = verdict.assignCategory ?? draft.suggestedCategory;
+      const rawCategoryName = verdict.assignCategory ?? draft.suggestedCategory;
+      // Title-case + de-slug at the seam: an LLM-emitted
+      // "email-marketing" lands as "Email Marketing"; an empty
+      // suggestion falls back to "Uncategorized" instead of leaving
+      // the page with no category.
+      const categoryName = displayCategoryName(rawCategoryName ?? '');
       if (categoryName) {
         const normalizedName = normalizeCategoryName(categoryName);
         const cat =
           (await Category.findOne({ userId, normalizedName })) ??
           (await Category.findOne({ userId, name: categoryName }));
         if (cat) {
-          // Make sure the normalizedName is populated on legacy rows
-          // so subsequent lookups hit the indexed path.
+          // Backfill: legacy rows with a kebab-case or lowercased
+          // `name` get rewritten to the canonical Title Case form so
+          // the codex / browse views render consistently going
+          // forward.
+          let dirty = false;
           if (!cat.normalizedName) {
             cat.normalizedName = normalizedName;
-            await cat.save();
+            dirty = true;
           }
+          const display = displayCategoryName(cat.name);
+          if (cat.name !== display) {
+            cat.name = display;
+            dirty = true;
+          }
+          if (dirty) await cat.save();
           categoryId = cat._id as Types.ObjectId;
         } else {
           const created = await Category.create({

@@ -20,7 +20,8 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "mailparser": "^3.7.1"
+    "mailparser": "^3.7.1",
+    "tldts": "^6.1.75"
   },
   "devDependencies": {
     "@rose/config": "workspace:*",

@@ -14,6 +14,53 @@ export function normalizeCategoryName(raw: string): string {
     .trim();
 }
 
+/** Words that stay lowercase when not the leading word — keeps
+ *  "Tools and Apparel" out of "Tools And Apparel" territory. */
+const TITLE_LOWER = new Set([
+  'a',
+  'an',
+  'and',
+  'as',
+  'at',
+  'but',
+  'by',
+  'for',
+  'in',
+  'of',
+  'on',
+  'or',
+  'the',
+  'to',
+  'vs',
+  'with',
+]);
+
+export const UNCATEGORIZED_NAME = 'Uncategorized';
+
+/**
+ * Display-form for a category name. Categories are user-visible and
+ * shouldn't read like URL slugs ("email-marketing"). The LLM is
+ * inconsistent about capitalisation, so this normalises to Title
+ * Case at write time + at render time. Hyphens / underscores fold
+ * into spaces; empty input becomes the canonical "Uncategorized"
+ * fallback so the UI never has to render a null badge.
+ */
+export function displayCategoryName(raw: string | null | undefined): string {
+  const cleaned = (raw ?? '')
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!cleaned) return UNCATEGORIZED_NAME;
+  return cleaned
+    .split(' ')
+    .map((word, idx) => {
+      const lower = word.toLowerCase();
+      if (idx > 0 && TITLE_LOWER.has(lower)) return lower;
+      return lower.charAt(0).toUpperCase() + lower.slice(1);
+    })
+    .join(' ');
+}
+
 const categorySchema = new Schema(
   {
     userId: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },

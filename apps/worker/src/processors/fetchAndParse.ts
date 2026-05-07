@@ -13,6 +13,8 @@ type DomDocument = {
 import { Email } from '@rose/db';
 import { priorityForDate } from '@rose/shared';
 import { senderDomainTag } from '@rose/email-parser';
+import { detectPromoCodesForEmail } from '@rose/promo-codes';
+import { detectShipmentsForEmail } from '@rose/shipments';
 import { safeFetch, UnsafeUrlError } from '../lib/safeFetch.js';
 import { redis } from '../lib/redis.js';
 import { logger } from '../lib/logger.js';
@@ -185,6 +187,16 @@ async function ingestUrl(
       priority: priorityForDate(new Date()),
     },
   );
+  try {
+    await detectPromoCodesForEmail(String(created._id));
+  } catch (err) {
+    logger.warn({ err, emailId: String(created._id) }, 'promo-code detection failed');
+  }
+  try {
+    await detectShipmentsForEmail(String(created._id));
+  } catch (err) {
+    logger.warn({ err, emailId: String(created._id) }, 'shipment detection failed');
+  }
   return created._id as Types.ObjectId;
 }
 
@@ -303,6 +315,16 @@ async function ingestDocument(
       priority: priorityForDate(new Date()),
     },
   );
+  try {
+    await detectPromoCodesForEmail(String(created._id));
+  } catch (err) {
+    logger.warn({ err, emailId: String(created._id) }, 'promo-code detection failed');
+  }
+  try {
+    await detectShipmentsForEmail(String(created._id));
+  } catch (err) {
+    logger.warn({ err, emailId: String(created._id) }, 'shipment detection failed');
+  }
   return created._id as Types.ObjectId;
 }
 

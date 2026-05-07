@@ -353,6 +353,9 @@ importers:
       mailparser:
         specifier: ^3.7.1
         version: 3.9.8
+      tldts:
+        specifier: ^6.1.75
+        version: 6.1.86
     devDependencies:
       '@rose/config':
         specifier: workspace:*
@@ -429,9 +432,18 @@ importers:
 
   packages/shipments:
     dependencies:
+      '@rose/db':
+        specifier: workspace:*
+        version: link:../db
       '@rose/shared':
         specifier: workspace:*
         version: link:../shared
+      mongoose:
+        specifier: ^8.8.0
+        version: 8.23.1(socks@2.8.8)
+      pino:
+        specifier: ^9.5.0
+        version: 9.14.0
     devDependencies:
       '@rose/config':
         specifier: workspace:*
@@ -3517,6 +3529,13 @@ packages:
 
   tlds@1.261.0:
     resolution: {integrity: sha512-QXqwfEl9ddlGBaRFXIvNKK6OhipSiLXuRuLJX5DErz0o0Q0rYxulWLdFryTkV5PkdZct5iMInwYEGe/eR++1AA==}
+    hasBin: true
+
+  tldts-core@6.1.86:
+    resolution: {integrity: sha512-Je6p7pkk+KMzMv2XXKmAE3McmolOQFdxkKw0R8EYNr7sELW46JqnNeTX8ybPiQgvg1ymCoF8LXs5fzFaZvJPTA==}
+
+  tldts@6.1.86:
+    resolution: {integrity: sha512-WMi/OQ2axVTf/ykqCQgXiIct+mSQDFdH2fkwhPwgEwvJ1kSzZRiinb0zF2Xb8u4+OqPChmyI6MEu4EezNJz+FQ==}
     hasBin: true
 
   to-regex-range@5.0.1:
@@ -7069,6 +7088,12 @@ snapshots:
       '@popperjs/core': 2.11.8
 
   tlds@1.261.0: {}
+
+  tldts-core@6.1.86: {}
+
+  tldts@6.1.86:
+    dependencies:
+      tldts-core: 6.1.86
 
   to-regex-range@5.0.1:
     dependencies:

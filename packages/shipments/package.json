@@ -19,7 +19,10 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@rose/shared": "workspace:*"
+    "@rose/db": "workspace:*",
+    "@rose/shared": "workspace:*",
+    "mongoose": "^8.8.0",
+    "pino": "^9.5.0"
   },
   "devDependencies": {
     "@rose/config": "workspace:*",

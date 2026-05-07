@@ -1108,7 +1108,7 @@ type RelatedPage = {
 };
 
 /**
- * "Related Articles" — up to 5 articles with the highest cosine
+ * "Related Articles" — up to 6 articles with the highest cosine
  * similarity to this page's embedding. The endpoint applies the
  * floor (>= 0.55) so an empty list here means "nothing close
  * enough", which is correct UX (better silent than misleading).

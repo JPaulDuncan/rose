@@ -6,7 +6,12 @@ export { Page } from './models/Page.js';
 export type { PageDoc } from './models/Page.js';
 export { PageRevision } from './models/PageRevision.js';
 export type { PageRevisionDoc } from './models/PageRevision.js';
-export { Category, normalizeCategoryName } from './models/Category.js';
+export {
+  Category,
+  normalizeCategoryName,
+  displayCategoryName,
+  UNCATEGORIZED_NAME,
+} from './models/Category.js';
 export type { CategoryDoc } from './models/Category.js';
 export { Instruction } from './models/Instruction.js';
 export type { InstructionDoc } from './models/Instruction.js';

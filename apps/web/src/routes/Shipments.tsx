@@ -98,6 +98,21 @@ export default function ShipmentsPage() {
     onError: (e: Error) => toast.error(e.message),
   });
 
+  const scan = useMutation({
+    mutationFn: async () =>
+      api.post<{ ok: true; scannedEmails: number; shipmentsUpserted: number }>(
+        '/api/shipments/scan',
+        {},
+      ),
+    onSuccess: (r) => {
+      toast.success(
+        `Scanned ${r.scannedEmails} emails, ${r.shipmentsUpserted} shipments saved`,
+      );
+      void qc.invalidateQueries({ queryKey: ['shipments'] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
   const grouped = useMemo(() => groupShipments(data?.shipments ?? []), [data]);
 
   return (
@@ -116,22 +131,36 @@ export default function ShipmentsPage() {
         </p>
       </header>
 
-      <div className="flex flex-wrap gap-2 border-b border-ink-200 pb-3 text-xs dark:border-ink-800">
-        {STATUS_FILTERS.map((f) => (
-          <button
-            key={f.value}
-            type="button"
-            onClick={() => setFilter(f.value)}
-            className={
-              'rounded-full px-3 py-1 ' +
-              (filter === f.value
-                ? 'bg-rose-100 text-rose-800 dark:bg-rose-950/40 dark:text-rose-200'
-                : 'text-ink-500 hover:text-ink-700 dark:hover:text-ink-200')
-            }
-          >
-            {f.label}
-          </button>
-        ))}
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-ink-200 pb-3 text-xs dark:border-ink-800">
+        <div className="flex flex-wrap gap-2">
+          {STATUS_FILTERS.map((f) => (
+            <button
+              key={f.value}
+              type="button"
+              onClick={() => setFilter(f.value)}
+              className={
+                'rounded-full px-3 py-1 ' +
+                (filter === f.value
+                  ? 'bg-rose-100 text-rose-800 dark:bg-rose-950/40 dark:text-rose-200'
+                  : 'text-ink-500 hover:text-ink-700 dark:hover:text-ink-200')
+              }
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
+        <button
+          type="button"
+          className="btn-ghost text-xs"
+          onClick={() => scan.mutate()}
+          disabled={scan.isPending}
+          title="Walk recent emails through tracking-number detection"
+        >
+          <RefreshCw
+            className={'h-3.5 w-3.5' + (scan.isPending ? ' animate-spin' : '')}
+          />{' '}
+          Scan inbox
+        </button>
       </div>
 
       {isLoading ? (
