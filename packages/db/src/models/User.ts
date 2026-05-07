@@ -294,10 +294,16 @@ const userSchema = new Schema(
      * User-curated spam policy. Membership in any of these lists is enough
      * to mark a wiki page (and its source emails) as spam, distinct from the
      * heuristic `flags.hasLikelySpam`.
+     *
+     * `blockedSenders` is stronger than `senders`: the worker drops the
+     * message before it ever becomes an Email row, so it never makes it
+     * into the wiki. Useful for known spammers / mass-mailers the user
+     * doesn't even want to see in /quarantine.
      */
     spamPolicy: {
       senders: { type: [String], default: [], index: true },
       tags: { type: [String], default: [], index: true },
+      blockedSenders: { type: [String], default: [], index: true },
     },
     /**
      * Tags the user wants foregrounded in the newsletter — each becomes

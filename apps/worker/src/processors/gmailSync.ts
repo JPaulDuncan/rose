@@ -1,7 +1,7 @@
 import { Worker, type Job, Queue } from 'bullmq';
 import { google } from 'googleapis';
 import { Types } from 'mongoose';
-import { Source, Email } from '@rose/db';
+import { Source, Email, User } from '@rose/db';
 import { parseEmail } from '@rose/email-parser';
 import { decryptJson, encryptJson } from '../lib/crypto.js';
 import { redis } from '../lib/redis.js';
@@ -43,6 +43,13 @@ export function startGmailSyncWorker() {
       oauth2.setCredentials({ refresh_token: stored.refreshToken });
 
       const gmail = google.gmail({ version: 'v1', auth: oauth2 });
+      // Snapshot the user's blocklist once per sync run (cheap; small).
+      const userPrefs = await User.findById(userId).select('spamPolicy.blockedSenders').lean();
+      const blocked = new Set(
+        ((userPrefs?.spamPolicy?.blockedSenders as string[] | undefined) ?? []).map((a) =>
+          a.toLowerCase(),
+        ),
+      );
       const list = await gmail.users.messages.list({
         userId: 'me',
         maxResults: 25,
@@ -59,6 +66,8 @@ export function startGmailSyncWorker() {
         const raw = full.data.raw ? Buffer.from(full.data.raw, 'base64url') : null;
         if (!raw) continue;
         const cleaned = await parseEmail(raw);
+        const fromAddr = cleaned.from?.address?.toLowerCase() ?? '';
+        if (fromAddr && blocked.has(fromAddr)) continue;
         const exists = await Email.findOne({ userId, rawHash: cleaned.rawHash });
         if (exists) continue;
         const created = await Email.create({

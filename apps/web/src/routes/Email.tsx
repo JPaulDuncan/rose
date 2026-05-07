@@ -1,6 +1,6 @@
-import { useMemo, useRef, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useNavigate, useParams } from 'react-router-dom';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowLeft,
   ExternalLink,
@@ -15,7 +15,14 @@ import {
   Calendar,
   FileText,
   Code2,
+  Reply as ReplyIcon,
+  Trash2,
+  Ban,
+  ShieldOff,
+  ShieldCheck,
+  ChevronDown,
 } from 'lucide-react';
+import toast from 'react-hot-toast';
 import { useApi } from '../lib/api';
 import { DraftReply } from '../components/DraftReply';
 
@@ -47,11 +54,23 @@ type EmailDetail = {
     generatedAt?: string | null;
     edits?: number;
   } | null;
+  sourceId?: string | null;
+  messageId?: string | null;
+  unsubscribeUrls?: string[];
+};
+
+type SpamPolicy = {
+  senders: string[];
+  tags: string[];
+  blockedSenders: string[];
 };
 
 export default function EmailView() {
   const { id } = useParams<{ id: string }>();
   const api = useApi();
+  const qc = useQueryClient();
+  const navigate = useNavigate();
+  const [replyOpen, setReplyOpen] = useState(false);
   const { data, isLoading, error } = useQuery({
     queryKey: ['email', id],
     queryFn: () => api.get<EmailDetail>(`/api/emails/${id}`),
@@ -64,6 +83,89 @@ export default function EmailView() {
     queryFn: () =>
       api.get<{ slug: string; title: string }>(`/api/pages/${data!.pageId}`),
     enabled: !!data?.pageId,
+  });
+
+  const { data: spamPolicy } = useQuery({
+    queryKey: ['spam-policy'],
+    queryFn: () => api.get<SpamPolicy>('/api/spam'),
+  });
+  const senderAddr = data?.from?.address?.toLowerCase() ?? '';
+  const isSpamMarked = !!senderAddr && (spamPolicy?.senders ?? []).includes(senderAddr);
+  const isBlocked = !!senderAddr && (spamPolicy?.blockedSenders ?? []).includes(senderAddr);
+
+  const deleteLocal = useMutation({
+    mutationFn: async () => api.del<{ ok: true }>(`/api/emails/${id}`),
+    onSuccess: () => {
+      toast.success('Removed from your inbox');
+      qc.invalidateQueries({ queryKey: ['emails'] });
+      navigate(pageInfo ? `/p/${pageInfo.slug}` : '/settings/ingest');
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+  const deleteOnSource = useMutation({
+    mutationFn: async () =>
+      api.post<{ ok: true; deletedOnSource: boolean; message?: string }>(
+        `/api/emails/${id}/delete-on-source`,
+      ),
+    onSuccess: (r) => {
+      if (r.deletedOnSource) {
+        toast.success('Removed from the source mailbox');
+      } else {
+        toast.success(r.message ?? 'Removed locally only');
+      }
+      qc.invalidateQueries({ queryKey: ['emails'] });
+      navigate(pageInfo ? `/p/${pageInfo.slug}` : '/settings/ingest');
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+  const markSpam = useMutation({
+    mutationFn: async () =>
+      api.post<{ ok: true; pagesAffected: number }>('/api/spam/sender', {
+        address: senderAddr,
+      }),
+    onSuccess: (r) => {
+      toast.success(
+        `Marked ${senderAddr} as spam${r.pagesAffected ? ` · ${r.pagesAffected} page(s) hidden` : ''}`,
+      );
+      qc.invalidateQueries({ queryKey: ['spam-policy'] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+  const unmarkSpam = useMutation({
+    mutationFn: async () =>
+      api.del<{ ok: true }>(`/api/spam/sender/${encodeURIComponent(senderAddr)}`),
+    onSuccess: () => {
+      toast.success('Unmarked');
+      qc.invalidateQueries({ queryKey: ['spam-policy'] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+  const blockSender = useMutation({
+    mutationFn: async () =>
+      api.post<{
+        ok: true;
+        emailsDeleted: number;
+        pagesDeleted: number;
+        pagesPruned: number;
+      }>('/api/spam/block', { address: senderAddr, removeExisting: true }),
+    onSuccess: (r) => {
+      toast.success(
+        `Blocked ${senderAddr} · removed ${r.emailsDeleted} email(s), ${r.pagesDeleted} page(s)`,
+      );
+      qc.invalidateQueries({ queryKey: ['spam-policy'] });
+      qc.invalidateQueries({ queryKey: ['emails'] });
+      navigate('/settings/ingest');
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+  const unblockSender = useMutation({
+    mutationFn: async () =>
+      api.del<{ ok: true }>(`/api/spam/block/${encodeURIComponent(senderAddr)}`),
+    onSuccess: () => {
+      toast.success('Unblocked — future mail from this sender will ingest normally');
+      qc.invalidateQueries({ queryKey: ['spam-policy'] });
+    },
+    onError: (e: Error) => toast.error(e.message),
   });
 
   // Default to HTML when present (it's almost always the most useful render
@@ -179,6 +281,49 @@ export default function EmailView() {
         </div>
       </header>
 
+      <EmailActionsBar
+        canDeleteOnSource={!!data.sourceId && !!data.messageId}
+        unsubscribeUrl={data.unsubscribeUrls?.[0] ?? null}
+        senderAddr={senderAddr}
+        isSpamMarked={isSpamMarked}
+        isBlocked={isBlocked}
+        onReply={() => setReplyOpen(true)}
+        onDeleteLocal={() => {
+          if (confirm('Remove this email from your inbox? It stays on the source mailbox.')) {
+            deleteLocal.mutate();
+          }
+        }}
+        onDeleteOnSource={() => {
+          if (
+            confirm(
+              'Delete this message from the source mailbox (e.g. Gmail / IMAP)? This is moved to the source\'s Trash where possible — recoverable from the mail provider, not from Rose.',
+            )
+          ) {
+            deleteOnSource.mutate();
+          }
+        }}
+        onMarkSpam={() => markSpam.mutate()}
+        onUnmarkSpam={() => unmarkSpam.mutate()}
+        onBlock={() => {
+          if (
+            confirm(
+              `Block ${senderAddr}?\n\n• Future mail from this sender is dropped during ingest (no Email row, no wiki page).\n• Existing emails from this sender are deleted; pages where they were the only contributor are deleted too.\n• Reversible — unblock from Settings → Spam.`,
+            )
+          ) {
+            blockSender.mutate();
+          }
+        }}
+        onUnblock={() => unblockSender.mutate()}
+        busy={
+          deleteLocal.isPending ||
+          deleteOnSource.isPending ||
+          markSpam.isPending ||
+          unmarkSpam.isPending ||
+          blockSender.isPending ||
+          unblockSender.isPending
+        }
+      />
+
       <BodyTabs view={view} setView={setView} hasHtml={!!data.html} hasRaw={!!data.rawText} />
       <div className="mt-3">
         {view === 'text' && <TextBody text={data.text || data.rawText || ''} />}
@@ -186,7 +331,7 @@ export default function EmailView() {
         {view === 'raw' && <TextBody text={data.rawText || data.text || ''} mono />}
       </div>
 
-      <DraftReply email={data} />
+      <DraftReply email={data} open={replyOpen} onOpenChange={setReplyOpen} />
 
       {data.topics && data.topics.length > 0 && (
         <Section title="Topics" icon={<TagIcon className="h-4 w-4 text-rose-500" />}>
@@ -275,6 +420,240 @@ export default function EmailView() {
           )}
         </dl>
       </Section>
+    </div>
+  );
+}
+
+/**
+ * Toolbar above the body view. Reply / delete (locally or on the source
+ * mailbox) / mark-or-block sender / unsubscribe. The "Delete" control
+ * is a split button: the safe default is local-only ("Remove from
+ * Rose"); the dropdown reveals "Delete on source" which actually
+ * touches the upstream mailbox (IMAP move-to-trash, Gmail trash via
+ * API). Disabled when the email has no source we can reach.
+ */
+function EmailActionsBar({
+  canDeleteOnSource,
+  unsubscribeUrl,
+  senderAddr,
+  isSpamMarked,
+  isBlocked,
+  onReply,
+  onDeleteLocal,
+  onDeleteOnSource,
+  onMarkSpam,
+  onUnmarkSpam,
+  onBlock,
+  onUnblock,
+  busy,
+}: {
+  canDeleteOnSource: boolean;
+  unsubscribeUrl: string | null;
+  senderAddr: string;
+  isSpamMarked: boolean;
+  isBlocked: boolean;
+  onReply: () => void;
+  onDeleteLocal: () => void;
+  onDeleteOnSource: () => void;
+  onMarkSpam: () => void;
+  onUnmarkSpam: () => void;
+  onBlock: () => void;
+  onUnblock: () => void;
+  busy: boolean;
+}) {
+  const [deleteMenu, setDeleteMenu] = useState(false);
+  const [moreMenu, setMoreMenu] = useState(false);
+  const deleteRef = useRef<HTMLDivElement>(null);
+  const moreRef = useRef<HTMLDivElement>(null);
+  // Close popovers on outside click.
+  useEffect(() => {
+    if (!deleteMenu && !moreMenu) return;
+    const onDoc = (e: MouseEvent) => {
+      if (deleteMenu && !deleteRef.current?.contains(e.target as Node)) setDeleteMenu(false);
+      if (moreMenu && !moreRef.current?.contains(e.target as Node)) setMoreMenu(false);
+    };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [deleteMenu, moreMenu]);
+
+  return (
+    <div className="mb-4 flex flex-wrap items-center gap-2 rounded-lg border border-ink-200 bg-ink-50 p-2 dark:border-ink-800 dark:bg-ink-900/50">
+      <button
+        type="button"
+        className="btn-primary text-xs"
+        onClick={onReply}
+        disabled={busy}
+      >
+        <ReplyIcon className="h-3.5 w-3.5" /> Reply
+      </button>
+
+      {/* Split delete: primary action is local-only; dropdown adds
+          "delete on source" (IMAP / Gmail). */}
+      <div ref={deleteRef} className="relative inline-flex">
+        <button
+          type="button"
+          className="btn-secondary rounded-r-none text-xs"
+          onClick={onDeleteLocal}
+          disabled={busy}
+          title="Remove from your Rose inbox; the message stays on the source mailbox."
+        >
+          <Trash2 className="h-3.5 w-3.5" /> Remove
+        </button>
+        <button
+          type="button"
+          className="btn-secondary -ml-px rounded-l-none px-1.5 text-xs"
+          onClick={() => setDeleteMenu((v) => !v)}
+          disabled={busy}
+          aria-label="More delete options"
+        >
+          <ChevronDown className="h-3 w-3" />
+        </button>
+        {deleteMenu && (
+          <div className="absolute left-0 top-full z-30 mt-1 min-w-[240px] rounded-lg border border-ink-200 bg-white p-1 text-xs shadow-lg dark:border-ink-800 dark:bg-ink-950">
+            <button
+              type="button"
+              onClick={() => {
+                setDeleteMenu(false);
+                onDeleteLocal();
+              }}
+              className="flex w-full items-start gap-2 rounded px-2 py-1.5 text-left hover:bg-ink-100 dark:hover:bg-ink-800"
+            >
+              <Trash2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-ink-500" />
+              <span>
+                <span className="font-medium">Remove from Rose</span>
+                <span className="block text-[11px] text-ink-500">
+                  Stays on the source mailbox.
+                </span>
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setDeleteMenu(false);
+                onDeleteOnSource();
+              }}
+              disabled={!canDeleteOnSource}
+              className="flex w-full items-start gap-2 rounded px-2 py-1.5 text-left text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40 dark:text-red-300 dark:hover:bg-red-950/30"
+            >
+              <Trash2 className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              <span>
+                <span className="font-medium">Delete on source</span>
+                <span className="block text-[11px] opacity-80">
+                  Moves the message to your source's Trash (IMAP / Gmail).
+                  {!canDeleteOnSource && ' Not available — no upstream source.'}
+                </span>
+              </span>
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Mark / unmark sender as spam. Toggle. */}
+      {senderAddr && (
+        isSpamMarked ? (
+          <button
+            type="button"
+            className="btn-ghost text-xs"
+            onClick={onUnmarkSpam}
+            disabled={busy}
+            title={`Unmark ${senderAddr} as spam`}
+          >
+            <ShieldCheck className="h-3.5 w-3.5" /> Unmark spam
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="btn-ghost text-xs"
+            onClick={onMarkSpam}
+            disabled={busy}
+            title={`Mark ${senderAddr} as spam — hides existing pages from this sender and biases the spam classifier.`}
+          >
+            <ShieldAlert className="h-3.5 w-3.5" /> Mark sender spam
+          </button>
+        )
+      )}
+
+      {/* Block / unblock sender. Stronger than spam. */}
+      {senderAddr && (
+        isBlocked ? (
+          <button
+            type="button"
+            className="btn-ghost text-xs text-emerald-700 dark:text-emerald-300"
+            onClick={onUnblock}
+            disabled={busy}
+            title={`Unblock ${senderAddr}`}
+          >
+            <ShieldOff className="h-3.5 w-3.5" /> Unblock
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="btn-ghost text-xs text-red-700 dark:text-red-300"
+            onClick={onBlock}
+            disabled={busy}
+            title={`Block ${senderAddr} — drops future messages at ingest and removes existing ones.`}
+          >
+            <Ban className="h-3.5 w-3.5" /> Block sender
+          </button>
+        )
+      )}
+
+      {/* Bonus actions tucked into a "More" popover so the bar stays
+          tight on narrow screens. */}
+      <div ref={moreRef} className="relative ml-auto">
+        <button
+          type="button"
+          className="btn-ghost text-xs"
+          onClick={() => setMoreMenu((v) => !v)}
+          disabled={busy}
+        >
+          More <ChevronDown className="h-3 w-3" />
+        </button>
+        {moreMenu && (
+          <div className="absolute right-0 top-full z-30 mt-1 min-w-[220px] rounded-lg border border-ink-200 bg-white p-1 text-xs shadow-lg dark:border-ink-800 dark:bg-ink-950">
+            {unsubscribeUrl ? (
+              <a
+                href={unsubscribeUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={() => setMoreMenu(false)}
+                className="flex w-full items-start gap-2 rounded px-2 py-1.5 text-left hover:bg-ink-100 dark:hover:bg-ink-800"
+              >
+                <ExternalLink className="mt-0.5 h-3.5 w-3.5 shrink-0 text-ink-500" />
+                <span>
+                  <span className="font-medium">Unsubscribe</span>
+                  <span className="block text-[11px] text-ink-500 truncate">
+                    Opens the sender's unsubscribe URL in a new tab.
+                  </span>
+                </span>
+              </a>
+            ) : (
+              <div className="px-2 py-1.5 text-[11px] text-ink-500">
+                No unsubscribe URL in this email.
+              </div>
+            )}
+            <button
+              type="button"
+              onClick={() => {
+                setMoreMenu(false);
+                navigator.clipboard
+                  .writeText(window.location.href)
+                  .then(() => toast.success('Link copied'))
+                  .catch(() => toast.error('Copy failed'));
+              }}
+              className="flex w-full items-start gap-2 rounded px-2 py-1.5 text-left hover:bg-ink-100 dark:hover:bg-ink-800"
+            >
+              <LinkIcon className="mt-0.5 h-3.5 w-3.5 shrink-0 text-ink-500" />
+              <span>
+                <span className="font-medium">Copy link</span>
+                <span className="block text-[11px] text-ink-500">
+                  This email's URL.
+                </span>
+              </span>
+            </button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

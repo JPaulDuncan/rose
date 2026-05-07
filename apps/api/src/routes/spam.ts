@@ -3,6 +3,7 @@ import { Types } from 'mongoose';
 import {
   SpamSenderRequest,
   SpamTagRequest,
+  BlockSenderRequest,
   type SpamPolicy,
 } from '@rose/shared';
 import { User, Page, Sender, Email } from '@rose/db';
@@ -105,6 +106,8 @@ async function getPolicy(userId: Types.ObjectId): Promise<SpamPolicy> {
   return {
     senders: (user?.spamPolicy?.senders as string[] | undefined) ?? [],
     tags: (user?.spamPolicy?.tags as string[] | undefined) ?? [],
+    blockedSenders:
+      (user?.spamPolicy?.blockedSenders as string[] | undefined) ?? [],
   };
 }
 
@@ -307,4 +310,90 @@ spamRouter.post('/sender/:address/trust', async (req, res) => {
     .lean();
   await trainBayesForEmails(userId, emails, false);
   res.json({ ok: true, address, bayesTrained: emails.length });
+});
+
+/**
+ * Block a sender at the ingestion layer. Anything from this address
+ * (or that arrived from it before the block) gets dropped:
+ *  - The address is added to spamPolicy.blockedSenders, which the
+ *    IMAP/Gmail workers consult before persisting any new message.
+ *  - Existing emails from this sender are deleted; pages where this
+ *    sender was the *only* contributor are deleted too (pages with
+ *    other contributors stay but lose the blocked sender's emails).
+ *  - The Bayes classifier is trained on the sender's recent mail as
+ *    spam, same as a hard block.
+ *
+ * Stronger than `mark sender as spam` (which keeps the data and just
+ * hides the page). Reversible via DELETE /api/spam/block/:address.
+ */
+spamRouter.post('/block', validateBody(BlockSenderRequest), async (req, res) => {
+  const userId = new Types.ObjectId(userIdOf(req));
+  const body = req.body as { address: string; removeExisting?: boolean };
+  const address = normSender(body.address);
+  const removeExisting = body.removeExisting !== false;
+
+  await User.updateOne(
+    { _id: userId },
+    {
+      // Atomic add to blocklist; pull from spam-marked list so the
+      // two policies don't double-count this sender.
+      $addToSet: { 'spamPolicy.blockedSenders': address },
+      $pull: { 'spamPolicy.senders': address },
+    },
+  );
+
+  let emailsDeleted = 0;
+  let pagesDeleted = 0;
+  let pagesPruned = 0;
+  if (removeExisting) {
+    // Train the Bayes classifier first while the spam emails still
+    // exist — once we delete them we lose the training corpus.
+    const emails = await Email.find({ userId, 'from.address': address })
+      .sort({ date: -1 })
+      .limit(200)
+      .select('subject text')
+      .lean();
+    await trainBayesForEmails(userId, emails, true);
+
+    // Identify pages this sender contributed to. Pages where this
+    // sender is the SOLE contributor get deleted; pages with other
+    // contributors just lose the blocked sender's emails.
+    const affectedPages = await Page.find({ userId, senderAddresses: address })
+      .select('_id senderAddresses sourceEmailIds')
+      .lean();
+    for (const page of affectedPages) {
+      const others = (page.senderAddresses ?? []).filter((a: string) => a !== address);
+      if (others.length === 0) {
+        await Page.deleteOne({ _id: page._id, userId });
+        pagesDeleted += 1;
+      } else {
+        await Page.updateOne(
+          { _id: page._id, userId },
+          { $pull: { senderAddresses: address } },
+        );
+        pagesPruned += 1;
+      }
+    }
+
+    const r = await Email.deleteMany({ userId, 'from.address': address });
+    emailsDeleted = r.deletedCount ?? 0;
+  }
+
+  res.json({
+    ok: true,
+    address,
+    emailsDeleted,
+    pagesDeleted,
+    pagesPruned,
+  });
+});
+
+spamRouter.delete('/block/:address', async (req, res) => {
+  const userId = new Types.ObjectId(userIdOf(req));
+  const address = normSender(decodeURIComponent(req.params.address ?? ''));
+  await User.updateOne(
+    { _id: userId },
+    { $pull: { 'spamPolicy.blockedSenders': address } },
+  );
+  res.json({ ok: true, address });
 });

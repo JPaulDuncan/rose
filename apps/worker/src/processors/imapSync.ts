@@ -1,7 +1,7 @@
 import { Worker, type Job, Queue } from 'bullmq';
 import { ImapFlow } from 'imapflow';
 import { Types } from 'mongoose';
-import { Source, Email } from '@rose/db';
+import { Source, Email, User } from '@rose/db';
 import { parseEmail, formatImapError } from '@rose/email-parser';
 import { decryptJson } from '../lib/crypto.js';
 import { redis } from '../lib/redis.js';
@@ -22,6 +22,14 @@ export function startImapSyncWorker() {
       if (!source || source.type !== 'imap' || !source.encryptedConfig) return;
 
       const cfg = decryptJson<ImapConfig>(source.encryptedConfig);
+      // Snapshot the user's blocklist once per sync run so we don't
+      // round-trip Mongo per message. The list is small.
+      const userPrefs = await User.findById(userId).select('spamPolicy.blockedSenders').lean();
+      const blocked = new Set(
+        ((userPrefs?.spamPolicy?.blockedSenders as string[] | undefined) ?? []).map((a) =>
+          a.toLowerCase(),
+        ),
+      );
       const client = new ImapFlow({
         host: cfg.host,
         port: cfg.port,
@@ -75,6 +83,14 @@ export function startImapSyncWorker() {
                 continue;
               }
               const cleaned = await parseEmail(buf);
+              // Hard block — drop on the floor before we spend a row +
+              // page-generation pass on it. Counts as `skippedDup` so
+              // the user's stats keep reading "we ignored this".
+              const fromAddr = cleaned.from?.address?.toLowerCase() ?? '';
+              if (fromAddr && blocked.has(fromAddr)) {
+                skippedDup += 1;
+                continue;
+              }
               const exists = await Email.findOne({ userId, rawHash: cleaned.rawHash });
               if (exists) {
                 skippedDup += 1;

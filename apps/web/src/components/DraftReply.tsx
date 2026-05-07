@@ -29,11 +29,24 @@ type Outbound = {
   createdAt: string;
 };
 
-export function DraftReply({ email }: { email: Email }) {
+export function DraftReply({
+  email,
+  open: controlledOpen,
+  onOpenChange,
+}: {
+  email: Email;
+  /** Optional controlled-component pair so a parent toolbar can open
+   *  the editor on demand (e.g. the email-view "Reply" button). When
+   *  omitted, DraftReply manages its own collapsed/expanded state. */
+  open?: boolean;
+  onOpenChange?: (next: boolean) => void;
+}) {
   const api = useApi();
   const qc = useQueryClient();
   const { token } = useAuth();
-  const [open, setOpen] = useState(false);
+  const [internalOpen, setInternalOpen] = useState(false);
+  const open = controlledOpen ?? internalOpen;
+  const setOpen = onOpenChange ?? setInternalOpen;
   const [draft, setDraft] = useState<string>(email.draftReply ?? '');
   const [streaming, setStreaming] = useState(false);
   const [citations, setCitations] = useState<Record<string, Citation>>({});
