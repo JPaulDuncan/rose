@@ -11,6 +11,8 @@ import {
   Megaphone,
   Bug,
   X,
+  Loader2,
+  Clock,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useApi } from '../../lib/api';
@@ -55,6 +57,21 @@ type Health = {
   ollama: { installedModels: string[]; missingModels: string[] };
 };
 
+type ActiveJob = {
+  id: string;
+  state: 'active' | 'waiting';
+  emailId: string | null;
+  priority: number | null;
+  attemptsMade: number;
+  timestamp: number | null;
+  processedOn: number | null;
+  subject: string | null;
+  from: string | null;
+  fromName: string | null;
+  emailDate: string | null;
+  kind: string | null;
+};
+
 export default function IngestPage() {
   const api = useApi();
   const { token } = useAuth();
@@ -72,6 +89,14 @@ export default function IngestPage() {
     queryKey: ['jobs-health'],
     queryFn: () => api.get<Health>('/api/jobs/health/summary'),
     refetchInterval: 5000,
+  });
+
+  const { data: activeJobs } = useQuery({
+    queryKey: ['jobs-active'],
+    queryFn: () => api.get<{ active: ActiveJob[]; upNext: ActiveJob[] }>('/api/jobs/active'),
+    // Tighter cadence than the email list since this is the
+    // "what's happening right now" widget.
+    refetchInterval: 2000,
   });
 
   const regenerate = useMutation({
@@ -113,6 +138,13 @@ export default function IngestPage() {
       </div>
 
       {health && <HealthBanner health={health} stuckCount={stuckCount} onRetryAll={() => regenerateAll.mutate()} retryPending={regenerateAll.isPending} />}
+
+      {activeJobs && (activeJobs.active.length > 0 || activeJobs.upNext.length > 0) && (
+        <NowProcessingPanel
+          active={activeJobs.active}
+          upNext={activeJobs.upNext}
+        />
+      )}
 
       {isLoading ? (
         <div className="text-ink-500">Loading…</div>
@@ -523,4 +555,101 @@ function EmptyIngest() {
       </Link>
     </div>
   );
+}
+
+/**
+ * "Now processing" panel. Renders the generate-page jobs that are
+ * actively running (with elapsed time) plus a short preview of the
+ * next-up queue in priority order. The panel is the first thing the
+ * user sees on the ingest page so a busy sync isn't a black box.
+ */
+function NowProcessingPanel({
+  active,
+  upNext,
+}: {
+  active: ActiveJob[];
+  upNext: ActiveJob[];
+}) {
+  return (
+    <div className="mb-4 rounded-xl border border-rose-200 bg-rose-50/40 p-3 text-sm dark:border-rose-900/60 dark:bg-rose-950/20">
+      {active.length > 0 ? (
+        <>
+          <div className="mb-2 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-widest text-rose-700 dark:text-rose-300">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            Now processing · {active.length}
+          </div>
+          <ul className="space-y-1.5">
+            {active.map((j) => (
+              <ActiveJobRow key={j.id} job={j} live />
+            ))}
+          </ul>
+        </>
+      ) : (
+        <div className="mb-2 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-widest text-ink-500">
+          <Clock className="h-3.5 w-3.5" />
+          Idle — nothing in flight
+        </div>
+      )}
+      {upNext.length > 0 && (
+        <>
+          <div className="mt-3 mb-1 text-[10px] uppercase tracking-widest text-ink-500">
+            Up next · {upNext.length}
+          </div>
+          <ul className="space-y-1">
+            {upNext.slice(0, 5).map((j) => (
+              <ActiveJobRow key={j.id} job={j} />
+            ))}
+          </ul>
+        </>
+      )}
+    </div>
+  );
+}
+
+function ActiveJobRow({ job, live }: { job: ActiveJob; live?: boolean }) {
+  const subject = job.subject || '(no subject)';
+  const sender = job.fromName || job.from || 'unknown sender';
+  const elapsed = live && job.processedOn
+    ? Math.max(0, Math.floor((Date.now() - job.processedOn) / 1000))
+    : null;
+  const target = job.emailId ? `/e/${job.emailId}` : null;
+  const inner = (
+    <div className="flex items-center gap-2">
+      <span
+        className={
+          'inline-flex h-1.5 w-1.5 shrink-0 rounded-full ' +
+          (live ? 'animate-pulse bg-rose-500' : 'bg-ink-400')
+        }
+      />
+      <span className="min-w-0 flex-1 truncate font-medium">{subject}</span>
+      <span className="hidden truncate text-xs text-ink-500 sm:block">
+        {sender}
+      </span>
+      {elapsed != null && (
+        <span className="font-mono text-[10px] text-ink-500">
+          {formatElapsed(elapsed)}
+        </span>
+      )}
+    </div>
+  );
+  if (!target) {
+    return <li className="rounded px-1 py-0.5">{inner}</li>;
+  }
+  return (
+    <li>
+      <Link
+        to={target}
+        className="block rounded px-1 py-0.5 hover:bg-rose-100/50 dark:hover:bg-rose-950/40"
+      >
+        {inner}
+      </Link>
+    </li>
+  );
+}
+
+function formatElapsed(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`;
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return `${m}m ${s}s`;
 }

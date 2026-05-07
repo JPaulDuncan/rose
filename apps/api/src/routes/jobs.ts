@@ -2,6 +2,8 @@ import { Router } from 'express';
 import type { Request, Response } from 'express';
 import jwt from 'jsonwebtoken';
 import { OllamaProvider } from '@rose/llm';
+import { Email } from '@rose/db';
+import { Types } from 'mongoose';
 import {
   generatePageQueue,
   generatePageEvents,
@@ -48,6 +50,88 @@ jobsRouter.get('/activity', async (_req, res) => {
     waiting += (c.waiting as number | undefined) ?? 0;
   }
   res.json({ active, waiting, busy: active + waiting > 0 });
+});
+
+/**
+ * Currently in-flight generate-page jobs for the calling user, with
+ * each job enriched by the source email's subject, sender, and date
+ * so the ingest queue can render "Currently working on: <subject>"
+ * inline. Also returns the head of the waiting queue (priority
+ * order) so the user sees what's up next.
+ *
+ * Cheap: BullMQ pulls ≤200 active + ≤50 waiting jobs from Redis,
+ * then a single Mongo `$in` lookup hydrates the metadata. Polled
+ * by the ingest page every few seconds.
+ */
+jobsRouter.get('/active', async (req, res) => {
+  const userId = String(userIdOf(req));
+  const userObjId = new Types.ObjectId(userId);
+  const [active, waiting] = await Promise.all([
+    generatePageQueue.getJobs(['active'], 0, 200),
+    generatePageQueue.getJobs(['waiting'], 0, 50),
+  ]);
+
+  type JobLite = {
+    id: string;
+    state: 'active' | 'waiting';
+    emailId: string | null;
+    priority: number | null;
+    attemptsMade: number;
+    timestamp: number | null;
+    processedOn: number | null;
+  };
+
+  const mineActive: JobLite[] = active
+    .filter((j) => (j.data as { userId?: string })?.userId === userId)
+    .map((j) => ({
+      id: String(j.id ?? ''),
+      state: 'active' as const,
+      emailId: (j.data as { emailId?: string })?.emailId ?? null,
+      priority: (j.opts?.priority as number | undefined) ?? null,
+      attemptsMade: j.attemptsMade,
+      timestamp: j.timestamp ?? null,
+      processedOn: j.processedOn ?? null,
+    }));
+  const mineWaiting: JobLite[] = waiting
+    .filter((j) => (j.data as { userId?: string })?.userId === userId)
+    .slice(0, 10)
+    .map((j) => ({
+      id: String(j.id ?? ''),
+      state: 'waiting' as const,
+      emailId: (j.data as { emailId?: string })?.emailId ?? null,
+      priority: (j.opts?.priority as number | undefined) ?? null,
+      attemptsMade: j.attemptsMade,
+      timestamp: j.timestamp ?? null,
+      processedOn: null,
+    }));
+
+  const allEmailIds = [...mineActive, ...mineWaiting]
+    .map((j) => j.emailId)
+    .filter((id): id is string => !!id && Types.ObjectId.isValid(id));
+  const emails = allEmailIds.length
+    ? await Email.find({ userId: userObjId, _id: { $in: allEmailIds } })
+        .select('_id subject from date kind')
+        .lean()
+    : [];
+  const byId = new Map<string, (typeof emails)[number]>();
+  for (const e of emails) byId.set(String(e._id), e);
+
+  const enrich = (j: JobLite) => {
+    const e = j.emailId ? byId.get(j.emailId) : undefined;
+    return {
+      ...j,
+      subject: e?.subject ?? null,
+      from: e?.from?.address ?? null,
+      fromName: e?.from?.name ?? null,
+      emailDate: e?.date ?? null,
+      kind: e?.kind ?? null,
+    };
+  };
+
+  res.json({
+    active: mineActive.map(enrich),
+    upNext: mineWaiting.map(enrich),
+  });
 });
 
 jobsRouter.get('/:id', async (req, res) => {
