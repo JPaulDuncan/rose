@@ -1,4 +1,4 @@
-import { Page, DaydreamNote, Sender, SenderBrand } from '@rose/db';
+import { Page, DaydreamNote, Sender, SenderBrand, User } from '@rose/db';
 import { Types } from 'mongoose';
 import { logger } from '../lib/logger.js';
 
@@ -382,3 +382,26 @@ export async function migrateSenderStripBrandFields(): Promise<void> {
     'sender brand-global field strip completed',
   );
 }
+
+/**
+ * Earlier admin-reset / dataIo-import paths set `User.weatherLocation`
+ * to literal `null`. The schema declares it as a sub-document, so the
+ * weather PUT (which used dotted-path `$set` like
+ * `weatherLocation.label`) crashes with "Cannot create field 'label'
+ * in element {weatherLocation: null}". Fix forward + back: the route
+ * code now writes the whole sub-document, and this migration unsticks
+ * any existing rows by removing the literal-null field. Idempotent.
+ */
+export async function migrateWeatherLocationNulls(): Promise<void> {
+  const r = await User.updateMany(
+    { weatherLocation: null },
+    { $unset: { weatherLocation: 1 } },
+  );
+  if ((r.modifiedCount ?? 0) > 0) {
+    logger.info(
+      { fixed: r.modifiedCount },
+      'cleared literal-null User.weatherLocation rows',
+    );
+  }
+}
+

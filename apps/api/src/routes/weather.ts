@@ -238,10 +238,15 @@ weatherRouter.post('/location', validateBody(SetLocationRequest), async (req, re
       { _id: userId },
       {
         $set: {
-          'weatherLocation.lat': location.lat,
-          'weatherLocation.lon': location.lon,
-          'weatherLocation.label': location.label,
-          'weatherLocation.setAt': new Date(),
+          // Write the whole sub-document in one shot so this works whether
+          // the prior value was a sub-doc, missing, or literal null (admin
+          // reset / dataIo import paths used to leave it as null).
+          weatherLocation: {
+            lat: location.lat,
+            lon: location.lon,
+            label: location.label,
+            setAt: new Date(),
+          },
         },
       },
     );
@@ -259,7 +264,7 @@ weatherRouter.delete('/location', async (req, res) => {
   const userId = new Types.ObjectId(userIdOf(req));
   await User.updateOne(
     { _id: userId },
-    { $set: { 'weatherLocation.lat': null, 'weatherLocation.lon': null, 'weatherLocation.label': null } },
+    { $unset: { weatherLocation: 1 } },
   );
   for (const k of [...briefCache.keys()]) {
     if (k.startsWith(`${userId.toString()}:`)) briefCache.delete(k);

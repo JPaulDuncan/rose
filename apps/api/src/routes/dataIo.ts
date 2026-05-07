@@ -310,18 +310,23 @@ dataIoRouter.post('/import', upload.single('file'), async (req, res) => {
   // + featuredTags + weatherLocation. Don't touch email, password,
   // providers (those are install-specific).
   const userPayload = (parsed.user ?? {}) as Record<string, unknown>;
-  await User.updateOne(
-    { _id: userId },
-    {
-      $set: {
-        settings: userPayload.settings ?? {},
-        spamPolicy: userPayload.spamPolicy ?? { senders: [], tags: [] },
-        featuredTags: userPayload.featuredTags ?? [],
-        weatherLocation: userPayload.weatherLocation ?? null,
-        savedSearches: userPayload.savedSearches ?? [],
-      },
-    },
-  );
+  const set: Record<string, unknown> = {
+    settings: userPayload.settings ?? {},
+    spamPolicy: userPayload.spamPolicy ?? { senders: [], tags: [] },
+    featuredTags: userPayload.featuredTags ?? [],
+    savedSearches: userPayload.savedSearches ?? [],
+  };
+  // weatherLocation is a sub-document; writing literal null breaks any
+  // later PUT that targets sub-fields (`weatherLocation.label`, etc.).
+  // Either set the whole sub-doc when present, or clear it via $unset.
+  const update: { $set: typeof set; $unset?: { weatherLocation: 1 } } = { $set: set };
+  const wl = userPayload.weatherLocation as Record<string, unknown> | null | undefined;
+  if (wl && typeof wl === 'object') {
+    set.weatherLocation = wl;
+  } else {
+    update.$unset = { weatherLocation: 1 };
+  }
+  await User.updateOne({ _id: userId }, update);
 
   res.json({
     ok: true,

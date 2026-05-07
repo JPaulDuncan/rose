@@ -224,14 +224,16 @@ const SCOPES: Scope[] = [
     description:
       'Embedded in every User document. Clears `savedSearches[]`, `featuredTags[]`, and `weatherLocation` for every user.',
     run: async () => {
+      // Two-stage update: $set + $unset can't share an updateMany call
+      // when they touch overlapping fields, but here they don't, so we
+      // can do it in one. $unset on weatherLocation removes the field
+      // entirely rather than leaving the literal value `null`, which
+      // would break the next PUT that tries to set sub-fields.
       const r = await User.updateMany(
         {},
         {
-          $set: {
-            savedSearches: [],
-            featuredTags: [],
-            weatherLocation: null,
-          },
+          $set: { savedSearches: [], featuredTags: [] },
+          $unset: { weatherLocation: 1 },
         },
       );
       return { deleted: r.modifiedCount ?? 0 };

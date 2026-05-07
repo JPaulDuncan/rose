@@ -167,6 +167,7 @@ async function bootstrap() {
       migrateDaydreamNotesToGlobal,
       migrateSenderBrandsToGlobal,
       migrateSenderStripBrandFields,
+      migrateWeatherLocationNulls,
     } = await import('./services/migrations.js');
     await migrateLegacyThreadKey();
     // Plan 14 — collapse per-user DaydreamNote duplicates into one
@@ -177,9 +178,12 @@ async function bootstrap() {
     // collection from existing per-user Sender rows. Idempotent.
     await migrateSenderBrandsToGlobal();
     // Plan 15 — drop the now-redundant brand-global fields from
-    // per-user Sender rows; preserve user customisations as
+    // per-user Sender rows; preserve user customizations as
     // overrides (nameOverride / logoUrlOverride). Idempotent.
     await migrateSenderStripBrandFields();
+    // Unstick any User docs whose weatherLocation got written as
+    // literal null by earlier admin-reset / import paths.
+    await migrateWeatherLocationNulls();
   } catch (err) {
     logger.warn({ err }, 'boot-time migration failed');
   }
