@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { PageUpdateRequest, priorityForDate } from '@rose/shared';
 import { userIdOf } from '../middleware/auth.js';
 import { validateBody } from '../middleware/validate.js';
-import { Page, SenderBrand, DaydreamNote, TagCanonical, Email, titleCaseTag, Category, normalizeCategoryName } from '@rose/db';
+import { Page, SenderBrand, DaydreamNote, TagCanonical, Email, titleCaseTag, Category, normalizeCategoryName, Shipment, PromoCode } from '@rose/db';
 import { PageRevision } from '@rose/db';
 import { SYSTEM_PROMPT_BASE, extractJson } from '@rose/llm';
 import { resolveProviderForUser } from '../lib/providers.js';
@@ -229,6 +229,46 @@ pagesRouter.delete('/:id', async (req, res) => {
   await Page.deleteOne({ _id: req.params.id, userId });
   await PageRevision.deleteMany({ pageId: req.params.id });
   res.json({ ok: true });
+});
+
+/**
+ * Side-data for the page view's right rail: any promo codes or
+ * shipments whose source email is one of this page's
+ * `sourceEmailIds`. Surfaced as small cards above the Places card so
+ * a "Recap" article that mentions a tracking number / coupon doesn't
+ * bury the actionable bit. Both lists come back ordered by
+ * "still useful" first — non-archived / non-used promo codes ahead
+ * of the rest, in-flight shipments ahead of delivered ones.
+ */
+pagesRouter.get('/:id/extras', async (req, res) => {
+  const userId = new Types.ObjectId(userIdOf(req));
+  if (!Types.ObjectId.isValid(req.params.id ?? '')) {
+    res.status(400).json({ error: 'invalid_request' });
+    return;
+  }
+  const page = await Page.findOne({ _id: req.params.id, userId })
+    .select('sourceEmailIds')
+    .lean();
+  if (!page) {
+    res.status(404).json({ error: 'not_found' });
+    return;
+  }
+  const emailIds = (page.sourceEmailIds ?? []) as Types.ObjectId[];
+  if (emailIds.length === 0) {
+    res.json({ promoCodes: [], shipments: [] });
+    return;
+  }
+  const [promoCodes, shipments] = await Promise.all([
+    PromoCode.find({ userId, emailId: { $in: emailIds } })
+      .sort({ archivedAt: 1, usedAt: 1, expiresAt: 1, createdAt: -1 })
+      .limit(20)
+      .lean(),
+    Shipment.find({ userId, sourceEmailIds: { $in: emailIds } })
+      .sort({ updatedAt: -1 })
+      .limit(20)
+      .lean(),
+  ]);
+  res.json({ promoCodes, shipments });
 });
 
 const PrioritySetRequest = z.object({

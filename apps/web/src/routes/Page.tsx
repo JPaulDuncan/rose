@@ -33,6 +33,13 @@ import {
   User as UserIcon,
   Film,
   Building2,
+  Package,
+  Copy,
+  Truck,
+  CheckCircle2,
+  AlertTriangle,
+  RotateCcw,
+  Clock,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import ReactMarkdown from 'react-markdown';
@@ -390,6 +397,7 @@ export default function PageView() {
               attachments. Sticky at top so they stay in view when the
               body scrolls past them. */}
           <aside className="space-y-4 lg:sticky lg:top-4 lg:self-start">
+            <PageExtrasBlock pageId={page._id} />
             <PlacesCard places={page.places ?? []} />
             <MentionsCard entities={page.entities ?? []} />
             <TopicsBlock topics={page.topics ?? []} />
@@ -2355,5 +2363,264 @@ function PriorityControl({
         <option value="low">Low</option>
       </select>
     </label>
+  );
+}
+
+/* ─── Right-rail extras: shipments + promo codes ──────────────────── */
+
+type ExtrasShipment = {
+  _id: string;
+  carrier: 'ups' | 'fedex' | 'usps' | 'dhl' | 'unknown';
+  trackingNumber: string;
+  label: string | null;
+  status:
+    | 'detected'
+    | 'in_transit'
+    | 'out_for_delivery'
+    | 'delivered'
+    | 'exception'
+    | 'returned'
+    | 'unknown';
+  trackingUrl: string;
+  lastEventDescription: string | null;
+  lastEventAt: string | null;
+  estimatedDeliveryAt: string | null;
+  deliveredAt: string | null;
+};
+
+type ExtrasPromoCode = {
+  _id: string;
+  code: string;
+  brandLabel: string | null;
+  brand: string | null;
+  description: string;
+  discount: string | null;
+  expiresAt: string | null;
+  usedAt: string | null;
+  archivedAt: string | null;
+};
+
+/**
+ * Right-rail block that surfaces any promo codes / shipments
+ * Rose detected on the page's source emails. Renders in the same
+ * visual language as the standalone Promotional Codes and Shipment
+ * Statuses pages, just compacted to fit the narrower rail. Hidden
+ * outright when both lists come back empty so most articles don't
+ * grow an extra blank card.
+ */
+function PageExtrasBlock({ pageId }: { pageId: string }) {
+  const api = useApi();
+  const { data } = useQuery({
+    queryKey: ['page-extras', pageId],
+    queryFn: () =>
+      api.get<{ promoCodes: ExtrasPromoCode[]; shipments: ExtrasShipment[] }>(
+        `/api/pages/${pageId}/extras`,
+      ),
+  });
+  const shipments = data?.shipments ?? [];
+  const promoCodes = data?.promoCodes ?? [];
+  if (shipments.length === 0 && promoCodes.length === 0) return null;
+  return (
+    <>
+      {shipments.length > 0 && <ShipmentsRailCard shipments={shipments} />}
+      {promoCodes.length > 0 && <PromoCodesRailCard promoCodes={promoCodes} />}
+    </>
+  );
+}
+
+const CARRIER_LABELS: Record<ExtrasShipment['carrier'], string> = {
+  ups: 'UPS',
+  fedex: 'FedEx',
+  usps: 'USPS',
+  dhl: 'DHL',
+  unknown: 'Unknown',
+};
+
+const STATUS_LABELS: Record<ExtrasShipment['status'], string> = {
+  detected: 'Detected',
+  in_transit: 'In transit',
+  out_for_delivery: 'Out for delivery',
+  delivered: 'Delivered',
+  exception: 'Exception',
+  returned: 'Returned',
+  unknown: 'Unknown',
+};
+
+function ShipmentsRailCard({ shipments }: { shipments: ExtrasShipment[] }) {
+  return (
+    <div className="card">
+      <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold">
+        <Package className="h-4 w-4 text-rose-500" />
+        Shipments
+        <span className="ml-1 text-xs text-ink-500">({shipments.length})</span>
+      </h3>
+      <ul className="space-y-2">
+        {shipments.map((s) => (
+          <li key={s._id} className="rounded-lg border border-ink-200 p-2 text-xs dark:border-ink-800">
+            <div className="flex items-center gap-2">
+              <ShipmentStatusBadge status={s.status} />
+              <span className="font-medium">{STATUS_LABELS[s.status]}</span>
+              <span className="ml-auto rounded bg-ink-100 px-1.5 py-0.5 text-[10px] uppercase tracking-widest text-ink-700 dark:bg-ink-800 dark:text-ink-200">
+                {CARRIER_LABELS[s.carrier]}
+              </span>
+            </div>
+            <div className="mt-1 truncate font-mono text-[11px]">
+              {s.trackingNumber}
+            </div>
+            {s.lastEventDescription && (
+              <div className="mt-0.5 line-clamp-2 text-ink-500">
+                {s.lastEventDescription}
+              </div>
+            )}
+            {s.estimatedDeliveryAt && s.status !== 'delivered' && (
+              <div className="mt-0.5 text-[11px] text-amber-700 dark:text-amber-300">
+                ETA {new Date(s.estimatedDeliveryAt).toLocaleDateString()}
+              </div>
+            )}
+            <div className="mt-1.5 flex items-center gap-2 text-[11px]">
+              <a
+                href={s.trackingUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="text-rose-600 hover:underline dark:text-rose-300"
+              >
+                Track at carrier
+              </a>
+              <Link to="/shipments" className="ml-auto text-ink-500 hover:underline">
+                Open Shipments
+              </Link>
+            </div>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function ShipmentStatusBadge({ status }: { status: ExtrasShipment['status'] }) {
+  const cls = 'inline-flex h-4 w-4 items-center justify-center rounded-full';
+  switch (status) {
+    case 'delivered':
+      return (
+        <span className={cls + ' bg-emerald-500/15 text-emerald-600 dark:text-emerald-300'}>
+          <CheckCircle2 className="h-3 w-3" />
+        </span>
+      );
+    case 'out_for_delivery':
+      return (
+        <span className={cls + ' bg-rose-500/15 text-rose-600 dark:text-rose-300'}>
+          <Truck className="h-3 w-3" />
+        </span>
+      );
+    case 'exception':
+      return (
+        <span className={cls + ' bg-amber-500/15 text-amber-700 dark:text-amber-300'}>
+          <AlertTriangle className="h-3 w-3" />
+        </span>
+      );
+    case 'returned':
+      return (
+        <span className={cls + ' bg-ink-300/40 text-ink-700 dark:text-ink-200'}>
+          <RotateCcw className="h-3 w-3" />
+        </span>
+      );
+    case 'in_transit':
+      return (
+        <span className={cls + ' bg-sky-500/15 text-sky-600 dark:text-sky-300'}>
+          <Truck className="h-3 w-3" />
+        </span>
+      );
+    default:
+      return (
+        <span className={cls + ' bg-ink-200/60 text-ink-600 dark:bg-ink-800 dark:text-ink-300'}>
+          <Clock className="h-3 w-3" />
+        </span>
+      );
+  }
+}
+
+function PromoCodesRailCard({ promoCodes }: { promoCodes: ExtrasPromoCode[] }) {
+  return (
+    <div className="card">
+      <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold">
+        <TagIcon className="h-4 w-4 text-rose-500" />
+        Promo codes
+        <span className="ml-1 text-xs text-ink-500">({promoCodes.length})</span>
+      </h3>
+      <ul className="space-y-2">
+        {promoCodes.map((c) => {
+          const expires = c.expiresAt ? new Date(c.expiresAt) : null;
+          const expired = expires ? expires.getTime() < Date.now() : false;
+          const isUsed = !!c.usedAt;
+          const isArchived = !!c.archivedAt;
+          const dim = isUsed || isArchived || expired;
+          return (
+            <li
+              key={c._id}
+              className={
+                'rounded-lg border border-ink-200 p-2 text-xs dark:border-ink-800 ' +
+                (dim ? 'opacity-60' : '')
+              }
+            >
+              <div className="flex items-center gap-1.5">
+                <code
+                  className={
+                    'rounded bg-rose-100 px-1.5 py-0.5 font-mono text-[11px] font-bold text-rose-800 dark:bg-rose-950/40 dark:text-rose-200 ' +
+                    (isUsed ? 'line-through decoration-2' : '')
+                  }
+                >
+                  {c.code}
+                </code>
+                <button
+                  type="button"
+                  className="btn-ghost text-xs"
+                  onClick={() => {
+                    void navigator.clipboard.writeText(c.code).catch(() => null);
+                    toast.success('Copied');
+                  }}
+                  title="Copy code"
+                >
+                  <Copy className="h-3 w-3" />
+                </button>
+                {c.discount && (
+                  <span className="ml-auto text-[11px] font-medium text-emerald-700 dark:text-emerald-300">
+                    {c.discount}
+                  </span>
+                )}
+              </div>
+              {c.brandLabel && (
+                <div className="mt-1 text-[10px] uppercase tracking-widest text-ink-500">
+                  {c.brandLabel}
+                </div>
+              )}
+              {c.description && (
+                <p className="mt-0.5 line-clamp-2 text-ink-600 dark:text-ink-300">
+                  {c.description}
+                </p>
+              )}
+              {expires && (
+                <div
+                  className={
+                    'mt-1 inline-flex items-center gap-1 text-[11px] ' +
+                    (expired
+                      ? 'text-red-600 dark:text-red-400'
+                      : 'text-amber-700 dark:text-amber-300')
+                  }
+                >
+                  <Clock className="h-3 w-3" />
+                  {expired ? 'Expired ' : 'Expires '}
+                  {expires.toLocaleDateString()}
+                </div>
+              )}
+            </li>
+          );
+        })}
+        <li className="text-right">
+          <Link to="/promo-codes" className="text-[11px] text-ink-500 hover:underline">
+            Open Promotional Codes
+          </Link>
+        </li>
+      </ul>
+    </div>
   );
 }
