@@ -16,8 +16,15 @@ emailsRouter.get('/', async (req, res) => {
   const userId = new Types.ObjectId(userIdOf(req));
   const status = (req.query.status as string | undefined) ?? undefined;
   const limit = Math.min(Number(req.query.limit ?? 50), 200);
+  // `archived=1` returns only archived emails, `all=1` returns both.
+  // Default scope is "active" so the recipe-side archive action hides
+  // matching emails from the ingest queue without losing them.
+  const archived = req.query.archived === '1';
+  const includeAll = req.query.all === '1';
   const filter: Record<string, unknown> = { userId };
   if (status) filter.ingestStatus = status;
+  if (archived) filter.archivedAt = { $ne: null };
+  else if (!includeAll) filter.archivedAt = null;
   const emails = await Email.find(filter)
     .sort({ createdAt: -1 })
     .limit(limit)

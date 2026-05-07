@@ -75,6 +75,10 @@ const ACTIONS: {
   kind: string;
   label: string;
   defaultConfig: Record<string, unknown>;
+  /** Email-shaped actions only run when the trigger is email.ingested.
+   *  We still let the user configure them so they can compose from
+   *  multiple recipes, but the wizard highlights the constraint. */
+  requires?: 'email' | 'page';
 }[] = [
   {
     kind: 'notify.push',
@@ -82,14 +86,51 @@ const ACTIONS: {
     defaultConfig: {},
   },
   {
+    kind: 'llm.run',
+    label: 'Run an LLM prompt',
+    defaultConfig: { prompt: '', output: 'push' },
+  },
+  {
+    kind: 'email.archive',
+    label: 'Archive the email',
+    defaultConfig: {},
+    requires: 'email',
+  },
+  {
+    kind: 'email.delete',
+    label: 'Delete the email (Rose only)',
+    defaultConfig: {},
+    requires: 'email',
+  },
+  {
+    kind: 'email.deleteOnSource',
+    label: 'Delete the email at source (IMAP/Gmail)',
+    defaultConfig: { deleteLocal: true },
+    requires: 'email',
+  },
+  {
+    kind: 'email.markSpam',
+    label: 'Mark the sender as spam',
+    defaultConfig: {},
+    requires: 'email',
+  },
+  {
+    kind: 'email.block',
+    label: 'Block the sender',
+    defaultConfig: { removeExisting: true },
+    requires: 'email',
+  },
+  {
     kind: 'tag.add',
-    label: 'Add a tag to the page',
+    label: 'Add a tag to the article',
     defaultConfig: { tag: '' },
+    requires: 'page',
   },
   {
     kind: 'category.set',
-    label: 'Set the page category',
+    label: 'Set the article category',
     defaultConfig: { name: '' },
+    requires: 'page',
   },
   {
     kind: 'webhook.post',
@@ -678,6 +719,104 @@ function ActionConfig({
           onChange={(e) => setCfg('url', e.target.value)}
         />
       </Field>
+    );
+  }
+  if (kind === 'email.delete' || kind === 'email.archive' || kind === 'email.markSpam') {
+    return (
+      <p className="text-xs text-ink-500">
+        No options. Runs against the email that triggered this recipe.
+      </p>
+    );
+  }
+  if (kind === 'email.deleteOnSource') {
+    return (
+      <label className="flex items-center gap-2 text-sm">
+        <input
+          type="checkbox"
+          checked={(config.deleteLocal as boolean) ?? true}
+          onChange={(e) => setCfg('deleteLocal', e.target.checked)}
+          className="h-4 w-4 accent-rose-500"
+        />
+        <span>Also remove the local Rose copy after the source delete attempt.</span>
+      </label>
+    );
+  }
+  if (kind === 'email.block') {
+    return (
+      <label className="flex items-center gap-2 text-sm">
+        <input
+          type="checkbox"
+          checked={(config.removeExisting as boolean) ?? true}
+          onChange={(e) => setCfg('removeExisting', e.target.checked)}
+          className="h-4 w-4 accent-rose-500"
+        />
+        <span>
+          Also delete every existing email and article from this sender.
+        </span>
+      </label>
+    );
+  }
+  if (kind === 'llm.run') {
+    return (
+      <div className="space-y-3">
+        <Field
+          label="Prompt"
+          hint='Mustache vars: {{from}}, {{subject}}, {{body}} for emails; {{title}}, {{summary}}, {{body}}, {{tag}} for articles.'
+        >
+          <textarea
+            className="input min-h-[80px] font-mono text-xs"
+            placeholder="Summarize this email in one sentence: {{subject}} — {{body}}"
+            value={(config.prompt as string) ?? ''}
+            onChange={(e) => setCfg('prompt', e.target.value)}
+            maxLength={4000}
+          />
+        </Field>
+        <Field
+          label="System prompt (optional)"
+          hint="Tone or persona for the model. Falls back to a neutral assistant."
+        >
+          <input
+            className="input"
+            value={(config.system as string) ?? ''}
+            onChange={(e) => setCfg('system', e.target.value)}
+            maxLength={2000}
+          />
+        </Field>
+        <div className="grid gap-3 sm:grid-cols-3">
+          <Field
+            label="Output"
+            hint="Where the LLM's reply lands. push = notification, tag = page tags."
+          >
+            <select
+              className="input"
+              value={(config.output as string) ?? 'push'}
+              onChange={(e) => setCfg('output', e.target.value)}
+            >
+              <option value="push">Push notification</option>
+              <option value="tag">Add as tags (page only)</option>
+              <option value="audit-only">Audit log only</option>
+            </select>
+          </Field>
+          <Field label="Push title" hint="Used when output = push.">
+            <input
+              className="input"
+              value={(config.pushTitle as string) ?? ''}
+              onChange={(e) => setCfg('pushTitle', e.target.value)}
+              maxLength={80}
+            />
+          </Field>
+          <Field label="Max tokens" hint="Cap on reply length (1–4000).">
+            <input
+              className="input"
+              type="number"
+              min={1}
+              max={4000}
+              value={(config.maxTokens as number) ?? 400}
+              onChange={(e) => setCfg('maxTokens', Number(e.target.value))}
+            />
+          </Field>
+        </div>
+      </div>
     );
   }
   return null;

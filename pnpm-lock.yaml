@@ -35,6 +35,9 @@ importers:
       '@rose/shared':
         specifier: workspace:*
         version: link:../../packages/shared
+      '@rose/shipments':
+        specifier: workspace:*
+        version: link:../../packages/shipments
       argon2:
         specifier: ^0.41.1
         version: 0.41.1
@@ -244,6 +247,9 @@ importers:
       '@rose/shared':
         specifier: workspace:*
         version: link:../../packages/shared
+      '@rose/shipments':
+        specifier: workspace:*
+        version: link:../../packages/shipments
       bullmq:
         specifier: ^5.21.2
         version: 5.76.4
@@ -386,6 +392,22 @@ importers:
       '@rose/config':
         specifier: workspace:*
         version: link:../config
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+
+  packages/shipments:
+    dependencies:
+      '@rose/shared':
+        specifier: workspace:*
+        version: link:../shared
+    devDependencies:
+      '@rose/config':
+        specifier: workspace:*
+        version: link:../config
+      '@types/node':
+        specifier: ^22.7.5
+        version: 22.19.17
       typescript:
         specifier: ^5.6.3
         version: 5.9.3

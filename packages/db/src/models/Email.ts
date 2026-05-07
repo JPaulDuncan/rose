@@ -163,6 +163,10 @@ const emailSchema = new Schema(
       edits: { type: Number, default: 0 },
     },
     error: { type: String, default: null },
+    /** Soft-archive marker. When set, list views filter the email out
+     *  by default (data is preserved and reachable via the archive view).
+     *  Set by the email.archive recipe action and the manual archive UI. */
+    archivedAt: { type: Date, default: null, index: true },
   },
   { timestamps: true },
 );

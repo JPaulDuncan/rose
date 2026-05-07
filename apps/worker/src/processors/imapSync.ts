@@ -7,6 +7,7 @@ import { decryptJson } from '../lib/crypto.js';
 import { redis } from '../lib/redis.js';
 import { logger } from '../lib/logger.js';
 import { emitRecipeEvent } from '../lib/recipeEmit.js';
+import { detectShipmentsForEmail } from '../shipments/upsert.js';
 import type { ImapConfig } from '@rose/shared';
 
 const QUEUE = 'rose.imap-sync';
@@ -155,6 +156,13 @@ export function startImapSyncWorker() {
                 priority: cleaned.metadata.priority ?? null,
                 tags: cleaned.metadata.topics ?? [],
               });
+              // Best-effort tracking-number detection. Wrapped so a
+              // shipment-side failure can't take down ingestion.
+              try {
+                await detectShipmentsForEmail(String(created._id));
+              } catch (err) {
+                logger.warn({ err, emailId: String(created._id) }, 'shipment detection failed');
+              }
               ingested += 1;
             } catch (perMsgErr) {
               failed += 1;

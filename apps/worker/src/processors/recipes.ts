@@ -4,6 +4,8 @@ import {
   Recipe,
   RecipeAudit,
   Page,
+  Email,
+  User,
   Category,
   normalizeCategoryName,
   type RecipeDoc,
@@ -18,6 +20,8 @@ import { assertSafeHttpUrl } from '@rose/llm';
 import { redis } from '../lib/redis.js';
 import { logger } from '../lib/logger.js';
 import { pushToUser } from './pushNotify.js';
+import { deleteOnSource as deleteEmailOnSource } from '../lib/sourceMailDelete.js';
+import { resolveProviderForUser } from '../lib/providers.js';
 
 const QUEUE = 'rose.recipes';
 const WEBHOOK_TIMEOUT_MS = 15_000;
@@ -146,7 +150,14 @@ async function checkRateLimit(
 
 /* ─── Action runners ──────────────────────────────────────────────── */
 
-type ActionResult = { ok: boolean; error?: string; durationMs: number };
+type ActionResult = {
+  ok: boolean;
+  error?: string;
+  durationMs: number;
+  /** Free-form action-specific evidence (LLM reply preview, deleteOnSource
+   *  reason, etc.) — surfaced in RecipeAudit so the user can debug. */
+  detail?: string;
+};
 
 async function runNotifyPush(
   userId: Types.ObjectId,
@@ -218,6 +229,227 @@ async function runCategorySet(
   );
 }
 
+/* ─── Email-shaped actions ───────────────────────────────────────── */
+
+function requireEmailEvent(
+  event: RecipeEvent,
+  actionKind: string,
+): event is Extract<RecipeEvent, { kind: 'email.ingested' }> {
+  if (event.kind !== 'email.ingested') {
+    throw new Error(`${actionKind} requires an email subject`);
+  }
+  return true;
+}
+
+async function runEmailDelete(
+  userId: Types.ObjectId,
+  event: RecipeEvent,
+): Promise<void> {
+  if (!requireEmailEvent(event, 'email.delete')) return;
+  await Email.deleteOne({ _id: new Types.ObjectId(event.emailId), userId });
+}
+
+async function runEmailDeleteOnSource(
+  userId: Types.ObjectId,
+  config: { deleteLocal?: boolean },
+  event: RecipeEvent,
+): Promise<{ deletedOnSource: boolean; reason?: string }> {
+  if (!requireEmailEvent(event, 'email.deleteOnSource')) {
+    return { deletedOnSource: false };
+  }
+  const email = await Email.findOne({
+    _id: new Types.ObjectId(event.emailId),
+    userId,
+  })
+    .select('messageId sourceId')
+    .lean();
+  if (!email) {
+    return { deletedOnSource: false, reason: 'email already gone' };
+  }
+  const result = await deleteEmailOnSource(email.sourceId, email.messageId ?? null);
+  if (config.deleteLocal !== false) {
+    await Email.deleteOne({ _id: new Types.ObjectId(event.emailId), userId });
+  }
+  return result;
+}
+
+async function runEmailMarkSpam(
+  userId: Types.ObjectId,
+  event: RecipeEvent,
+): Promise<void> {
+  if (!requireEmailEvent(event, 'email.markSpam')) return;
+  const address = (event.from ?? '').toLowerCase().trim();
+  if (!address) throw new Error('email.markSpam: email has no sender address');
+  await User.updateOne(
+    { _id: userId },
+    { $addToSet: { 'spamPolicy.senders': address } },
+  );
+  await Page.updateMany(
+    { userId, senderAddresses: address },
+    { $set: { 'flags.userMarkedSpam': true } },
+  );
+}
+
+async function runEmailArchive(
+  userId: Types.ObjectId,
+  event: RecipeEvent,
+): Promise<void> {
+  if (!requireEmailEvent(event, 'email.archive')) return;
+  await Email.updateOne(
+    { _id: new Types.ObjectId(event.emailId), userId },
+    { $set: { archivedAt: new Date() } },
+  );
+}
+
+async function runEmailBlock(
+  userId: Types.ObjectId,
+  config: { removeExisting?: boolean },
+  event: RecipeEvent,
+): Promise<void> {
+  if (!requireEmailEvent(event, 'email.block')) return;
+  const address = (event.from ?? '').toLowerCase().trim();
+  if (!address) throw new Error('email.block: email has no sender address');
+  await User.updateOne(
+    { _id: userId },
+    {
+      $addToSet: { 'spamPolicy.blockedSenders': address },
+      $pull: { 'spamPolicy.senders': address },
+    },
+  );
+  if (config.removeExisting !== false) {
+    // Pages where this sender is the sole contributor get deleted;
+    // pages with other contributors lose just this sender's rows.
+    const affectedPages = await Page.find({ userId, senderAddresses: address })
+      .select('_id senderAddresses')
+      .lean();
+    for (const page of affectedPages) {
+      const others = (page.senderAddresses ?? []).filter((a: string) => a !== address);
+      if (others.length === 0) {
+        await Page.deleteOne({ _id: page._id, userId });
+      } else {
+        await Page.updateOne(
+          { _id: page._id, userId },
+          { $pull: { senderAddresses: address } },
+        );
+      }
+    }
+    await Email.deleteMany({ userId, 'from.address': address });
+  }
+}
+
+/* ─── LLM action ──────────────────────────────────────────────────── */
+
+function renderTemplate(
+  template: string,
+  vars: Record<string, string | undefined>,
+): string {
+  return template.replace(/{{\s*([\w.]+)\s*}}/g, (_, key: string) =>
+    (vars[key] ?? '').toString(),
+  );
+}
+
+async function buildLlmContext(
+  userId: Types.ObjectId,
+  event: RecipeEvent,
+): Promise<Record<string, string>> {
+  if (event.kind === 'email.ingested') {
+    const email = await Email.findOne({
+      _id: new Types.ObjectId(event.emailId),
+      userId,
+    })
+      .select('from subject text')
+      .lean();
+    return {
+      from: email?.from?.address ?? event.from ?? '',
+      subject: email?.subject ?? event.subject,
+      // Cap the body so prompts stay within model limits; long emails
+      // get truncated rather than failing the recipe outright.
+      body: (email?.text ?? '').slice(0, 8000),
+      tags: event.tags.join(', '),
+    };
+  }
+  if (event.kind === 'page.created' || event.kind === 'tag.applied') {
+    const page = await Page.findOne({
+      _id: new Types.ObjectId(event.pageId),
+      userId,
+    })
+      .select('title summary contentMd tags')
+      .lean();
+    return {
+      title: page?.title ?? event.title,
+      summary: page?.summary ?? '',
+      body: (page?.contentMd ?? '').slice(0, 8000),
+      tag: 'tag' in event ? event.tag : '',
+      tags: event.tags.join(', '),
+    };
+  }
+  return {};
+}
+
+type LlmRunResult = { reply: string };
+
+async function runLlmAction(
+  userId: Types.ObjectId,
+  config: {
+    prompt: string;
+    system?: string;
+    output: 'push' | 'tag' | 'audit-only';
+    pushTitle?: string;
+    temperature?: number;
+    maxTokens?: number;
+  },
+  event: RecipeEvent,
+  recipeName: string,
+): Promise<LlmRunResult> {
+  const ctx = await buildLlmContext(userId, event);
+  const prompt = renderTemplate(config.prompt, ctx);
+  const system = config.system
+    ? renderTemplate(config.system, ctx)
+    : 'You are a helpful assistant running inside a recipe automation. Keep replies short and useful.';
+
+  const resolved = await resolveProviderForUser(userId, 'generation');
+  const reply = (
+    await resolved.provider.generate({
+      model: resolved.model,
+      prompt,
+      system,
+      temperature: config.temperature ?? 0.4,
+      maxTokens: config.maxTokens ?? 400,
+    })
+  ).trim();
+
+  if (!reply) return { reply: '' };
+
+  if (config.output === 'push') {
+    await pushToUser(userId, {
+      title: config.pushTitle ?? recipeName,
+      body: reply.slice(0, 280),
+      url:
+        event.kind === 'email.ingested'
+          ? `/e/${event.emailId}`
+          : event.kind === 'page.created' || event.kind === 'tag.applied'
+            ? `/p/${event.slug}`
+            : undefined,
+    });
+  } else if (config.output === 'tag') {
+    if (event.kind !== 'page.created' && event.kind !== 'tag.applied') {
+      throw new Error('llm.run output=tag requires a page subject');
+    }
+    const tags = reply
+      .split(/[,\n]/)
+      .map((t) => t.trim().toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, ''))
+      .filter((t) => t && t.length <= 80)
+      .slice(0, 8);
+    if (tags.length > 0) {
+      await Page.updateOne(
+        { _id: new Types.ObjectId(event.pageId), userId },
+        { $addToSet: { tags: { $each: tags } } },
+      );
+    }
+  }
+  return { reply };
+}
+
 async function runWebhookPost(
   config: { url: string; headers?: Record<string, string> },
   event: RecipeEvent,
@@ -251,9 +483,11 @@ async function runAction(
   userId: Types.ObjectId,
   action: Action,
   event: RecipeEvent,
+  recipeName: string,
 ): Promise<ActionResult> {
   const start = Date.now();
   try {
+    let detail: string | undefined;
     switch (action.kind) {
       case 'notify.push':
         await runNotifyPush(userId, action.config, event);
@@ -267,8 +501,30 @@ async function runAction(
       case 'webhook.post':
         await runWebhookPost(action.config, event);
         break;
+      case 'email.delete':
+        await runEmailDelete(userId, event);
+        break;
+      case 'email.deleteOnSource': {
+        const r = await runEmailDeleteOnSource(userId, action.config, event);
+        detail = r.deletedOnSource ? 'deleted on source' : `local-only: ${r.reason ?? 'unknown'}`;
+        break;
+      }
+      case 'email.markSpam':
+        await runEmailMarkSpam(userId, event);
+        break;
+      case 'email.archive':
+        await runEmailArchive(userId, event);
+        break;
+      case 'email.block':
+        await runEmailBlock(userId, action.config, event);
+        break;
+      case 'llm.run': {
+        const r = await runLlmAction(userId, action.config, event, recipeName);
+        detail = r.reply.slice(0, 400);
+        break;
+      }
     }
-    return { ok: true, durationMs: Date.now() - start };
+    return { ok: true, durationMs: Date.now() - start, detail };
   } catch (err) {
     return {
       ok: false,
@@ -344,14 +600,21 @@ async function processEvent(event: RecipeEvent): Promise<void> {
     }
 
     const actions = (recipe.actions ?? []) as unknown as Action[];
-    const results = [] as { actionKind: string; ok: boolean; error?: string; durationMs: number }[];
+    const results = [] as {
+      actionKind: string;
+      ok: boolean;
+      error?: string;
+      durationMs: number;
+      detail?: string;
+    }[];
     for (const action of actions) {
-      const r = await runAction(userObjId, action, event);
+      const r = await runAction(userObjId, action, event, recipe.name);
       results.push({
         actionKind: action.kind,
         ok: r.ok,
         error: r.error,
         durationMs: r.durationMs,
+        detail: r.detail,
       });
     }
     const anyError = results.some((r) => !r.ok);

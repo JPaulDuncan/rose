@@ -64,4 +64,6 @@ export { Recipe } from './models/Recipe.js';
 export type { RecipeDoc } from './models/Recipe.js';
 export { RecipeAudit } from './models/RecipeAudit.js';
 export type { RecipeAuditDoc } from './models/RecipeAudit.js';
+export { Shipment } from './models/Shipment.js';
+export type { ShipmentDoc } from './models/Shipment.js';
 export { uniqueSlug } from './util/uniqueSlug.js';

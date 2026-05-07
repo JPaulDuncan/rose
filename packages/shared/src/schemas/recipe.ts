@@ -119,6 +119,12 @@ export const ActionKind = z.enum([
   'tag.add',
   'category.set',
   'webhook.post',
+  'email.delete',
+  'email.deleteOnSource',
+  'email.markSpam',
+  'email.archive',
+  'email.block',
+  'llm.run',
 ]);
 export type ActionKind = z.infer<typeof ActionKind>;
 
@@ -158,11 +164,91 @@ const WebhookPostAction = z.object({
   }),
 });
 
+/** Delete the email row in Rose's database. Only valid on
+ *  email-shaped triggers (email.ingested). */
+const EmailDeleteAction = z.object({
+  kind: z.literal('email.delete'),
+  config: z.object({}).default({}),
+});
+
+/** Move/trash the message on the upstream provider (IMAP / Gmail
+ *  OAuth). Best-effort — falls back to a local delete when the source
+ *  can't be reached or is a kind we can't write to. */
+const EmailDeleteOnSourceAction = z.object({
+  kind: z.literal('email.deleteOnSource'),
+  config: z
+    .object({
+      /** Also remove the local Email row after the source deletion
+       *  attempt. Defaults to true so the message disappears from
+       *  Rose's inbox on success. */
+      deleteLocal: z.boolean().default(true),
+    })
+    .default({}),
+});
+
+/** Cascade a sender-level spam mark: adds the email's `from.address`
+ *  to `user.spamPolicy.senders` and flags every page that lists this
+ *  sender. Mirrors `POST /api/spam/sender`. */
+const EmailMarkSpamAction = z.object({
+  kind: z.literal('email.markSpam'),
+  config: z.object({}).default({}),
+});
+
+/** Mark the email as archived. Sets `archivedAt` so list views can
+ *  filter it out without losing the data. */
+const EmailArchiveAction = z.object({
+  kind: z.literal('email.archive'),
+  config: z.object({}).default({}),
+});
+
+/** Block the sender outright: adds to `spamPolicy.blockedSenders`
+ *  and (when `removeExisting`) deletes the email plus pages where
+ *  the sender is the sole contributor. */
+const EmailBlockAction = z.object({
+  kind: z.literal('email.block'),
+  config: z
+    .object({
+      /** Also delete existing emails / pages from this sender.
+       *  Default true to match the API behaviour. */
+      removeExisting: z.boolean().default(true),
+    })
+    .default({}),
+});
+
+/** Run a free-form LLM prompt against the trigger subject and
+ *  surface the result as a push notification. The template supports
+ *  Mustache-style variables: `{{from}}`, `{{subject}}`, `{{body}}`,
+ *  `{{title}}`, `{{tag}}`. */
+const LlmRunAction = z.object({
+  kind: z.literal('llm.run'),
+  config: z.object({
+    prompt: z.string().min(1).max(4000),
+    /** Optional system prompt for tone / persona. */
+    system: z.string().max(2000).optional(),
+    /** What to do with the LLM's reply. `push` sends it as a push
+     *  notification; `tag` splits commas and adds them as tags
+     *  (page subjects only); `audit-only` records the result on
+     *  RecipeAudit and does nothing else. */
+    output: z.enum(['push', 'tag', 'audit-only']).default('push'),
+    /** Title to use when output = push. Defaults to the recipe name. */
+    pushTitle: z.string().max(80).optional(),
+    /** Sampling controls (optional; all clamp to safe ranges). */
+    temperature: z.number().min(0).max(1).optional(),
+    maxTokens: z.number().int().min(1).max(4000).optional(),
+  }),
+});
+
 export const ActionSchema = z.discriminatedUnion('kind', [
   NotifyPushAction,
   TagAddAction,
   CategorySetAction,
   WebhookPostAction,
+  EmailDeleteAction,
+  EmailDeleteOnSourceAction,
+  EmailMarkSpamAction,
+  EmailArchiveAction,
+  EmailBlockAction,
+  LlmRunAction,
 ]);
 export type Action = z.infer<typeof ActionSchema>;
 

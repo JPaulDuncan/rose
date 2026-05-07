@@ -8,6 +8,7 @@ import { redis } from '../lib/redis.js';
 import { env } from '../lib/env.js';
 import { logger } from '../lib/logger.js';
 import { emitRecipeEvent } from '../lib/recipeEmit.js';
+import { detectShipmentsForEmail } from '../shipments/upsert.js';
 
 const QUEUE = 'rose.gmail-sync';
 const generateQueue = new Queue('rose.generate-page', { connection: redis });
@@ -126,6 +127,11 @@ export function startGmailSyncWorker() {
           priority: cleaned.metadata.priority ?? null,
           tags: cleaned.metadata.topics ?? [],
         });
+        try {
+          await detectShipmentsForEmail(String(created._id));
+        } catch (err) {
+          logger.warn({ err, emailId: String(created._id) }, 'shipment detection failed');
+        }
       }
       source.lastSyncAt = new Date();
       source.lastError = null;

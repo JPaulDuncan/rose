@@ -10,3 +10,4 @@ export * from './rule.js';
 export * from './daydream.js';
 export * from './library.js';
 export * from './recipe.js';
+export * from './shipment.js';

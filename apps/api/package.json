@@ -17,6 +17,7 @@
     "@rose/email-parser": "workspace:*",
     "@rose/llm": "workspace:*",
     "@rose/shared": "workspace:*",
+    "@rose/shipments": "workspace:*",
     "argon2": "^0.41.1",
     "bullmq": "^5.21.2",
     "cookie-parser": "^1.4.7",
