@@ -21,7 +21,7 @@ import {
   extractJson,
   renderTemplate,
 } from '@rose/llm';
-import { PageGenerationDraft, PageMergeDraft, slugify, type CitationMap } from '@rose/shared';
+import { PageGenerationDraft, PageMergeDraft, priorityForDate, slugify, type CitationMap } from '@rose/shared';
 import { stripAdSectionsStrict, filterNominalTags } from '@rose/email-parser';
 import { redis } from '../lib/redis.js';
 import { logger } from '../lib/logger.js';
@@ -362,7 +362,69 @@ async function runEntityExtraction(
   await runPostWriteEntityExtraction(userId, page, hashContent(page.contentMd ?? ''));
 }
 
+/**
+ * Walk every waiting + delayed generate-page job and ensure it
+ * carries a priority that reflects the email's real date. Necessary
+ * for two cases:
+ *
+ *   1. Jobs queued before the freshness-priority feature shipped —
+ *      they sit at priority 0 (no priority) in BullMQ's regular
+ *      FIFO list, which means a six-week-old IMAP backfill keeps
+ *      blocking today's mail forever.
+ *   2. Edge paths we may have missed when we threaded priorityForDate
+ *      through (regenerate calls from older surfaces, third-party
+ *      webhook drops, etc.).
+ *
+ * Runs once at worker boot. Bounded (5_000 jobs) so a startup on a
+ * pathologically large queue stays responsive; the next boot picks
+ * up where this one left off.
+ */
+async function reprioritizeGeneratePageBacklog(): Promise<{
+  scanned: number;
+  rewritten: number;
+}> {
+  const queue = new Queue<GenerateJobData>(QUEUE, { connection: redis });
+  try {
+    const jobs = await queue.getJobs(['waiting', 'delayed', 'paused'], 0, 5000);
+    let rewritten = 0;
+    for (const job of jobs) {
+      try {
+        const emailId = job.data?.emailId;
+        if (!emailId) continue;
+        const email = await Email.findById(emailId).select('date createdAt').lean();
+        const ref =
+          email?.date ?? (email as { createdAt?: Date } | null)?.createdAt ?? new Date();
+        const next = priorityForDate(ref);
+        const current = (job.opts?.priority as number | undefined) ?? 0;
+        if (current !== next) {
+          await job.changePriority({ priority: next });
+          rewritten += 1;
+        }
+      } catch (err) {
+        logger.debug({ err, jobId: job.id }, 'reprioritize: per-job failure (continuing)');
+      }
+    }
+    return { scanned: jobs.length, rewritten };
+  } finally {
+    await queue.close();
+  }
+}
+
 export function startGeneratePageWorker() {
+  // Fire-and-forget: backfill priorities on jobs queued by older
+  // code paths so today's mail genuinely beats the backlog. Failure
+  // here can't take down the worker — the function logs internally.
+  void reprioritizeGeneratePageBacklog()
+    .then((r) =>
+      logger.info(
+        { scanned: r.scanned, rewritten: r.rewritten },
+        'generate-page: priority backfill complete',
+      ),
+    )
+    .catch((err) =>
+      logger.warn({ err }, 'generate-page: priority backfill failed'),
+    );
+
   const worker = new Worker<GenerateJobData>(
     QUEUE,
     async (job: Job<GenerateJobData>) => {
