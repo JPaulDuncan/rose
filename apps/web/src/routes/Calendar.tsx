@@ -13,8 +13,10 @@ import {
   AtSign,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { moonPhase, MOON_PHASE_LABEL } from '@rose/shared';
 import { useApi } from '../lib/api';
 import { MapInset, type MapPin } from '../components/MapInset';
+import { MoonPhaseIcon } from '../components/MoonPhaseIcon';
 
 type CalendarEventDoc = {
   _id: string;
@@ -112,6 +114,12 @@ export default function CalendarPage() {
     queryFn: () =>
       api.get<{ events: CalendarEventDoc[] }>('/api/events/upcoming?limit=12'),
   });
+  const { data: me } = useQuery({
+    queryKey: ['me'],
+    queryFn: () =>
+      api.get<{ settings?: { showMoonPhases?: boolean } }>('/api/me'),
+  });
+  const showMoon = !!me?.settings?.showMoonPhases;
 
   const dismiss = useMutation({
     mutationFn: async (id: string) =>
@@ -202,6 +210,7 @@ export default function CalendarPage() {
             <MonthGrid
               cursor={cursor}
               byDay={byDay}
+              showMoonPhases={showMoon}
               onSelect={(d) => {
                 setCursor(d);
                 setView('day');
@@ -314,10 +323,12 @@ function ViewSwitcher({
 function MonthGrid({
   cursor,
   byDay,
+  showMoonPhases = false,
   onSelect,
 }: {
   cursor: Date;
   byDay: Map<string, CalendarEventDoc[]>;
+  showMoonPhases?: boolean;
   onSelect: (d: Date) => void;
 }) {
   const today = startOfDay(new Date());
@@ -361,11 +372,21 @@ function MonthGrid({
                 >
                   {d.getDate()}
                 </span>
-                {evs.length > 0 && (
-                  <span className="rounded-full bg-rose-100 px-1.5 text-[10px] font-medium text-rose-700 dark:bg-rose-950/40 dark:text-rose-300">
-                    {evs.length}
-                  </span>
-                )}
+                <span className="flex items-center gap-1">
+                  {showMoonPhases && inMonth && (
+                    <MoonPhaseIcon
+                      phase={moonPhase(d)}
+                      size={12}
+                      title={MOON_PHASE_LABEL[moonPhase(d)]}
+                      className="opacity-70"
+                    />
+                  )}
+                  {evs.length > 0 && (
+                    <span className="rounded-full bg-rose-100 px-1.5 text-[10px] font-medium text-rose-700 dark:bg-rose-950/40 dark:text-rose-300">
+                      {evs.length}
+                    </span>
+                  )}
+                </span>
               </div>
               {evs.slice(0, 2).map((e) => (
                 <span

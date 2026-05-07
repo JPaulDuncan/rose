@@ -22,6 +22,12 @@ const userSchema = new Schema(
        */
       hidePromotions: { type: Boolean, default: true },
       /**
+       * Render the current moon phase as a header icon on Home and as
+       * a small glyph on each calendar day cell. Off by default; the
+       * user opts in from Settings → Newsletter (display section).
+       */
+      showMoonPhases: { type: Boolean, default: false },
+      /**
        * When and where to mail the daily/weekly digest. Disabled by
        * default; the user opts in from Settings → Newsletter. We
        * schedule a coarse hourly worker that consults this struct
@@ -299,12 +305,26 @@ const userSchema = new Schema(
      * (the array order is the section order in the UI).
      */
     featuredTags: { type: [String], default: [] },
-    /** Optional location for the newsletter weather widget. */
-    weatherLocation: {
-      lat: { type: Number, default: null },
-      lon: { type: Number, default: null },
-      label: { type: String, default: null },
-      setAt: { type: Date, default: null },
+    /**
+     * Saved locations for the home-page weather widget. Order matters
+     * (first becomes the default if no `primary` flag is set, the UI
+     * promotes/demotes by editing the array). Each row gets a stable
+     * sub-document _id so the API can reference one by id.
+     */
+    weatherLocations: {
+      type: [
+        new Schema(
+          {
+            lat: { type: Number, required: true },
+            lon: { type: Number, required: true },
+            label: { type: String, required: true },
+            primary: { type: Boolean, default: false },
+            setAt: { type: Date, default: () => new Date() },
+          },
+          { _id: true },
+        ),
+      ],
+      default: [],
     },
   },
   { timestamps: true },

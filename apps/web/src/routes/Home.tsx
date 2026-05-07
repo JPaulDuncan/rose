@@ -19,8 +19,10 @@ import {
   MapPin as MapPinIcon,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { moonPhase, MOON_PHASE_LABEL } from '@rose/shared';
 import { useApi } from '../lib/api';
 import { MapInset, type MapPin } from '../components/MapInset';
+import { MoonPhaseIcon } from '../components/MoonPhaseIcon';
 
 type DigestPage = {
   _id: string;
@@ -98,6 +100,7 @@ type Digest = {
     } | null;
   }[];
   senderBrands: Record<string, SenderBrand>;
+  showMoonPhases?: boolean;
 };
 
 export default function HomePage() {
@@ -159,7 +162,11 @@ export default function HomePage() {
   return (
     <BrandIndexContext.Provider value={brandIndex}>
     <div className="mx-auto w-full max-w-7xl px-6 py-10">
-      <Masthead edition={data.edition} stats={data.stats} />
+      <Masthead
+        edition={data.edition}
+        stats={data.stats}
+        showMoonPhase={!!data.showMoonPhases}
+      />
       <WeatherCard />
 
       {/* 20/60/20 newspaper layout via a 5-column grid with explicit
@@ -219,10 +226,14 @@ export default function HomePage() {
 function Masthead({
   edition,
   stats,
+  showMoonPhase = false,
 }: {
   edition: Digest['edition'];
   stats: Digest['stats'];
+  showMoonPhase?: boolean;
 }) {
+  const today = new Date();
+  const phase = moonPhase(today);
   return (
     <header className="mb-8 border-b border-ink-200 pb-6 dark:border-ink-800">
       <div className="flex flex-wrap items-end justify-between gap-3">
@@ -230,7 +241,17 @@ function Masthead({
           <div className="text-xs uppercase tracking-widest text-rose-500">
             Today's Edition
           </div>
-          <h1 className="mt-1 text-4xl font-bold tracking-tight">The Rose Digest</h1>
+          <h1 className="mt-1 flex items-center gap-3 text-4xl font-bold tracking-tight">
+            <span>The Rose Digest</span>
+            {showMoonPhase && (
+              <MoonPhaseIcon
+                phase={phase}
+                size={32}
+                title={MOON_PHASE_LABEL[phase]}
+                className="opacity-90"
+              />
+            )}
+          </h1>
           <div className="mt-1 flex items-center gap-1 text-sm text-ink-500">
             <Calendar className="h-3.5 w-3.5" />
             {edition.label}
@@ -1134,9 +1155,18 @@ type WeatherPeriod = {
   isDaytime: boolean;
 };
 
+type WeatherSavedLocation = {
+  id: string;
+  lat: number;
+  lon: number;
+  label: string;
+  primary: boolean;
+};
 type WeatherOk = {
   configured: true;
-  location: { lat: number; lon: number; label: string };
+  location: WeatherSavedLocation;
+  /** Every saved location for this user — drives the switcher chips. */
+  locations: WeatherSavedLocation[];
   current: WeatherPeriod | null;
   periods: WeatherPeriod[];
   brief: string;
@@ -1150,9 +1180,14 @@ type Weather = WeatherUnconfigured | WeatherOk | WeatherErr;
 
 function WeatherCard() {
   const api = useApi();
+  // Selected location id; null = use the user's primary (server picks).
+  const [activeId, setActiveId] = useState<string | null>(null);
   const { data } = useQuery({
-    queryKey: ['weather'],
-    queryFn: () => api.get<Weather>('/api/weather'),
+    queryKey: ['weather', activeId ?? 'primary'],
+    queryFn: () =>
+      api.get<Weather>(
+        activeId ? `/api/weather?id=${encodeURIComponent(activeId)}` : '/api/weather',
+      ),
     refetchInterval: 30 * 60_000,
     staleTime: 5 * 60_000,
   });
@@ -1222,6 +1257,29 @@ function WeatherCard() {
                   {p.temperature}°{p.temperatureUnit} · {p.shortForecast}
                 </span>
               ))}
+            </div>
+          )}
+          {ok.locations && ok.locations.length > 1 && (
+            <div className="mt-3 flex flex-wrap gap-1.5">
+              {ok.locations.map((l) => {
+                const isActive = l.id === ok.location.id;
+                return (
+                  <button
+                    key={l.id}
+                    type="button"
+                    onClick={() => setActiveId(l.id)}
+                    className={
+                      'rounded-full px-2.5 py-0.5 text-xs transition-colors ' +
+                      (isActive
+                        ? 'bg-rose-600 text-white'
+                        : 'bg-white/70 text-ink-700 hover:bg-white dark:bg-ink-900/70 dark:text-ink-200 dark:hover:bg-ink-900')
+                    }
+                    title={l.label}
+                  >
+                    {l.label.split(',')[0]}
+                  </button>
+                );
+              })}
             </div>
           )}
         </div>

@@ -81,7 +81,7 @@ digestRouter.get('/', async (req, res) => {
     .lean()) as
     | {
         featuredTags?: string[];
-        settings?: { hidePromotions?: boolean };
+        settings?: { hidePromotions?: boolean; showMoonPhases?: boolean };
       }
     | null;
   const hidePromotions = !includePromotions && userPrefs?.settings?.hidePromotions !== false;
@@ -300,6 +300,7 @@ digestRouter.get('/', async (req, res) => {
   res.json({
     featuredTags,
     featuredSections,
+    showMoonPhases: !!userPrefs?.settings?.showMoonPhases,
     edition: {
       date: now.toISOString(),
       label: now.toLocaleDateString(undefined, {

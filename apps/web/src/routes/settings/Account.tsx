@@ -63,6 +63,7 @@ export default function AccountSettings() {
         </div>
       </div>
 
+      <DisplayPrefsCard />
       <PushCard />
       <ReadTrackingCard />
       <PortabilityCard />
@@ -82,6 +83,54 @@ type NotificationRule = {
   match: { tag?: string; brandKey?: string; hoursAhead?: number };
   enabled: boolean;
 };
+
+/**
+ * Cosmetic display toggles. Lives separately from Theme because it's
+ * for stable user prefs that don't belong on `useTheme` (which is
+ * client-only and synced to localStorage).
+ */
+function DisplayPrefsCard() {
+  const api = useApi();
+  const qc = useQueryClient();
+  const { data } = useQuery({
+    queryKey: ['me'],
+    queryFn: () =>
+      api.get<{ settings?: { showMoonPhases?: boolean } }>('/api/me'),
+  });
+  const enabled = !!data?.settings?.showMoonPhases;
+  const save = useMutation({
+    mutationFn: async (next: boolean) =>
+      api.patch<unknown>('/api/me', {
+        settings: { ...(data?.settings ?? {}), showMoonPhases: next },
+      }),
+    onSuccess: () => {
+      toast.success('Saved');
+      qc.invalidateQueries({ queryKey: ['me'] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+  return (
+    <div className="card">
+      <h2 className="mb-2 font-semibold">Display</h2>
+      <label className="flex items-start gap-3">
+        <input
+          type="checkbox"
+          className="mt-1 h-4 w-4 accent-rose-500"
+          checked={enabled}
+          onChange={(e) => save.mutate(e.target.checked)}
+          disabled={save.isPending}
+        />
+        <span className="text-sm">
+          <span className="font-medium">Show moon phases</span>
+          <span className="ml-1 text-ink-500">
+            — render the current phase as a small icon on Home and on each
+            calendar day.
+          </span>
+        </span>
+      </label>
+    </div>
+  );
+}
 
 function PushCard() {
   const api = useApi();
