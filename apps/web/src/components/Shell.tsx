@@ -60,6 +60,7 @@ export function Shell({ children }: { children: ReactNode }) {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const navigate = useNavigate();
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   useHotkeys({
     'mod+k': () => setPaletteOpen(true),
@@ -67,7 +68,15 @@ export function Shell({ children }: { children: ReactNode }) {
       const tag = (e.target as HTMLElement)?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA') return;
       e.preventDefault();
-      navigate('/search');
+      // Focus the inline search field when it's visible (sm+); otherwise
+      // fall back to navigating to /search so the small-screen layout
+      // still has a path in.
+      if (searchInputRef.current && searchInputRef.current.offsetParent !== null) {
+        searchInputRef.current.focus();
+        searchInputRef.current.select();
+      } else {
+        navigate('/search');
+      }
     },
     'g h': () => navigate('/'),
     'g i': () => navigate('/settings/ingest'),
@@ -108,6 +117,7 @@ export function Shell({ children }: { children: ReactNode }) {
 
           {/* Right cluster */}
           <div className="ml-auto flex items-center gap-1">
+            <TopSearchBar inputRef={searchInputRef} />
             <button
               type="button"
               className="hidden items-center gap-2 rounded-lg border border-ink-200 px-2.5 py-1.5 text-xs text-ink-500 hover:bg-ink-50 dark:border-ink-800 dark:hover:bg-ink-800 sm:flex"
@@ -452,5 +462,55 @@ function SavedSearchStrip() {
         ))}
       </div>
     </div>
+  );
+}
+
+/**
+ * Inline search field in the top bar — submits to /search?q=… so the
+ * user can search from anywhere without navigating to /search first.
+ * Hidden below sm (where the palette button also collapses); on /search
+ * itself the field stays empty so the page's own search box owns the
+ * canonical query state.
+ */
+function TopSearchBar({
+  inputRef,
+}: {
+  inputRef: React.RefObject<HTMLInputElement>;
+}) {
+  const navigate = useNavigate();
+  const [value, setValue] = useState('');
+  return (
+    <form
+      className="relative hidden sm:block"
+      onSubmit={(e) => {
+        e.preventDefault();
+        const q = value.trim();
+        if (!q) return;
+        navigate(`/search?q=${encodeURIComponent(q)}`);
+        setValue('');
+        inputRef.current?.blur();
+      }}
+      role="search"
+    >
+      <Search
+        className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ink-400"
+        aria-hidden
+      />
+      <input
+        ref={inputRef}
+        type="search"
+        className="w-44 rounded-lg border border-ink-200 bg-white py-1.5 pl-7 pr-2 text-sm placeholder:text-ink-400 focus:border-rose-300 focus:outline-none focus:ring-2 focus:ring-rose-100 dark:border-ink-800 dark:bg-ink-900 dark:focus:border-rose-700 dark:focus:ring-rose-950/40 lg:w-64"
+        placeholder="Search…"
+        aria-label="Search"
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') {
+            setValue('');
+            (e.currentTarget as HTMLInputElement).blur();
+          }
+        }}
+      />
+    </form>
   );
 }
