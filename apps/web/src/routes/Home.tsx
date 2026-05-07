@@ -20,10 +20,8 @@ import {
   CloudSun,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { moonPhase, MOON_PHASE_LABEL } from '@rose/shared';
 import { useApi } from '../lib/api';
 import { MapInset, type MapPin } from '../components/MapInset';
-import { MoonPhaseIcon } from '../components/MoonPhaseIcon';
 
 type DigestPage = {
   _id: string;
@@ -163,11 +161,7 @@ export default function HomePage() {
   return (
     <BrandIndexContext.Provider value={brandIndex}>
     <div className="mx-auto w-full max-w-7xl px-6 py-10">
-      <Masthead
-        edition={data.edition}
-        stats={data.stats}
-        showMoonPhase={!!data.showMoonPhases}
-      />
+      <Masthead edition={data.edition} stats={data.stats} />
 
       {/* 20/60/20 newspaper layout via a 5-column grid with explicit
           col-spans. Stacks to a single column at <lg so the rails
@@ -192,6 +186,7 @@ export default function HomePage() {
         </div>
 
         <aside className="space-y-6 lg:col-span-1">
+          <MoonPhaseCard show={!!data.showMoonPhases} />
           <WeatherCard compact />
           <UpcomingEvents />
           <Sidebar
@@ -227,14 +222,10 @@ export default function HomePage() {
 function Masthead({
   edition,
   stats,
-  showMoonPhase = false,
 }: {
   edition: Digest['edition'];
   stats: Digest['stats'];
-  showMoonPhase?: boolean;
 }) {
-  const today = new Date();
-  const phase = moonPhase(today);
   return (
     <header className="mb-8 border-b border-ink-200 pb-6 dark:border-ink-800">
       <div className="flex flex-wrap items-end justify-between gap-3">
@@ -242,17 +233,7 @@ function Masthead({
           <div className="text-xs uppercase tracking-widest text-rose-500">
             Today's Edition
           </div>
-          <h1 className="mt-1 flex items-center gap-3 text-4xl font-bold tracking-tight">
-            <span>The Rose Digest</span>
-            {showMoonPhase && (
-              <MoonPhaseIcon
-                phase={phase}
-                size={32}
-                title={MOON_PHASE_LABEL[phase]}
-                className="opacity-90"
-              />
-            )}
-          </h1>
+          <h1 className="mt-1 text-4xl font-bold tracking-tight">The Rose Digest</h1>
           <div className="mt-1 flex items-center gap-1 text-sm text-ink-500">
             <Calendar className="h-3.5 w-3.5" />
             {edition.label}
@@ -1181,6 +1162,45 @@ type WeatherOk = {
 type WeatherErr = { configured: true; error: string; message?: string };
 type WeatherUnconfigured = { configured: false };
 type Weather = WeatherUnconfigured | WeatherOk | WeatherErr;
+
+type MoonResp = {
+  phase: string;
+  label: string;
+  illumination: number;
+  source: 'usno' | 'local';
+};
+
+/**
+ * Tiny "Moon Phase: xxx" card. Lives above the WeatherCard in the
+ * right rail when the user's `showMoonPhases` setting is on. Calls
+ * /api/moon, which the API caches (6h TTL) and resolves from USNO
+ * with a local-calc fallback so the box always has *something* to
+ * show even when USNO is having one of its outages.
+ */
+function MoonPhaseCard({ show }: { show: boolean }) {
+  const api = useApi();
+  const { data } = useQuery({
+    queryKey: ['moon-phase'],
+    queryFn: () => api.get<MoonResp>('/api/moon'),
+    refetchInterval: 60 * 60_000,
+    staleTime: 30 * 60_000,
+    enabled: show,
+  });
+  if (!show || !data) return null;
+  return (
+    <div
+      className="rounded-xl border border-ink-200 px-3 py-2 text-sm dark:border-ink-800"
+      title={`${Math.round(data.illumination * 100)}% illuminated · source: ${
+        data.source === 'usno' ? 'U.S. Naval Observatory' : 'local approximation'
+      }`}
+    >
+      <span className="text-[10px] uppercase tracking-widest text-ink-500">
+        Moon Phase:
+      </span>{' '}
+      <span className="font-medium text-ink-800 dark:text-ink-100">{data.label}</span>
+    </div>
+  );
+}
 
 function WeatherCard({ compact = false }: { compact?: boolean }) {
   const api = useApi();
