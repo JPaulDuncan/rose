@@ -742,7 +742,7 @@ function ImapForm({
         </Field>
         <Field
           label="Backfill days"
-          hint="On the first sync, look back this far. Set to 0 to pull every message in the mailbox."
+          hint="How far back to fetch. Saving a wider value than before resets the source's last-sync timestamp so the next run actually walks the new window. 0 = pull every message in the mailbox."
         >
           <input
             className="input"
@@ -756,7 +756,7 @@ function ImapForm({
         </Field>
         <Field
           label="Max per sync"
-          hint="Hard cap per run so a huge mailbox doesn't blow the worker. 0 = unlimited."
+          hint="Hard cap per run so a huge mailbox doesn't blow the worker. Applies to every sync (the next 'Sync now' click will respect this). 0 = unlimited."
         >
           <input
             className="input"

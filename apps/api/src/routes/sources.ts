@@ -652,6 +652,33 @@ sourcesRouter.patch('/:id', validateBody(SourceUpdateRequest), async (req, res) 
     };
     src.encryptedConfig = encryptJson(merged);
     newInterval = merged.pollIntervalMinutes;
+
+    // The worker's incremental search uses lastSyncAt as its lower
+    // bound, so just bumping `historicalBackfillDays` in the form
+    // wouldn't widen the next sync's window — the new value would
+    // never apply on a source that's already been syncing. Detect
+    // the change here and reset lastSyncAt to either:
+    //   • null         (when newDays = 0, the "pull everything"
+    //                   sentinel — worker walks the entire mailbox)
+    //   • now-newDays  (otherwise — worker re-walks the requested
+    //                   window once; subsequent syncs are
+    //                   incremental from the just-set lastSyncAt)
+    // Don't reset when the new value would *narrow* the window
+    // (lastSyncAt already captures everything within the new days).
+    if (
+      body.config.historicalBackfillDays !== undefined &&
+      merged.historicalBackfillDays !== current.historicalBackfillDays
+    ) {
+      const newDays = merged.historicalBackfillDays;
+      if (newDays === 0) {
+        src.lastSyncAt = null;
+      } else {
+        const desiredFloor = new Date(Date.now() - newDays * 24 * 3600 * 1000);
+        if (!src.lastSyncAt || desiredFloor < src.lastSyncAt) {
+          src.lastSyncAt = desiredFloor;
+        }
+      }
+    }
   } else if (requestedInterval !== null) {
     newInterval = requestedInterval;
   }
