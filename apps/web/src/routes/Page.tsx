@@ -51,6 +51,14 @@ type Citation = {
   date: string | null;
 };
 
+type ExternalSource = {
+  label: string;
+  title: string;
+  url: string;
+  adapter: string | null;
+  fetchedAt: string | null;
+};
+
 type PageDoc = {
   _id: string;
   slug: string;
@@ -72,6 +80,10 @@ type PageDoc = {
   topicAliases?: string[];
   citations?: Record<string, Citation>;
   sourceEmailIds?: string[];
+  /** Daydream-snippet sources for briefing-style pages. Renders a
+   *  parallel "External sources" card next to the email-derived
+   *  Sources card. */
+  externalSources?: ExternalSource[];
   synthesisOf?: string[];
   generationModel?: string | null;
   generatedAt?: string | null;
@@ -276,6 +288,9 @@ export default function PageView() {
               citations={page.citations ?? {}}
               sourceEmailIds={page.sourceEmailIds ?? []}
             />
+            {page.externalSources && page.externalSources.length > 0 && (
+              <ExternalSourcesSection sources={page.externalSources} />
+            )}
             <BackgroundPanel pageId={page._id} />
             <RelatedArticles pageId={page._id} />
             <Provenance page={page} />
@@ -693,6 +708,87 @@ type EmailMeta = {
   from?: { name?: string; address?: string } | null;
   date?: string | null;
 };
+
+/**
+ * "Sources" card for pages produced by Daydream-style briefings
+ * (Topic Watches). The list mirrors the inline `[n]` markers the
+ * LLM emitted in the body so a reader can click straight through to
+ * the original source. Adapters are surfaced as small uppercase
+ * chips for quick visual scanning ("WIKIPEDIA", "DUCKDUCKGO", …).
+ */
+function ExternalSourcesSection({
+  sources,
+}: {
+  sources: ExternalSource[];
+}) {
+  if (sources.length === 0) return null;
+  return (
+    <CountedSection
+      icon={<LinkIcon className="h-4 w-4 text-rose-500" />}
+      title="Sources"
+      count={sources.length}
+      collapseAt={8}
+    >
+      <ol className="space-y-2 text-sm">
+        {sources.map((s) => (
+          <li
+            key={`${s.label}-${s.url}`}
+            className="flex items-start gap-2 rounded-md px-2 py-1.5 hover:bg-rose-50/40 dark:hover:bg-rose-950/20"
+          >
+            <span
+              className="mt-0.5 inline-flex h-5 min-w-[1.5rem] items-center justify-center rounded-full bg-rose-100 px-1.5 text-[11px] font-bold text-rose-800 dark:bg-rose-950/40 dark:text-rose-200"
+              title={`Inline marker [${s.label}]`}
+            >
+              {s.label}
+            </span>
+            <div className="min-w-0 flex-1">
+              <a
+                href={s.url}
+                target="_blank"
+                rel="noreferrer"
+                className="block truncate font-medium hover:text-rose-700 dark:hover:text-rose-300"
+                title={s.title || s.url}
+              >
+                {s.title || s.url}
+              </a>
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] uppercase tracking-widest text-ink-500">
+                {s.adapter && (
+                  <span className="rounded bg-ink-100 px-1.5 py-0.5 text-ink-700 dark:bg-ink-800 dark:text-ink-200">
+                    {s.adapter}
+                  </span>
+                )}
+                <span className="truncate">
+                  {(() => {
+                    try {
+                      return new URL(s.url).hostname;
+                    } catch {
+                      return s.url;
+                    }
+                  })()}
+                </span>
+                {s.fetchedAt && (
+                  <span>
+                    fetched {new Date(s.fetchedAt).toLocaleDateString()}
+                  </span>
+                )}
+              </div>
+            </div>
+            <a
+              href={s.url}
+              target="_blank"
+              rel="noreferrer"
+              className="btn-ghost mt-0.5 text-xs"
+              aria-label="Open source"
+              title="Open source"
+            >
+              <ExternalLink className="h-3.5 w-3.5" />
+            </a>
+          </li>
+        ))}
+      </ol>
+    </CountedSection>
+  );
+}
 
 function SourcesSection({
   citations,

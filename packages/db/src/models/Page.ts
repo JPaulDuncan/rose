@@ -45,6 +45,42 @@ const pageSchema = new Schema(
      */
     synthesisOf: { type: [Schema.Types.ObjectId], default: [] },
     /**
+     * Backreference to the Recipe that produced this page, when
+     * applicable. Set on Topic Watch briefings so subsequent runs of
+     * the same watch update the existing page rather than spawning a
+     * new one each cron tick. Sparse-indexed; null for everything
+     * else.
+     */
+    recipeId: { type: Schema.Types.ObjectId, ref: 'Recipe', default: null },
+    /**
+     * Non-email source list for pages produced by Daydream-style
+     * briefings (Topic Watches). Each entry is a snippet that fed
+     * the LLM, surfaced as a "Sources" card on the page so inline
+     * `[n]` citation markers in the body resolve to clickable URLs.
+     * Email-derived pages keep using `citations` + `sourceEmailIds`;
+     * the two paths don't collide because the right-rail card uses
+     * whichever array is populated.
+     */
+    externalSources: {
+      type: [
+        new Schema(
+          {
+            /** Display index — "1", "2", etc. — matches the inline
+             *  citation marker the LLM emits. */
+            label: { type: String, required: true },
+            title: { type: String, default: '' },
+            url: { type: String, required: true },
+            /** Daydream adapter id ('wikipedia', 'duckduckgo', …)
+             *  for grouping / display. */
+            adapter: { type: String, default: null },
+            fetchedAt: { type: Date, default: null },
+          },
+          { _id: false },
+        ),
+      ],
+      default: [],
+    },
+    /**
      * For `groupingMode === 'topic'` pages (currently RSS-fed). The
      * canonical topic/tag this page is anchored on. Lowercased, stable —
      * the assignment service uses this to find an existing topic page
@@ -323,6 +359,10 @@ const pageSchema = new Schema(
 
 pageSchema.index({ userId: 1, slug: 1 }, { unique: true });
 pageSchema.index({ userId: 1, threadKey: 1 });
+pageSchema.index(
+  { userId: 1, recipeId: 1 },
+  { sparse: true },
+);
 pageSchema.index(
   { title: 'text', summary: 'text', contentMd: 'text', tags: 'text' },
   { weights: { title: 10, summary: 5, tags: 3, contentMd: 1 }, name: 'PageTextIndex' },
