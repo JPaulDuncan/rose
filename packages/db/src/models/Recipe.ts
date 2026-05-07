@@ -58,7 +58,14 @@ const recipeSchema = new Schema(
      *  preserve back-pointer semantics. */
     importedFrom: {
       type: String,
-      enum: ['notification-rule', 'webhook', 'spam-policy', 'rule', null],
+      enum: [
+        'notification-rule',
+        'webhook',
+        'spam-policy',
+        'rule',
+        'topic-watch',
+        null,
+      ],
       default: null,
     },
     /** ID of the source row this Recipe was migrated from, when
