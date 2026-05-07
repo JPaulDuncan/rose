@@ -135,7 +135,15 @@ recipesRouter.get('/templates', async (_req, res) => {
 
 recipesRouter.get('/', async (req, res) => {
   const userId = new Types.ObjectId(userIdOf(req));
-  const recipes = await Recipe.find({ userId }).sort({ createdAt: -1 }).lean();
+  // Topic Watches own their own surface — hide the auto-generated
+  // recipes from the regular list so the user doesn't see them in
+  // two places. Other importedFrom values stay visible.
+  const recipes = await Recipe.find({
+    userId,
+    importedFrom: { $ne: 'topic-watch' },
+  })
+    .sort({ createdAt: -1 })
+    .lean();
 
   const user = await User.findById(userId).select('spamPolicy').lean();
   const policy = (user?.spamPolicy ?? {}) as {

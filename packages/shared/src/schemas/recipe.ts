@@ -125,6 +125,7 @@ export const ActionKind = z.enum([
   'email.archive',
   'email.block',
   'llm.run',
+  'briefing.generate',
 ]);
 export type ActionKind = z.infer<typeof ActionKind>;
 
@@ -238,6 +239,30 @@ const LlmRunAction = z.object({
   }),
 });
 
+/** Scheduled topic briefing — pulls fresh context from the user's
+ *  configured Daydream sources (Wikipedia, news, etc.) and asks the
+ *  LLM to write a short article filed as a Page. The pairing with a
+ *  `time.scheduled` trigger is what makes this useful: "every
+ *  morning at 8am, brief me on Spider-Man." See `apps/web` Topic
+ *  Watches surface for the novice-friendly editor. */
+const BriefingGenerateAction = z.object({
+  kind: z.literal('briefing.generate'),
+  config: z.object({
+    /** Free-text topic the daydream sources are queried with. */
+    topic: z.string().min(1).max(200),
+    /** Optional Mustache-style prompt template. {{topic}}, {{date}},
+     *  and {{snippets}} are pre-rendered. Falls back to a sensible
+     *  built-in template when omitted. */
+    promptTemplate: z.string().max(4000).optional(),
+    /** Cap on snippets per source so a chatty adapter can't drown
+     *  the prompt. */
+    maxResultsPerSource: z.number().int().min(1).max(10).default(5),
+    /** Word-count target for the resulting article. Loose hint passed
+     *  to the LLM, not a hard cap. */
+    targetWords: z.number().int().min(80).max(2000).default(400),
+  }),
+});
+
 export const ActionSchema = z.discriminatedUnion('kind', [
   NotifyPushAction,
   TagAddAction,
@@ -249,6 +274,7 @@ export const ActionSchema = z.discriminatedUnion('kind', [
   EmailArchiveAction,
   EmailBlockAction,
   LlmRunAction,
+  BriefingGenerateAction,
 ]);
 export type Action = z.infer<typeof ActionSchema>;
 
@@ -266,7 +292,7 @@ export const Recipe = z.object({
   cooldownSeconds: z.number().int().min(0).max(7 * 24 * 3600).default(0),
   fireLimitPerHour: z.number().int().min(1).max(1000).default(60),
   importedFrom: z
-    .enum(['notification-rule', 'webhook', 'spam-policy', 'rule'])
+    .enum(['notification-rule', 'webhook', 'spam-policy', 'rule', 'topic-watch'])
     .nullable()
     .default(null),
   fireCount: z.number().int().min(0).default(0),

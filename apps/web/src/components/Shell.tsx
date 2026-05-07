@@ -24,6 +24,7 @@ import {
   MoonStar,
   Package,
   Tag,
+  Newspaper,
 } from 'lucide-react';
 import clsx from 'clsx';
 import { useApi } from '../lib/api';
@@ -53,6 +54,7 @@ const SECONDARY_NAV: NavItem[] = [
   { to: '/library', label: 'Library', icon: BookOpen, key: 'g l' },
   { to: '/shipments', label: 'Shipment Statuses', icon: Package, key: 'g k' },
   { to: '/promo-codes', label: 'Promotional Codes', icon: Tag, key: 'g d' },
+  { to: '/watches', label: 'Topic Watches', icon: Newspaper, key: 'g v' },
   { to: '/weather', label: 'Weather', icon: CloudSun, key: 'g w' },
   { to: '/moon', label: 'Moon Phase', icon: MoonStar, key: 'g m' },
   // Plan 12 (R6) — single landing page that surfaces totals across
@@ -97,6 +99,7 @@ export function Shell({ children }: { children: ReactNode }) {
     'g l': () => navigate('/library'),
     'g k': () => navigate('/shipments'),
     'g d': () => navigate('/promo-codes'),
+    'g v': () => navigate('/watches'),
     'g w': () => navigate('/weather'),
     'g m': () => navigate('/moon'),
     'g q': () => navigate('/quarantine'),

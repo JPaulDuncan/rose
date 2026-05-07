@@ -41,7 +41,7 @@ export type DaydreamJobData =
   | { kind: 'tag'; userId: string; tag: string }
   | { kind: 'entity'; userId: string; key: string; displayName?: string };
 
-type DaydreamUserSettings = {
+export type DaydreamUserSettings = {
   enabled?: boolean;
   schedule?: 'idle' | 'daily' | 'off';
   dailyCallCap?: number;
@@ -85,7 +85,7 @@ const bumpAndCheckCap = (userId: string, cap: number) =>
  * Some adapters (LinkGraph) need per-user state, so this takes the
  * userId — adapters that don't care just ignore it.
  */
-function buildAdapters(
+export function buildAdapters(
   cfg: DaydreamUserSettings,
   userId: Types.ObjectId,
   libraryEnabled: boolean,
@@ -150,7 +150,7 @@ function buildAdapters(
 /** Per-adapter options threaded through ctx.options. Each adapter
  *  documents its own keys; we keep the shape Mongoose-Mixed-friendly
  *  and don't validate here — the adapter validates what it consumes. */
-function adapterOptions(
+export function adapterOptions(
   cfg: DaydreamUserSettings,
 ): Record<string, unknown> {
   // Decrypt the Brave key on demand so the plaintext only lives in
