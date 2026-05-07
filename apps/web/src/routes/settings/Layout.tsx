@@ -39,27 +39,43 @@ export default function SettingsLayout() {
     <div className="mx-auto w-full max-w-6xl px-6 py-10">
       <h1 className="mb-2 text-2xl font-semibold tracking-tight">Settings</h1>
       <p className="mb-6 text-sm text-ink-500">Configure how Rose ingests and writes.</p>
-      <div className="mb-6 flex gap-1 border-b border-ink-200 dark:border-ink-800">
-        {tabs.map((t) => (
-          <NavLink
-            key={t.to}
-            to={t.to}
-            className={({ isActive }) =>
-              clsx(
-                'rounded-t-lg px-3 py-2 text-sm',
-                isActive
-                  ? 'border-b-2 border-rose-500 text-rose-700 dark:text-rose-300'
-                  : t.to === 'admin'
-                    ? 'text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300'
-                    : 'text-ink-500 hover:text-ink-900 dark:hover:text-ink-100',
-              )
-            }
-          >
-            {t.label}
-          </NavLink>
-        ))}
+      {/* Two-column layout: vertical tab list on the left, panel on
+          the right. The list is sticky from below the top bar so a
+          long settings panel doesn't take the navigation off-screen.
+          On <md the tabs collapse to a horizontal scrollable strip
+          (the original layout) so mobile doesn't waste vertical
+          space. */}
+      <div className="grid gap-6 md:grid-cols-[200px_1fr]">
+        <nav
+          className="flex gap-1 overflow-x-auto border-b border-ink-200 pb-2 md:sticky md:top-20 md:flex-col md:overflow-visible md:border-b-0 md:border-r md:pb-0 md:pr-3 dark:border-ink-800"
+          aria-label="Settings sections"
+        >
+          {tabs.map((t) => (
+            <NavLink
+              key={t.to}
+              to={t.to}
+              className={({ isActive }) =>
+                clsx(
+                  // Horizontal pill on mobile, full-width row on md+.
+                  'shrink-0 rounded-lg px-3 py-2 text-sm transition-colors md:w-full md:text-left',
+                  isActive
+                    ? t.to === 'admin'
+                      ? 'bg-red-50 text-red-700 dark:bg-red-950/30 dark:text-red-300'
+                      : 'bg-rose-50 text-rose-800 dark:bg-rose-950/40 dark:text-rose-200'
+                    : t.to === 'admin'
+                      ? 'text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/20'
+                      : 'text-ink-600 hover:bg-ink-100 hover:text-ink-900 dark:text-ink-300 dark:hover:bg-ink-800 dark:hover:text-ink-100',
+                )
+              }
+            >
+              {t.label}
+            </NavLink>
+          ))}
+        </nav>
+        <div className="min-w-0">
+          <Outlet />
+        </div>
       </div>
-      <Outlet />
     </div>
   );
 }
