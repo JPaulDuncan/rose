@@ -1,0 +1,268 @@
+import { z } from 'zod';
+
+/**
+ * IFTTT-style recipe schemas. Triggers, conditions, and actions are
+ * discriminated unions on a `kind` field; the matching `config` shape
+ * is enforced per kind so the API can validate before the recipes
+ * dispatcher ever sees a recipe.
+ *
+ * Phase 1 surface (per .devlogs/IFTTT-feature.md):
+ *   triggers:   email.ingested, page.created, tag.applied, time.scheduled
+ *   conditions: tag.contains, sender.brand, priority.is, subject.matches
+ *   actions:    notify.push, tag.add, category.set, webhook.post
+ */
+
+// ─── Triggers ────────────────────────────────────────────────────────
+
+export const TriggerKind = z.enum([
+  'email.ingested',
+  'page.created',
+  'tag.applied',
+  'time.scheduled',
+]);
+export type TriggerKind = z.infer<typeof TriggerKind>;
+
+const EmailIngestedTrigger = z.object({
+  kind: z.literal('email.ingested'),
+  config: z
+    .object({
+      /** Lower-case substring (case-insensitive) match against
+       *  `from.address`. Empty/undefined = match every sender. */
+      senderContains: z.string().max(200).optional(),
+      /** Lower-case brandKey match. */
+      brandKey: z.string().max(120).optional(),
+      /** Substring match against the email subject. */
+      subjectContains: z.string().max(200).optional(),
+    })
+    .default({}),
+});
+
+const PageCreatedTrigger = z.object({
+  kind: z.literal('page.created'),
+  config: z.object({}).default({}),
+});
+
+const TagAppliedTrigger = z.object({
+  kind: z.literal('tag.applied'),
+  config: z.object({
+    /** The tag whose application fires the recipe. Lower-case kebab-case. */
+    tag: z.string().min(1).max(80),
+  }),
+});
+
+const TimeScheduledTrigger = z.object({
+  kind: z.literal('time.scheduled'),
+  config: z.object({
+    /** Standard 5-field cron (`MIN HOUR DOM MON DOW`). Validated by
+     *  BullMQ when the repeatable is registered; we just length-cap
+     *  here. */
+    cron: z.string().min(5).max(80),
+    /** IANA tz; defaults to user's digest timezone. */
+    timezone: z.string().min(1).max(64).default('UTC'),
+  }),
+});
+
+export const TriggerSchema = z.discriminatedUnion('kind', [
+  EmailIngestedTrigger,
+  PageCreatedTrigger,
+  TagAppliedTrigger,
+  TimeScheduledTrigger,
+]);
+export type Trigger = z.infer<typeof TriggerSchema>;
+
+// ─── Conditions ──────────────────────────────────────────────────────
+
+export const ConditionKind = z.enum([
+  'tag.contains',
+  'sender.brand',
+  'priority.is',
+  'subject.matches',
+]);
+export type ConditionKind = z.infer<typeof ConditionKind>;
+
+const TagContainsCondition = z.object({
+  kind: z.literal('tag.contains'),
+  config: z.object({ tag: z.string().min(1).max(80) }),
+});
+
+const SenderBrandCondition = z.object({
+  kind: z.literal('sender.brand'),
+  config: z.object({ brandKey: z.string().min(1).max(120) }),
+});
+
+const PriorityIsCondition = z.object({
+  kind: z.literal('priority.is'),
+  config: z.object({ priority: z.enum(['high', 'normal', 'low']) }),
+});
+
+const SubjectMatchesCondition = z.object({
+  kind: z.literal('subject.matches'),
+  config: z.object({
+    /** Regex pattern (without delimiters). Compiled with the
+     *  case-insensitive flag by default. */
+    pattern: z.string().min(1).max(200),
+  }),
+});
+
+export const ConditionSchema = z.discriminatedUnion('kind', [
+  TagContainsCondition,
+  SenderBrandCondition,
+  PriorityIsCondition,
+  SubjectMatchesCondition,
+]);
+export type Condition = z.infer<typeof ConditionSchema>;
+
+// ─── Actions ─────────────────────────────────────────────────────────
+
+export const ActionKind = z.enum([
+  'notify.push',
+  'tag.add',
+  'category.set',
+  'webhook.post',
+]);
+export type ActionKind = z.infer<typeof ActionKind>;
+
+const NotifyPushAction = z.object({
+  kind: z.literal('notify.push'),
+  config: z
+    .object({
+      /** Override message; if omitted the dispatcher derives one
+       *  from the subject (email subject / page title / cron name). */
+      message: z.string().max(280).optional(),
+      /** Override title; default depends on trigger. */
+      title: z.string().max(80).optional(),
+    })
+    .default({}),
+});
+
+const TagAddAction = z.object({
+  kind: z.literal('tag.add'),
+  config: z.object({
+    tag: z.string().min(1).max(80),
+  }),
+});
+
+const CategorySetAction = z.object({
+  kind: z.literal('category.set'),
+  config: z.object({
+    name: z.string().min(1).max(120),
+  }),
+});
+
+const WebhookPostAction = z.object({
+  kind: z.literal('webhook.post'),
+  config: z.object({
+    url: z.string().url().max(2000),
+    /** Optional headers; never includes Authorization automatically. */
+    headers: z.record(z.string().max(200)).optional(),
+  }),
+});
+
+export const ActionSchema = z.discriminatedUnion('kind', [
+  NotifyPushAction,
+  TagAddAction,
+  CategorySetAction,
+  WebhookPostAction,
+]);
+export type Action = z.infer<typeof ActionSchema>;
+
+// ─── Recipe ──────────────────────────────────────────────────────────
+
+export const Recipe = z.object({
+  _id: z.string(),
+  userId: z.string(),
+  name: z.string().min(1).max(120),
+  description: z.string().max(500).default(''),
+  enabled: z.boolean().default(true),
+  trigger: TriggerSchema,
+  conditions: z.array(ConditionSchema).max(10).default([]),
+  actions: z.array(ActionSchema).min(1).max(10),
+  cooldownSeconds: z.number().int().min(0).max(7 * 24 * 3600).default(0),
+  fireLimitPerHour: z.number().int().min(1).max(1000).default(60),
+  importedFrom: z
+    .enum(['notification-rule', 'webhook', 'spam-policy', 'rule'])
+    .nullable()
+    .default(null),
+  fireCount: z.number().int().min(0).default(0),
+  errorCount: z.number().int().min(0).default(0),
+  lastFiredAt: z.string().nullable().default(null),
+  lastErrorAt: z.string().nullable().default(null),
+  lastErrorMessage: z.string().nullable().default(null),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type Recipe = z.infer<typeof Recipe>;
+
+export const RecipeCreateRequest = z.object({
+  name: z.string().min(1).max(120),
+  description: z.string().max(500).optional(),
+  enabled: z.boolean().optional(),
+  trigger: TriggerSchema,
+  conditions: z.array(ConditionSchema).max(10).optional(),
+  actions: z.array(ActionSchema).min(1).max(10),
+  cooldownSeconds: z.number().int().min(0).max(7 * 24 * 3600).optional(),
+  fireLimitPerHour: z.number().int().min(1).max(1000).optional(),
+});
+export type RecipeCreateRequest = z.infer<typeof RecipeCreateRequest>;
+
+export const RecipeUpdateRequest = z.object({
+  name: z.string().min(1).max(120).optional(),
+  description: z.string().max(500).optional(),
+  enabled: z.boolean().optional(),
+  trigger: TriggerSchema.optional(),
+  conditions: z.array(ConditionSchema).max(10).optional(),
+  actions: z.array(ActionSchema).min(1).max(10).optional(),
+  cooldownSeconds: z.number().int().min(0).max(7 * 24 * 3600).optional(),
+  fireLimitPerHour: z.number().int().min(1).max(1000).optional(),
+});
+export type RecipeUpdateRequest = z.infer<typeof RecipeUpdateRequest>;
+
+// ─── Event payloads (worker → dispatcher) ────────────────────────────
+
+/** What state-change processors emit onto the `rose.recipes` queue.
+ *  The dispatcher matches on `eventKind` and routes the event to
+ *  every recipe with a matching trigger.  */
+export const RecipeEventKind = z.enum([
+  'email.ingested',
+  'page.created',
+  'tag.applied',
+  'time.scheduled',
+]);
+export type RecipeEventKind = z.infer<typeof RecipeEventKind>;
+
+export type RecipeEvent =
+  | {
+      kind: 'email.ingested';
+      userId: string;
+      emailId: string;
+      from: string | null;
+      subject: string;
+      brandKey: string | null;
+      priority: 'high' | 'normal' | 'low' | null;
+      tags: string[];
+    }
+  | {
+      kind: 'page.created';
+      userId: string;
+      pageId: string;
+      slug: string;
+      title: string;
+      tags: string[];
+      categoryId: string | null;
+      brandKeys: string[];
+    }
+  | {
+      kind: 'tag.applied';
+      userId: string;
+      pageId: string;
+      slug: string;
+      title: string;
+      tag: string;
+      tags: string[];
+      brandKeys: string[];
+    }
+  | {
+      kind: 'time.scheduled';
+      userId: string;
+      recipeId: string;
+    };

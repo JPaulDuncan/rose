@@ -38,6 +38,7 @@ const AccountSettings = lazy(() => import('./routes/settings/Account'));
 const SourcesSettings = lazy(() => import('./routes/settings/Sources'));
 const SendersSettings = lazy(() => import('./routes/settings/Senders'));
 const RulesSettings = lazy(() => import('./routes/settings/Rules'));
+const RecipesSettings = lazy(() => import('./routes/settings/Recipes'));
 const IntegrationsSettings = lazy(() => import('./routes/settings/Integrations'));
 const InstructionsSettings = lazy(() => import('./routes/settings/Instructions'));
 const ModelsSettings = lazy(() => import('./routes/settings/Models'));
@@ -130,6 +131,7 @@ export default function App() {
           <Route path="sources" element={<SourcesSettings />} />
           <Route path="senders" element={<SendersSettings />} />
           <Route path="rules" element={<RulesSettings />} />
+          <Route path="recipes" element={<RecipesSettings />} />
           <Route path="integrations" element={<IntegrationsSettings />} />
           <Route path="instructions" element={<InstructionsSettings />} />
           <Route path="models" element={<ModelsSettings />} />

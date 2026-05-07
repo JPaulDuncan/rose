@@ -2,11 +2,12 @@ import { Worker, type Job, Queue } from 'bullmq';
 import { google } from 'googleapis';
 import { Types } from 'mongoose';
 import { Source, Email, User } from '@rose/db';
-import { parseEmail } from '@rose/email-parser';
+import { parseEmail, senderDomainTag } from '@rose/email-parser';
 import { decryptJson, encryptJson } from '../lib/crypto.js';
 import { redis } from '../lib/redis.js';
 import { env } from '../lib/env.js';
 import { logger } from '../lib/logger.js';
+import { emitRecipeEvent } from '../lib/recipeEmit.js';
 
 const QUEUE = 'rose.gmail-sync';
 const generateQueue = new Queue('rose.generate-page', { connection: redis });
@@ -111,6 +112,20 @@ export function startGmailSyncWorker() {
           { emailId: created._id.toString(), userId: userId.toString() },
           { attempts: 3, removeOnComplete: 500, removeOnFail: 500 },
         );
+        const recipeFromAddr = cleaned.from?.address ?? null;
+        const recipeBrandKey = recipeFromAddr
+          ? senderDomainTag(recipeFromAddr)
+          : null;
+        await emitRecipeEvent({
+          kind: 'email.ingested',
+          userId: userId.toString(),
+          emailId: String(created._id),
+          from: recipeFromAddr,
+          subject: cleaned.subject ?? '',
+          brandKey: recipeBrandKey ? recipeBrandKey.toLowerCase() : null,
+          priority: cleaned.metadata.priority ?? null,
+          tags: cleaned.metadata.topics ?? [],
+        });
       }
       source.lastSyncAt = new Date();
       source.lastError = null;

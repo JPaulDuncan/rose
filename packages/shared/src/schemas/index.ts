@@ -9,3 +9,4 @@ export * from './spam.js';
 export * from './rule.js';
 export * from './daydream.js';
 export * from './library.js';
+export * from './recipe.js';

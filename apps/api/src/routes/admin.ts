@@ -7,6 +7,8 @@ import {
   Conversation,
   DaydreamNote,
   WeatherSnapshot,
+  Recipe,
+  RecipeAudit,
   Email,
   Entity,
   LibraryDocument,
@@ -195,6 +197,18 @@ const SCOPES: Scope[] = [
     run: async () => {
       const r1 = await RuleAuditLog.deleteMany({});
       const r2 = await Rule.deleteMany({});
+      return { deleted: (r1.deletedCount ?? 0) + (r2.deletedCount ?? 0) };
+    },
+  },
+  {
+    id: 'recipes',
+    group: 'metadata',
+    label: 'Recipes (IFTTT automations)',
+    description:
+      'User recipes + their audit log. Time-scheduled BullMQ repeatables are not removed here — restart the worker after a wipe to clear stragglers.',
+    run: async () => {
+      const r1 = await RecipeAudit.deleteMany({});
+      const r2 = await Recipe.deleteMany({});
       return { deleted: (r1.deletedCount ?? 0) + (r2.deletedCount ?? 0) };
     },
   },

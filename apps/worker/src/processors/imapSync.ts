@@ -2,10 +2,11 @@ import { Worker, type Job, Queue } from 'bullmq';
 import { ImapFlow } from 'imapflow';
 import { Types } from 'mongoose';
 import { Source, Email, User } from '@rose/db';
-import { parseEmail, formatImapError } from '@rose/email-parser';
+import { parseEmail, formatImapError, senderDomainTag } from '@rose/email-parser';
 import { decryptJson } from '../lib/crypto.js';
 import { redis } from '../lib/redis.js';
 import { logger } from '../lib/logger.js';
+import { emitRecipeEvent } from '../lib/recipeEmit.js';
 import type { ImapConfig } from '@rose/shared';
 
 const QUEUE = 'rose.imap-sync';
@@ -137,6 +138,23 @@ export function startImapSyncWorker() {
                 { emailId: created._id.toString(), userId: userId.toString() },
                 { attempts: 3, removeOnComplete: 500, removeOnFail: 500 },
               );
+              // Recipes — fire-and-forget, won't block ingest if it
+              // fails. brand-key is derived from the from-address so
+              // recipes can match on a normalized brand identifier.
+              const recipeFromAddr = cleaned.from?.address ?? null;
+              const recipeBrandKey = recipeFromAddr
+                ? senderDomainTag(recipeFromAddr)
+                : null;
+              await emitRecipeEvent({
+                kind: 'email.ingested',
+                userId: userId.toString(),
+                emailId: String(created._id),
+                from: recipeFromAddr,
+                subject: cleaned.subject ?? '',
+                brandKey: recipeBrandKey ? recipeBrandKey.toLowerCase() : null,
+                priority: cleaned.metadata.priority ?? null,
+                tags: cleaned.metadata.topics ?? [],
+              });
               ingested += 1;
             } catch (perMsgErr) {
               failed += 1;

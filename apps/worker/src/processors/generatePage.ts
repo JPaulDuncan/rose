@@ -36,6 +36,7 @@ import { bayesScoreFor } from '../lib/bayesScore.js';
 import { evaluateRules, type RuleVerdict, emptyVerdict } from '../services/rules.js';
 import { dispatchWebhookEvent } from './webhookDeliver.js';
 import { evaluatePageNotifications } from './pushNotify.js';
+import { emitRecipeEvent } from '../lib/recipeEmit.js';
 import { describePageImages } from '../services/describeImages.js';
 import { extractPlacesFromPage, hashContent } from '../services/extractPlaces.js';
 import { runPostWriteEntityExtraction } from '../services/extractEntities.js';
@@ -1190,6 +1191,52 @@ export function startGeneratePageWorker() {
             await evaluatePageNotifications(userId, pageObj);
           } catch (err) {
             logger.warn({ err, pageId: String(pageId) }, 'push dispatch failed');
+          }
+          // Recipes — fan out page.created (new pages only) and
+          // tag.applied for every tag this generation pass added.
+          // brandKeys are derived from senderAddresses so recipe
+          // condition `sender.brand` works without re-resolving.
+          try {
+            const senderAddresses = (pageObj.senderAddresses ?? []) as string[];
+            const brandKeys = senderAddresses
+              .map((a) => {
+                const at = a.lastIndexOf('@');
+                if (at < 0) return null;
+                const domain = a.slice(at + 1).toLowerCase();
+                const root = domain.split('.').slice(-2).join('.');
+                return root.split('.')[0] ?? null;
+              })
+              .filter((b): b is string => !!b);
+            const tags = (pageObj.tags ?? []) as string[];
+            if (pageWasNew) {
+              await emitRecipeEvent({
+                kind: 'page.created',
+                userId: String(userId),
+                pageId: String(pageObj._id),
+                slug: pageObj.slug,
+                title: pageObj.title,
+                tags,
+                categoryId: pageObj.categoryId ? String(pageObj.categoryId) : null,
+                brandKeys,
+              });
+            }
+            for (const tag of tags) {
+              await emitRecipeEvent({
+                kind: 'tag.applied',
+                userId: String(userId),
+                pageId: String(pageObj._id),
+                slug: pageObj.slug,
+                title: pageObj.title,
+                tag,
+                tags,
+                brandKeys,
+              });
+            }
+          } catch (err) {
+            logger.warn(
+              { err, pageId: String(pageId) },
+              'recipe emit failed (continuing)',
+            );
           }
           // Vision — describe inline images when the user has opted in.
           // Respects per-user daily cap; never throws upward.

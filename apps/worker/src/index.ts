@@ -29,6 +29,7 @@ import {
 import { startLibraryEmbedWorker } from './processors/libraryEmbed.js';
 import { startTagDigestWorker, startTagDigestSweeper } from './processors/tagDigest.js';
 import { startPostWriteHooksWorker } from './processors/postWriteHooks.js';
+import { startRecipesWorker } from './processors/recipes.js';
 import { startReputationDecaySweep } from './services/reputationSweep.js';
 import { startDaydreamSweeper } from './services/daydreamSweeper.js';
 import { getVapidKeys } from './lib/vapid.js';
@@ -60,6 +61,7 @@ async function bootstrap() {
   startTagDigestWorker();
   startTagDigestSweeper();
   startPostWriteHooksWorker();
+  startRecipesWorker();
   // Initialise VAPID keys at boot (generates on first run, persists
   // to var/vapid.json so the API can read the public half).
   getVapidKeys();

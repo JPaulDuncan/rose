@@ -8,6 +8,7 @@ import { Source, Email } from '@rose/db';
 import type { WebsiteConfig } from '@rose/shared';
 import { senderDomainTag } from '@rose/email-parser';
 import { decryptJson } from '../lib/crypto.js';
+import { emitRecipeEvent } from '../lib/recipeEmit.js';
 import { assertSafeHttpUrl, UnsafeUrlError } from '../lib/safeFetch.js';
 import { redis } from '../lib/redis.js';
 import { logger } from '../lib/logger.js';
@@ -289,6 +290,16 @@ export function startWebsiteSyncWorker() {
         { emailId: String(created._id), userId: String(userId) },
         { attempts: 3, removeOnComplete: 500, removeOnFail: 500 },
       );
+      await emitRecipeEvent({
+        kind: 'email.ingested',
+        userId: String(userId),
+        emailId: String(created._id),
+        from: sender.address,
+        subject: title,
+        brandKey: brand ? brand.toLowerCase() : null,
+        priority: 'normal',
+        tags: topics,
+      });
 
       source.websiteContentHash = contentHash;
       source.lastSyncAt = new Date();

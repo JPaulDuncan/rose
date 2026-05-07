@@ -31,6 +31,12 @@ export const QUEUE_NAMES = {
    * inline post-persist.
    */
   postWriteHooks: 'rose.post-write-hooks',
+  /**
+   * IFTTT-style recipe dispatcher. Every state change that might
+   * fire a user recipe enqueues a typed event here; the recipes
+   * worker fans out to matching recipes. See .devlogs/IFTTT-feature.md.
+   */
+  recipes: 'rose.recipes',
 } as const;
 
 export type QueueName = (typeof QUEUE_NAMES)[keyof typeof QUEUE_NAMES];
@@ -58,5 +64,6 @@ export const librarySyncQueue = new Queue(QUEUE_NAMES.librarySync, connection);
 export const libraryEmbedQueue = new Queue(QUEUE_NAMES.libraryEmbed, connection);
 export const tagDigestQueue = new Queue(QUEUE_NAMES.tagDigest, connection);
 export const postWriteHooksQueue = new Queue(QUEUE_NAMES.postWriteHooks, connection);
+export const recipesQueue = new Queue(QUEUE_NAMES.recipes, connection);
 
 export const generatePageEvents = new QueueEvents(QUEUE_NAMES.generatePage, connection);
