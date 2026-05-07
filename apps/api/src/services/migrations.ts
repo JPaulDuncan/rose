@@ -405,3 +405,64 @@ export async function migrateWeatherLocationNulls(): Promise<void> {
   }
 }
 
+/**
+ * Multi-location weather: collapse the legacy singular `weatherLocation`
+ * subdocument into the new `weatherLocations[]` array. Each migrated
+ * user lands with one entry flagged `primary: true`. Idempotent —
+ * runs on raw documents (bypassing the schema) so we can read the
+ * legacy field even though it's no longer in the model.
+ */
+export async function migrateWeatherLocationToArray(): Promise<void> {
+  const collection = User.collection;
+  // Only candidates that have the legacy field AND no array yet.
+  const cursor = collection.find(
+    {
+      weatherLocation: { $exists: true, $ne: null },
+      $or: [
+        { weatherLocations: { $exists: false } },
+        { weatherLocations: { $size: 0 } },
+      ],
+    },
+    { projection: { _id: 1, weatherLocation: 1 } },
+  );
+  let migrated = 0;
+  for await (const doc of cursor) {
+    const wl = doc.weatherLocation as
+      | { lat?: number | null; lon?: number | null; label?: string | null; setAt?: Date | null }
+      | null;
+    if (
+      !wl ||
+      typeof wl.lat !== 'number' ||
+      typeof wl.lon !== 'number' ||
+      !wl.label
+    ) {
+      // Empty / partial — drop the legacy field on the way out so the
+      // candidate doesn't get re-considered next boot.
+      await collection.updateOne({ _id: doc._id }, { $unset: { weatherLocation: '' } });
+      continue;
+    }
+    await collection.updateOne(
+      { _id: doc._id },
+      {
+        $set: {
+          weatherLocations: [
+            {
+              _id: new (await import('mongoose')).Types.ObjectId(),
+              lat: wl.lat,
+              lon: wl.lon,
+              label: wl.label,
+              primary: true,
+              setAt: wl.setAt ?? new Date(),
+            },
+          ],
+        },
+        $unset: { weatherLocation: '' },
+      },
+    );
+    migrated += 1;
+  }
+  if (migrated > 0) {
+    logger.info({ migrated }, 'migrated legacy weatherLocation → weatherLocations[]');
+  }
+}
+

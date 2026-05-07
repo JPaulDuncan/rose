@@ -6,9 +6,12 @@ import toast from 'react-hot-toast';
 import { useApi } from '../../lib/api';
 
 type WeatherLocation = {
+  id: string;
   lat: number;
   lon: number;
   label: string;
+  primary: boolean;
+  setAt: string | null;
 };
 
 export default function NewsletterSettings() {
@@ -380,30 +383,42 @@ function WeatherLocationCard() {
   const [query, setQuery] = useState('');
 
   const { data } = useQuery({
-    queryKey: ['weather-location'],
+    queryKey: ['weather-locations'],
     queryFn: () =>
-      api.get<{ location: WeatherLocation | null }>('/api/weather/location'),
+      api.get<{ locations: WeatherLocation[] }>('/api/weather/locations'),
   });
 
-  const setLocation = useMutation({
+  const addLocation = useMutation({
     mutationFn: async (q: string) =>
-      api.post<{ location: WeatherLocation }>('/api/weather/location', { query: q }),
+      api.post<{ location: WeatherLocation }>('/api/weather/locations', { query: q }),
     onSuccess: (r) => {
-      toast.success(`Set location: ${r.location.label}`);
-      qc.invalidateQueries({ queryKey: ['weather-location'] });
+      toast.success(`Added: ${r.location.label}`);
+      qc.invalidateQueries({ queryKey: ['weather-locations'] });
       qc.invalidateQueries({ queryKey: ['weather'] });
       setQuery('');
     },
     onError: (e: Error) => toast.error(e.message),
   });
 
-  const clear = useMutation({
-    mutationFn: async () => api.del<{ ok: true }>('/api/weather/location'),
+  const removeLocation = useMutation({
+    mutationFn: async (id: string) =>
+      api.del<{ ok: true }>(`/api/weather/locations/${id}`),
     onSuccess: () => {
-      toast.success('Cleared.');
-      qc.invalidateQueries({ queryKey: ['weather-location'] });
+      toast.success('Removed.');
+      qc.invalidateQueries({ queryKey: ['weather-locations'] });
       qc.invalidateQueries({ queryKey: ['weather'] });
     },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const setPrimary = useMutation({
+    mutationFn: async (id: string) =>
+      api.post<{ ok: true }>(`/api/weather/locations/${id}/primary`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['weather-locations'] });
+      qc.invalidateQueries({ queryKey: ['weather'] });
+    },
+    onError: (e: Error) => toast.error(e.message),
   });
 
   const refresh = useMutation({
@@ -415,55 +430,70 @@ function WeatherLocationCard() {
     onError: (e: Error) => toast.error(e.message),
   });
 
-  const current = data?.location ?? null;
+  const locations = data?.locations ?? [];
 
   return (
     <div className="card">
       <div className="mb-2 flex items-center gap-2">
         <CloudSun className="h-5 w-5 text-rose-500" />
-        <h2 className="font-semibold">Weather location</h2>
+        <h2 className="font-semibold">Weather locations</h2>
       </div>
       <p className="text-sm text-ink-500">
-        The forecast banner at the top of the newsletter pulls from the U.S.
-        National Weather Service (NOAA), so this is U.S.-only. Geocoding via
-        OpenStreetMap. The brief itself is rendered by the LLM using the{' '}
-        <code>weather.brief</code> instruction — clone and tweak it from{' '}
-        <Link to="/settings/instructions" className="text-rose-600 hover:underline dark:text-rose-300">
-          Settings → Instructions
-        </Link>
-        .
+        Save one or more locations. The home page shows your primary first
+        and lets you switch between the rest. NOAA covers U.S. forecasts only;
+        geocoding is via OpenStreetMap.
       </p>
 
-      {current?.label && (
-        <div className="mt-4 flex items-center gap-3 rounded-lg border border-ink-200 px-3 py-2 text-sm dark:border-ink-800">
-          <MapPin className="h-4 w-4 text-rose-500" />
-          <div className="min-w-0 flex-1">
-            <div className="truncate font-medium">{current.label}</div>
-            <div className="text-xs text-ink-500">
-              <code>
-                {current.lat.toFixed(3)}, {current.lon.toFixed(3)}
-              </code>
-            </div>
-          </div>
-          <button
-            className="btn-ghost"
-            onClick={() => refresh.mutate()}
-            disabled={refresh.isPending}
-            aria-label="Refresh forecast"
-            title="Refresh forecast"
-          >
-            <RefreshCw
-              className={`h-4 w-4 ${refresh.isPending ? 'animate-spin' : ''}`}
-            />
-          </button>
-          <button
-            className="btn-ghost text-red-600"
-            onClick={() => clear.mutate()}
-            aria-label="Clear location"
-          >
-            <Trash2 className="h-4 w-4" />
-          </button>
-        </div>
+      {locations.length > 0 && (
+        <ul className="mt-4 space-y-1.5">
+          {locations.map((loc) => (
+            <li
+              key={loc.id}
+              className="flex items-center gap-3 rounded-lg border border-ink-200 px-3 py-2 text-sm dark:border-ink-800"
+            >
+              <MapPin
+                className={`h-4 w-4 ${loc.primary ? 'text-rose-500' : 'text-ink-400'}`}
+              />
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                  <span className="truncate font-medium">{loc.label}</span>
+                  {loc.primary && (
+                    <span className="rounded-full bg-rose-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-widest text-rose-700 dark:bg-rose-950/40 dark:text-rose-200">
+                      Primary
+                    </span>
+                  )}
+                </div>
+                <div className="text-xs text-ink-500">
+                  <code>
+                    {loc.lat.toFixed(3)}, {loc.lon.toFixed(3)}
+                  </code>
+                </div>
+              </div>
+              {!loc.primary && (
+                <button
+                  type="button"
+                  className="btn-ghost"
+                  onClick={() => setPrimary.mutate(loc.id)}
+                  disabled={setPrimary.isPending}
+                  aria-label="Make primary"
+                  title="Make primary"
+                >
+                  <Star className="h-4 w-4" />
+                </button>
+              )}
+              <button
+                type="button"
+                className="btn-ghost text-red-600"
+                onClick={() => removeLocation.mutate(loc.id)}
+                disabled={removeLocation.isPending}
+                aria-label="Remove"
+                title="Remove"
+              >
+                <Trash2 className="h-4 w-4" />
+              </button>
+            </li>
+          ))}
+        </ul>
       )}
 
       <form
@@ -472,7 +502,7 @@ function WeatherLocationCard() {
           e.preventDefault();
           const v = query.trim();
           if (!v) return;
-          setLocation.mutate(v);
+          addLocation.mutate(v);
         }}
       >
         <input
@@ -485,11 +515,33 @@ function WeatherLocationCard() {
         <button
           className="btn-primary"
           type="submit"
-          disabled={setLocation.isPending || !query.trim()}
+          disabled={addLocation.isPending || !query.trim()}
         >
-          {setLocation.isPending ? 'Locating…' : 'Set location'}
+          <Plus className="h-4 w-4" />
+          {addLocation.isPending ? 'Locating…' : 'Add'}
         </button>
       </form>
+
+      {locations.length > 0 && (
+        <button
+          type="button"
+          className="btn-ghost mt-2 text-xs"
+          onClick={() => refresh.mutate()}
+          disabled={refresh.isPending}
+        >
+          <RefreshCw className={`h-3.5 w-3.5 ${refresh.isPending ? 'animate-spin' : ''}`} />
+          Refresh forecasts
+        </button>
+      )}
+
+      <p className="mt-3 text-xs text-ink-500">
+        The brief is rendered by the LLM using the{' '}
+        <code>weather.brief</code> instruction — clone and tweak it from{' '}
+        <Link to="/settings/instructions" className="text-rose-600 hover:underline dark:text-rose-300">
+          Settings → Instructions
+        </Link>
+        .
+      </p>
     </div>
   );
 }

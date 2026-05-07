@@ -212,72 +212,165 @@ function buildDeterministicBrief(
   void location; // location is in the surrounding UI label; unused here
 }
 
-weatherRouter.get('/location', async (req, res) => {
+type StoredLocation = {
+  _id: Types.ObjectId;
+  lat: number;
+  lon: number;
+  label: string;
+  primary?: boolean;
+  setAt?: Date | null;
+};
+
+function shape(l: StoredLocation) {
+  return {
+    id: String(l._id),
+    lat: l.lat,
+    lon: l.lon,
+    label: l.label,
+    primary: !!l.primary,
+    setAt: l.setAt ? new Date(l.setAt).toISOString() : null,
+  };
+}
+
+/**
+ * Pick the location the forecast endpoint should render. Either the
+ * one whose id matches `?id=…`, or the one flagged primary, or the
+ * first stored location, or null.
+ */
+function pickLocation(
+  locations: StoredLocation[],
+  requestedId: string | null,
+): StoredLocation | null {
+  if (requestedId) {
+    const hit = locations.find((l) => String(l._id) === requestedId);
+    if (hit) return hit;
+  }
+  return locations.find((l) => l.primary) ?? locations[0] ?? null;
+}
+
+function bustCache(userId: Types.ObjectId) {
+  for (const k of [...briefCache.keys()]) {
+    if (k.startsWith(`${userId.toString()}:`)) briefCache.delete(k);
+  }
+}
+
+weatherRouter.get('/locations', async (req, res) => {
   const userId = new Types.ObjectId(userIdOf(req));
-  const user = await User.findById(userId).select('weatherLocation').lean();
-  res.json({ location: user?.weatherLocation ?? null });
+  const user = await User.findById(userId).select('weatherLocations').lean();
+  const locations = ((user?.weatherLocations as unknown as StoredLocation[]) ?? []).map(shape);
+  res.json({ locations });
 });
 
-weatherRouter.post('/location', validateBody(SetLocationRequest), async (req, res, next) => {
+weatherRouter.post('/locations', validateBody(SetLocationRequest), async (req, res, next) => {
   try {
     const userId = new Types.ObjectId(userIdOf(req));
     const body = req.body as typeof SetLocationRequest._type;
-    let location: WeatherLocation | null = null;
+    let resolved: WeatherLocation | null = null;
     if ('query' in body) {
-      location = await geocode(body.query);
-      if (!location) {
+      resolved = await geocode(body.query);
+      if (!resolved) {
         res
           .status(400)
           .json({ error: 'invalid_request', message: 'Could not geocode that location.' });
         return;
       }
     } else {
-      location = { lat: body.lat, lon: body.lon, label: body.label };
+      resolved = { lat: body.lat, lon: body.lon, label: body.label };
     }
-    await User.updateOne(
-      { _id: userId },
-      {
-        $set: {
-          // Write the whole sub-document in one shot so this works whether
-          // the prior value was a sub-doc, missing, or literal null (admin
-          // reset / dataIo import paths used to leave it as null).
-          weatherLocation: {
-            lat: location.lat,
-            lon: location.lon,
-            label: location.label,
-            setAt: new Date(),
-          },
-        },
-      },
-    );
-    // Bust cache.
-    for (const k of [...briefCache.keys()]) {
-      if (k.startsWith(`${userId.toString()}:`)) briefCache.delete(k);
+    const user = await User.findById(userId).select('weatherLocations');
+    if (!user) {
+      res.status(404).json({ error: 'not_found' });
+      return;
     }
-    res.json({ location });
+    const existing = (user.weatherLocations ?? []) as unknown as StoredLocation[];
+    const isFirst = existing.length === 0;
+    const newDoc = {
+      _id: new Types.ObjectId(),
+      lat: resolved.lat,
+      lon: resolved.lon,
+      label: resolved.label,
+      // First saved location is primary by default; subsequent adds
+      // don't auto-promote (the user picks via /primary).
+      primary: isFirst,
+      setAt: new Date(),
+    };
+    user.weatherLocations = [...existing, newDoc] as unknown as typeof user.weatherLocations;
+    await user.save();
+    bustCache(userId);
+    res.status(201).json({ location: shape(newDoc) });
   } catch (err) {
     next(err);
   }
 });
 
-weatherRouter.delete('/location', async (req, res) => {
+weatherRouter.delete('/locations/:id', async (req, res) => {
   const userId = new Types.ObjectId(userIdOf(req));
-  await User.updateOne(
-    { _id: userId },
-    { $unset: { weatherLocation: 1 } },
-  );
-  for (const k of [...briefCache.keys()]) {
-    if (k.startsWith(`${userId.toString()}:`)) briefCache.delete(k);
+  const id = req.params.id ?? '';
+  if (!Types.ObjectId.isValid(id)) {
+    res.status(400).json({ error: 'invalid_request', message: 'Bad location id' });
+    return;
   }
+  const user = await User.findById(userId).select('weatherLocations');
+  if (!user) {
+    res.json({ ok: true });
+    return;
+  }
+  const existing = (user.weatherLocations ?? []) as unknown as StoredLocation[];
+  const removed = existing.find((l) => String(l._id) === id);
+  const next = existing.filter((l) => String(l._id) !== id);
+  // If we just deleted the primary and there are still locations
+  // left, promote the first survivor so the user is never left with
+  // "no primary".
+  if (removed?.primary && next.length > 0 && next[0]) {
+    next[0].primary = true;
+  }
+  user.weatherLocations = next as unknown as typeof user.weatherLocations;
+  await user.save();
+  bustCache(userId);
+  res.json({ ok: true });
+});
+
+weatherRouter.post('/locations/:id/primary', async (req, res) => {
+  const userId = new Types.ObjectId(userIdOf(req));
+  const id = req.params.id ?? '';
+  if (!Types.ObjectId.isValid(id)) {
+    res.status(400).json({ error: 'invalid_request', message: 'Bad location id' });
+    return;
+  }
+  const user = await User.findById(userId).select('weatherLocations');
+  if (!user) {
+    res.status(404).json({ error: 'not_found' });
+    return;
+  }
+  const existing = (user.weatherLocations ?? []) as unknown as StoredLocation[];
+  let found = false;
+  for (const l of existing) {
+    const isMatch = String(l._id) === id;
+    l.primary = isMatch;
+    if (isMatch) found = true;
+  }
+  if (!found) {
+    res.status(404).json({ error: 'not_found' });
+    return;
+  }
+  user.weatherLocations = existing as unknown as typeof user.weatherLocations;
+  await user.save();
+  bustCache(userId);
   res.json({ ok: true });
 });
 
 weatherRouter.get('/', async (req, res, next) => {
   try {
     const userId = new Types.ObjectId(userIdOf(req));
-    const user = await User.findById(userId).select('weatherLocation').lean();
-    const loc = user?.weatherLocation;
-    if (!loc?.lat || !loc?.lon || !loc?.label) {
+    const user = await User.findById(userId).select('weatherLocations').lean();
+    const locations = (user?.weatherLocations as unknown as StoredLocation[]) ?? [];
+    if (locations.length === 0) {
+      res.json({ configured: false });
+      return;
+    }
+    const requestedId = (req.query.id as string | undefined)?.trim() || null;
+    const loc = pickLocation(locations, requestedId);
+    if (!loc) {
       res.json({ configured: false });
       return;
     }
@@ -286,7 +379,8 @@ weatherRouter.get('/', async (req, res, next) => {
     if (cached && Date.now() - cached.fetchedAt < WEATHER_TTL_MS) {
       res.json({
         configured: true,
-        location: { lat: loc.lat, lon: loc.lon, label: loc.label },
+        location: shape(loc),
+        locations: locations.map(shape),
         current: cached.current,
         periods: cached.periods.slice(0, 4),
         brief: cached.brief,
@@ -316,7 +410,8 @@ weatherRouter.get('/', async (req, res, next) => {
     });
     res.json({
       configured: true,
-      location: { lat: loc.lat, lon: loc.lon, label: loc.label },
+      location: shape(loc),
+      locations: locations.map(shape),
       current,
       periods: periods.slice(0, 4),
       brief,

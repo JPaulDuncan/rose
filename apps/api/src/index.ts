@@ -168,6 +168,7 @@ async function bootstrap() {
       migrateSenderBrandsToGlobal,
       migrateSenderStripBrandFields,
       migrateWeatherLocationNulls,
+      migrateWeatherLocationToArray,
     } = await import('./services/migrations.js');
     await migrateLegacyThreadKey();
     // Plan 14 — collapse per-user DaydreamNote duplicates into one
@@ -184,6 +185,9 @@ async function bootstrap() {
     // Unstick any User docs whose weatherLocation got written as
     // literal null by earlier admin-reset / import paths.
     await migrateWeatherLocationNulls();
+    // Multi-location weather — collapse legacy singular field into
+    // the new `weatherLocations[]` array.
+    await migrateWeatherLocationToArray();
   } catch (err) {
     logger.warn({ err }, 'boot-time migration failed');
   }

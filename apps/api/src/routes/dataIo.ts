@@ -59,7 +59,7 @@ dataIoRouter.get('/export', async (req, res) => {
   ] = await Promise.all([
     User.findById(userId)
       .select(
-        'email displayName settings spamPolicy featuredTags weatherLocation savedSearches',
+        'email displayName settings spamPolicy featuredTags weatherLocations savedSearches',
       )
       .lean(),
     Page.find({ userId })
@@ -100,7 +100,7 @@ dataIoRouter.get('/export', async (req, res) => {
           settings: user.settings ?? {},
           spamPolicy: user.spamPolicy ?? { senders: [], tags: [] },
           featuredTags: user.featuredTags ?? [],
-          weatherLocation: user.weatherLocation ?? null,
+          weatherLocations: user.weatherLocations ?? [],
           savedSearches: user.savedSearches ?? [],
         }
       : null,
@@ -307,26 +307,28 @@ dataIoRouter.post('/import', upload.single('file'), async (req, res) => {
   });
 
   // User-level fields — replace settings + savedSearches + spamPolicy
-  // + featuredTags + weatherLocation. Don't touch email, password,
+  // + featuredTags + weatherLocations. Don't touch email, password,
   // providers (those are install-specific).
   const userPayload = (parsed.user ?? {}) as Record<string, unknown>;
+  // Accept either the new array shape or the legacy singular shape on
+  // the way in (older exports may carry `weatherLocation`); the legacy
+  // value gets coerced into a single-entry array.
+  const wlArr = Array.isArray(userPayload.weatherLocations)
+    ? (userPayload.weatherLocations as Record<string, unknown>[])
+    : userPayload.weatherLocation && typeof userPayload.weatherLocation === 'object'
+      ? [userPayload.weatherLocation as Record<string, unknown>]
+      : [];
   const set: Record<string, unknown> = {
     settings: userPayload.settings ?? {},
     spamPolicy: userPayload.spamPolicy ?? { senders: [], tags: [] },
     featuredTags: userPayload.featuredTags ?? [],
     savedSearches: userPayload.savedSearches ?? [],
+    weatherLocations: wlArr,
   };
-  // weatherLocation is a sub-document; writing literal null breaks any
-  // later PUT that targets sub-fields (`weatherLocation.label`, etc.).
-  // Either set the whole sub-doc when present, or clear it via $unset.
-  const update: { $set: typeof set; $unset?: { weatherLocation: 1 } } = { $set: set };
-  const wl = userPayload.weatherLocation as Record<string, unknown> | null | undefined;
-  if (wl && typeof wl === 'object') {
-    set.weatherLocation = wl;
-  } else {
-    update.$unset = { weatherLocation: 1 };
-  }
-  await User.updateOne({ _id: userId }, update);
+  await User.updateOne(
+    { _id: userId },
+    { $set: set, $unset: { weatherLocation: 1 } },
+  );
 
   res.json({
     ok: true,
