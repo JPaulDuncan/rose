@@ -187,11 +187,14 @@ export default function HomePage() {
           <MoreNews buckets={populated} suppressIds={suppressIds} />
         </div>
 
-        {/* sticky top:5rem leaves room for the 56px shell header +
-            small breathing margin. max-height + overflow lets the
-            rail scroll within itself when it's taller than the
-            viewport, instead of pushing the page. */}
-        <aside className="space-y-6 lg:sticky lg:top-20 lg:max-h-[calc(100vh-5rem)] lg:overflow-y-auto lg:pr-1">
+        {/* Sticky from below the top bar so pinned widgets stay
+            visible while the main column scrolls. No max-height /
+            overflow on purpose — when the rail's content fits the
+            viewport it pins; when it's taller than the viewport it
+            naturally scrolls with the page (sticky has nothing to
+            stick against at that point). Either way: no second
+            scrollbar. */}
+        <aside className="space-y-6 lg:sticky lg:top-20">
           <MoonPhaseCard show={!!data.showMoonPhases} />
           <WeatherCard compact />
           <UpcomingEvents />
