@@ -2,7 +2,13 @@ import { Worker, type Job, Queue } from 'bullmq';
 import { google } from 'googleapis';
 import { Types } from 'mongoose';
 import { Source, Email, User } from '@rose/db';
-import { parseEmail, senderDomainTag, compileSenderBlocklist, isSenderBlocked } from '@rose/email-parser';
+import {
+  parseEmail,
+  senderDomainTag,
+  compileSenderBlocklist,
+  isSenderBlocked,
+  isSenderWhitelisted,
+} from '@rose/email-parser';
 import { decryptJson, encryptJson } from '../lib/crypto.js';
 import { redis } from '../lib/redis.js';
 import { env } from '../lib/env.js';
@@ -47,12 +53,18 @@ export function startGmailSyncWorker() {
       oauth2.setCredentials({ refresh_token: stored.refreshToken });
 
       const gmail = google.gmail({ version: 'v1', auth: oauth2 });
-      // Snapshot the user's blocklist once per sync run; compile
-      // into address + brand sets so a blocked subdomain catches
-      // every other `*.brand.tld` mailer the user expects.
-      const userPrefs = await User.findById(userId).select('spamPolicy.blockedSenders').lean();
+      // Snapshot the user's blocklist + whitelist once per sync run.
+      // Whitelist wins: a `.gov`/`.edu` sender or anything the user
+      // explicitly trusted bypasses the blocklist and downstream
+      // spam classifier.
+      const userPrefs = await User.findById(userId)
+        .select('spamPolicy.blockedSenders spamPolicy.whitelistedSenders')
+        .lean();
       const blocked = compileSenderBlocklist(
         (userPrefs?.spamPolicy?.blockedSenders as string[] | undefined) ?? [],
+      );
+      const whitelisted = compileSenderBlocklist(
+        (userPrefs?.spamPolicy?.whitelistedSenders as string[] | undefined) ?? [],
       );
       const list = await gmail.users.messages.list({
         userId: 'me',
@@ -71,7 +83,8 @@ export function startGmailSyncWorker() {
         if (!raw) continue;
         const cleaned = await parseEmail(raw);
         const fromAddr = cleaned.from?.address?.toLowerCase() ?? '';
-        if (fromAddr && isSenderBlocked(blocked, fromAddr)) continue;
+        const isWhitelisted = isSenderWhitelisted(whitelisted, fromAddr);
+        if (fromAddr && !isWhitelisted && isSenderBlocked(blocked, fromAddr)) continue;
         const exists = await Email.findOne({ userId, rawHash: cleaned.rawHash });
         if (exists) continue;
         const created = await Email.create({

@@ -2,7 +2,14 @@ import { Worker, type Job, Queue } from 'bullmq';
 import { ImapFlow } from 'imapflow';
 import { Types } from 'mongoose';
 import { Source, Email, User } from '@rose/db';
-import { parseEmail, formatImapError, senderDomainTag, compileSenderBlocklist, isSenderBlocked } from '@rose/email-parser';
+import {
+  parseEmail,
+  formatImapError,
+  senderDomainTag,
+  compileSenderBlocklist,
+  isSenderBlocked,
+  isSenderWhitelisted,
+} from '@rose/email-parser';
 import { decryptJson } from '../lib/crypto.js';
 import { redis } from '../lib/redis.js';
 import { logger } from '../lib/logger.js';
@@ -25,13 +32,18 @@ export function startImapSyncWorker() {
       if (!source || source.type !== 'imap' || !source.encryptedConfig) return;
 
       const cfg = decryptJson<ImapConfig>(source.encryptedConfig);
-      // Snapshot the user's blocklist once per sync run so we don't
-      // round-trip Mongo per message. Compile into address + brand
-      // sets so a "notices.medium.com" entry also blocks every
-      // other `*.medium.com` mailer.
-      const userPrefs = await User.findById(userId).select('spamPolicy.blockedSenders').lean();
+      // Snapshot the user's blocklist + whitelist once per sync run
+      // so we don't round-trip Mongo per message. Both compile into
+      // address + brand sets so a `notices.medium.com` entry also
+      // covers every other `*.medium.com` mailer.
+      const userPrefs = await User.findById(userId)
+        .select('spamPolicy.blockedSenders spamPolicy.whitelistedSenders')
+        .lean();
       const blocked = compileSenderBlocklist(
         (userPrefs?.spamPolicy?.blockedSenders as string[] | undefined) ?? [],
+      );
+      const whitelisted = compileSenderBlocklist(
+        (userPrefs?.spamPolicy?.whitelistedSenders as string[] | undefined) ?? [],
       );
       const client = new ImapFlow({
         host: cfg.host,
@@ -90,7 +102,15 @@ export function startImapSyncWorker() {
               // page-generation pass on it. Counts as `skippedDup` so
               // the user's stats keep reading "we ignored this".
               const fromAddr = cleaned.from?.address?.toLowerCase() ?? '';
-              if (fromAddr && isSenderBlocked(blocked, fromAddr)) {
+              // Whitelist wins — the .gov / .edu default plus the
+              // user's trusted-sender list both bypass the blocklist
+              // and the per-message spam classifier downstream.
+              const isWhitelisted = isSenderWhitelisted(whitelisted, fromAddr);
+              if (
+                fromAddr &&
+                !isWhitelisted &&
+                isSenderBlocked(blocked, fromAddr)
+              ) {
                 skippedDup += 1;
                 continue;
               }

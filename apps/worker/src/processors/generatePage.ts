@@ -22,7 +22,12 @@ import {
   renderTemplate,
 } from '@rose/llm';
 import { PageGenerationDraft, PageMergeDraft, priorityForDate, slugify, type CitationMap } from '@rose/shared';
-import { stripAdSectionsStrict, filterNominalTags } from '@rose/email-parser';
+import {
+  stripAdSectionsStrict,
+  filterNominalTags,
+  compileSenderBlocklist,
+  isSenderWhitelisted,
+} from '@rose/email-parser';
 import { redis } from '../lib/redis.js';
 import { logger } from '../lib/logger.js';
 import { resolveProviderForUser, applyParamOverrides } from '../lib/providers.js';
@@ -997,32 +1002,55 @@ export function startGeneratePageWorker() {
       // Apply the user's manual spam policy. Any contributing sender or any
       // tag in the policy lists trips userMarkedSpam.
       const userPolicy = (await User.findById(userId).select('spamPolicy').lean()) as
-        | { spamPolicy?: { senders?: string[]; tags?: string[] } }
+        | {
+            spamPolicy?: {
+              senders?: string[];
+              tags?: string[];
+              whitelistedSenders?: string[];
+            };
+          }
         | null;
       const policySenders = new Set(userPolicy?.spamPolicy?.senders ?? []);
       const policyTags = new Set(userPolicy?.spamPolicy?.tags ?? []);
-      const senderHit = pageEmails.some((e) =>
-        policySenders.has((e.from?.address ?? '').toLowerCase()),
+      // Whitelist check: any contributing sender whose address is
+      // whitelisted (or sits under a default-trusted TLD) immunises
+      // the whole page from spam-mark + auto-quarantine. The user
+      // explicitly said "this is fine" — honour it across every
+      // downstream classifier rather than re-deriving on each one.
+      const whitelistSets = compileSenderBlocklist(
+        userPolicy?.spamPolicy?.whitelistedSenders ?? [],
       );
+      const pageIsWhitelisted = pageEmails.some((e) =>
+        isSenderWhitelisted(whitelistSets, (e.from?.address ?? '').toLowerCase()),
+      );
+      const senderHit =
+        !pageIsWhitelisted &&
+        pageEmails.some((e) =>
+          policySenders.has((e.from?.address ?? '').toLowerCase()),
+        );
       const tagHit =
-        (draft.tags ?? []).some((t) => policyTags.has(t)) ||
-        topics.some((t) => policyTags.has(t));
+        !pageIsWhitelisted &&
+        ((draft.tags ?? []).some((t) => policyTags.has(t)) ||
+          topics.some((t) => policyTags.has(t)));
       // Sender-reputation feedback loop: if any contributing sender's
       // brand has tripped the auto-quarantine threshold, surface this
-      // page in the Quarantine view rather than the main feed.
+      // page in the Quarantine view rather than the main feed —
+      // unless the page is whitelisted.
       const contributingAddrs = pageEmails
         .map((e) => (e.from?.address ?? '').toLowerCase())
         .filter(Boolean);
-      const quarantinedSenders = contributingAddrs.length
-        ? await Sender.find({
-            userId,
-            addresses: { $in: contributingAddrs },
-            autoQuarantine: true,
-          })
-            .select('_id')
-            .lean()
-        : [];
-      const autoQuarantined = quarantinedSenders.length > 0;
+      const quarantinedSenders = pageIsWhitelisted
+        ? []
+        : contributingAddrs.length
+          ? await Sender.find({
+              userId,
+              addresses: { $in: contributingAddrs },
+              autoQuarantine: true,
+            })
+              .select('_id')
+              .lean()
+          : [];
+      const autoQuarantined = !pageIsWhitelisted && quarantinedSenders.length > 0;
 
       // Bayesian classifier — score the trigger email against the
       // user's per-user profile. Falls through to null on cold-start

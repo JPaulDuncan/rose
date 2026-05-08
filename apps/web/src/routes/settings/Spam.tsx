@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ShieldAlert, Trash2, UserX, Tag as TagIcon, Ban } from 'lucide-react';
+import { ShieldAlert, Trash2, UserX, Tag as TagIcon, Ban, ShieldCheck } from 'lucide-react';
 import toast from 'react-hot-toast';
 import type { SpamPolicy } from '@rose/shared';
 import { useApi } from '../../lib/api';
@@ -14,6 +14,7 @@ export default function SpamSettings() {
   });
   const [newSender, setNewSender] = useState('');
   const [newTag, setNewTag] = useState('');
+  const [newWhitelist, setNewWhitelist] = useState('');
 
   const addSender = useMutation({
     mutationFn: async (address: string) =>
@@ -66,6 +67,22 @@ export default function SpamSettings() {
     },
     onError: (e: Error) => toast.error(e.message),
   });
+  const addWhitelist = useMutation({
+    mutationFn: async (address: string) =>
+      api.post<{ ok: true }>('/api/spam/whitelist', { address }),
+    onSuccess: () => {
+      toast.success('Trusted — bypasses blocklist + classifier.');
+      qc.invalidateQueries({ queryKey: ['spam'] });
+      setNewWhitelist('');
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+  const removeWhitelist = useMutation({
+    mutationFn: async (address: string) =>
+      api.del<{ ok: true }>(`/api/spam/whitelist/${encodeURIComponent(address)}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['spam'] }),
+    onError: (e: Error) => toast.error(e.message),
+  });
 
   if (isLoading || !data) {
     return <div className="card text-sm text-ink-500">Loading…</div>;
@@ -88,6 +105,75 @@ export default function SpamSettings() {
 
       <PromotionsToggle />
       <ReputationCard />
+
+      <div className="card">
+        <div className="mb-3 flex items-center gap-2">
+          <ShieldCheck className="h-4 w-4 text-emerald-600" />
+          <h3 className="font-semibold">Trusted senders (whitelist)</h3>
+          <span className="ml-auto text-xs text-ink-500">
+            {(data.whitelistedSenders ?? []).length}
+          </span>
+        </div>
+        <p className="mb-3 text-xs text-ink-500">
+          Senders here bypass the blocklist, the spam classifier, and the
+          auto-quarantine sweep — useful for newsletters or transactional
+          mail you trust despite spam-y signals. Add a full address
+          (<code>alice@example.com</code>), a host
+          (<code>updates.example.com</code>), or a bare domain
+          (<code>example.com</code>) — eTLD+1 matching catches every
+          subdomain. <strong>All <code>.gov</code> and <code>.edu</code>{' '}
+          senders are trusted by default</strong> and don't need to be
+          added here.
+        </p>
+        <form
+          className="mb-3 flex gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            const v = newWhitelist.trim().toLowerCase();
+            if (!v) return;
+            if ((data.whitelistedSenders ?? []).includes(v)) {
+              toast.error('Already trusted');
+              return;
+            }
+            addWhitelist.mutate(v);
+          }}
+        >
+          <input
+            className="input"
+            placeholder="address@example.com or example.com"
+            value={newWhitelist}
+            onChange={(e) => setNewWhitelist(e.target.value)}
+          />
+          <button className="btn-primary" disabled={addWhitelist.isPending}>
+            Trust
+          </button>
+        </form>
+        {(data.whitelistedSenders ?? []).length === 0 ? (
+          <div className="text-xs text-ink-500">
+            No custom trusted senders. <code>.gov</code> and{' '}
+            <code>.edu</code> mail is already trusted automatically.
+          </div>
+        ) : (
+          <ul className="space-y-1 text-sm">
+            {(data.whitelistedSenders ?? []).map((s) => (
+              <li
+                key={s}
+                className="flex items-center justify-between rounded-lg border border-ink-200 px-3 py-1.5 dark:border-ink-800"
+              >
+                <code className="truncate text-xs">{s}</code>
+                <button
+                  className="btn-ghost text-red-600"
+                  onClick={() => removeWhitelist.mutate(s)}
+                  aria-label={`Untrust ${s}`}
+                  title="Remove from whitelist"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
 
       <div className="card">
         <div className="mb-3 flex items-center gap-2">

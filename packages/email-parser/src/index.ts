@@ -7,6 +7,8 @@ export {
   senderDomainTag,
   compileSenderBlocklist,
   isSenderBlocked,
+  isSenderWhitelisted,
+  DEFAULT_TRUSTED_TLDS,
   stripAdSections,
   isNominalTag,
   filterNominalTags,

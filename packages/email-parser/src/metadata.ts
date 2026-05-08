@@ -716,6 +716,54 @@ export function isSenderBlocked(
 }
 
 /**
+ * TLDs that ship default-trusted. Mail from a `.gov` or `.edu`
+ * sender bypasses the blocklist + spam classifier + auto-quarantine
+ * regardless of the user's whitelist contents. Both label sets are
+ * authoritative-issuance TLDs (US government / accredited
+ * post-secondary institutions); blanket-trusting them is a strong
+ * default but a reasonable one for a personal newspaper.
+ *
+ * Add more here when you have a defensible reason. Don't add
+ * `.org` or country-code TLDs — those are open for anyone to
+ * register and would invite the exact spam they're meant to
+ * exclude.
+ */
+const ALWAYS_TRUSTED_TLDS: ReadonlyArray<string> = ['.gov', '.edu'];
+
+/**
+ * Decide whether a from-address is covered by the user's whitelist
+ * (or one of the always-trusted TLDs). Mirrors `isSenderBlocked` so
+ * the ingest path can compose them: whitelist wins, blocklist
+ * applies only when the sender isn't whitelisted.
+ *
+ * The TLD check covers both bare hosts (`whitehouse.gov`) and
+ * email addresses (`info@nasa.gov`); subdomains under a `.gov` /
+ * `.edu` parent inherit trust automatically (`mail.cdc.gov` →
+ * trusted because it ends in `.gov`).
+ */
+export function isSenderWhitelisted(
+  sets: { addresses: Set<string>; brands: Set<string> },
+  fromAddress: string | null | undefined,
+): boolean {
+  if (!fromAddress) return false;
+  const lower = fromAddress.toLowerCase().trim();
+  // Pull the host out, address-shaped or bare.
+  const at = lower.lastIndexOf('@');
+  const host = at >= 0 ? lower.slice(at + 1) : lower;
+  for (const suffix of ALWAYS_TRUSTED_TLDS) {
+    if (host.endsWith(suffix)) return true;
+  }
+  if (sets.addresses.has(lower)) return true;
+  const brand = senderDomainTag(lower);
+  if (brand && sets.brands.has(brand.toLowerCase())) return true;
+  return false;
+}
+
+/** Lowercased copies of the always-trusted TLDs so the SPA can
+ *  render an "always trusted" hint without duplicating the list. */
+export const DEFAULT_TRUSTED_TLDS = [...ALWAYS_TRUSTED_TLDS];
+
+/**
  * Pull a logo candidate out of the HTML head — the most likely brand
  * mark for the sender. Heuristics, in order of preference:
  *   - alt text or filename matches /logo|brand|wordmark|icon/

@@ -330,6 +330,15 @@ const userSchema = new Schema(
       senders: { type: [String], default: [], index: true },
       tags: { type: [String], default: [], index: true },
       blockedSenders: { type: [String], default: [], index: true },
+      /** User-trusted senders that bypass the blocklist, the
+       *  Bayes spam classifier, and the auto-quarantine sweep.
+       *  Stored lowercased; entries can be a full address
+       *  (`alice@example.gov`), a host (`example.gov`), or a
+       *  bare domain that the eTLD+1 matcher will collapse to.
+       *  All `.gov` and `.edu` senders are implicitly whitelisted
+       *  regardless of this list — see `isSenderWhitelisted` in
+       *  @rose/email-parser. */
+      whitelistedSenders: { type: [String], default: [], index: true },
     },
     /**
      * Tags the user wants foregrounded in the newsletter — each becomes

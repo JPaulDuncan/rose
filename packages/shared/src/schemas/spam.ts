@@ -4,6 +4,10 @@ export const SpamPolicy = z.object({
   senders: z.array(z.string()).default([]),
   tags: z.array(z.string()).default([]),
   blockedSenders: z.array(z.string()).default([]),
+  /** Trusted senders that bypass blocklist + classifier + auto-
+   *  quarantine. The .gov / .edu TLDs are implicitly trusted at
+   *  the matcher layer regardless of this list. */
+  whitelistedSenders: z.array(z.string()).default([]),
 });
 export type SpamPolicy = z.infer<typeof SpamPolicy>;
 

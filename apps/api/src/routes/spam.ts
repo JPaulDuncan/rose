@@ -108,6 +108,8 @@ async function getPolicy(userId: Types.ObjectId): Promise<SpamPolicy> {
     tags: (user?.spamPolicy?.tags as string[] | undefined) ?? [],
     blockedSenders:
       (user?.spamPolicy?.blockedSenders as string[] | undefined) ?? [],
+    whitelistedSenders:
+      (user?.spamPolicy?.whitelistedSenders as string[] | undefined) ?? [],
   };
 }
 
@@ -427,6 +429,51 @@ spamRouter.delete('/block/:address', async (req, res) => {
   await User.updateOne(
     { _id: userId },
     { $pull: { 'spamPolicy.blockedSenders': address } },
+  );
+  res.json({ ok: true, address });
+});
+
+/**
+ * Trusted-sender whitelist. Mirrors the blocklist routes — POST
+ * adds, DELETE removes — but the effect is the inverse: the entry
+ * bypasses the blocklist, the spam classifier, and the
+ * auto-quarantine sweep. Useful for newsletters or transactional
+ * senders the user explicitly trusts despite spam-y signals.
+ *
+ * The .gov / .edu TLDs are implicitly whitelisted regardless of
+ * the contents of this list (see `isSenderWhitelisted` in
+ * @rose/email-parser); the list is for everything else.
+ */
+spamRouter.post(
+  '/whitelist',
+  validateBody(SpamSenderRequest),
+  async (req, res) => {
+    const userId = new Types.ObjectId(userIdOf(req));
+    const address = normSender((req.body as { address: string }).address);
+    if (!address) {
+      res.status(400).json({ error: 'invalid_request', message: 'address required' });
+      return;
+    }
+    await User.updateOne(
+      { _id: userId },
+      {
+        $addToSet: { 'spamPolicy.whitelistedSenders': address },
+        // A whitelisted sender shouldn't simultaneously be on the
+        // spam-mark list. Pull it from there if it was added in the
+        // past so the two lists don't contradict each other.
+        $pull: { 'spamPolicy.senders': address },
+      },
+    );
+    res.json({ ok: true, address });
+  },
+);
+
+spamRouter.delete('/whitelist/:address', async (req, res) => {
+  const userId = new Types.ObjectId(userIdOf(req));
+  const address = normSender(decodeURIComponent(req.params.address ?? ''));
+  await User.updateOne(
+    { _id: userId },
+    { $pull: { 'spamPolicy.whitelistedSenders': address } },
   );
   res.json({ ok: true, address });
 });
