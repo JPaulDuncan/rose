@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import React, { memo, useEffect, useMemo, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
@@ -579,7 +579,15 @@ function buildLinker(args: {
   return { re, lookup };
 }
 
-function MarkdownWithCitations({
+/**
+ * The article body re-renders on every parent state change (favourite
+ * toggle, share-modal open, hover state, etc.). Both `buildLinker` and
+ * the markdown parse itself are non-trivial: linker-building scans
+ * tags + topics + entities + places to build the auto-link regex,
+ * and ReactMarkdown re-walks the AST top-to-bottom on every render
+ * unless the inputs are stable references. Memoise both.
+ */
+const MarkdownWithCitations = memo(function MarkdownWithCitations({
   md,
   citations,
   tags,
@@ -594,26 +602,33 @@ function MarkdownWithCitations({
   entities?: PageDoc['entities'];
   places?: PageDoc['places'];
 }) {
-  const linker = buildLinker({ tags, topics, entities, places });
+  // Linker scans the whole tags/topics/entities/places set to compile
+  // the auto-link regex; rebuild only when one of those actually
+  // changes, not on every parent re-render.
+  const linker = useMemo(
+    () => buildLinker({ tags, topics, entities, places }),
+    [tags, topics, entities, places],
+  );
+  // Stable component overrides — keeps ReactMarkdown's internal
+  // memoisation effective. Without this, every render passes new
+  // anonymous functions and forces a full AST walk.
+  const components = useMemo(
+    () => ({
+      p: ({ children }: { children?: React.ReactNode }) => (
+        <p>{transformChildren(children, citations, linker)}</p>
+      ),
+      li: ({ children }: { children?: React.ReactNode }) => (
+        <li>{transformChildren(children, citations, linker)}</li>
+      ),
+    }),
+    [citations, linker],
+  );
   return (
-    <ReactMarkdown
-      remarkPlugins={[remarkGfm]}
-      components={{
-        // ReactMarkdown passes raw text strings to this hook. We split on the
-        // citation regex AND on auto-link mentions (tags / entities / places),
-        // emitting a mix of plain text + citation chips + <Link>s.
-        p: ({ children }) => (
-          <p>{transformChildren(children, citations, linker)}</p>
-        ),
-        li: ({ children }) => (
-          <li>{transformChildren(children, citations, linker)}</li>
-        ),
-      }}
-    >
+    <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
       {md}
     </ReactMarkdown>
   );
-}
+});
 
 /**
  * Walk a text segment, splitting on the unified linker regex, and
@@ -1284,6 +1299,8 @@ function RelatedArticles({ pageId }: { pageId: string }) {
                 <img
                   src={p.heroImageUrl}
                   alt=""
+                  loading="lazy"
+                  decoding="async"
                   className="h-16 w-16 shrink-0 rounded border border-ink-200 bg-ink-50 object-cover dark:border-ink-700 dark:bg-ink-900"
                   onError={(e) => {
                     (e.currentTarget as HTMLImageElement).style.display = 'none';
@@ -1611,6 +1628,8 @@ function Attribution({ page }: { page: PageDoc }) {
                   <img
                     src={brand.logoUrl}
                     alt=""
+                    loading="lazy"
+                    decoding="async"
                     className="h-3 w-3 rounded-sm bg-white object-contain ring-1 ring-ink-200 dark:ring-ink-700"
                     onError={(e) => {
                       (e.currentTarget as HTMLImageElement).style.display = 'none';
@@ -2282,6 +2301,11 @@ function FloatedHero({ url, alt }: { url: string; alt: string }) {
     <img
       src={url}
       alt={alt}
+      // Hero is above-the-fold (in the article column), so don't
+      // mark loading="lazy" — the image is what the reader is
+      // waiting on. `decoding="async"` still lets the decode
+      // happen off the main thread.
+      decoding="async"
       // Float-right is the more familiar newspaper position; the
       // `[max-width:min(45%,360px)]` keeps unusually large images
       // from dominating the column. Margins create breathing room
