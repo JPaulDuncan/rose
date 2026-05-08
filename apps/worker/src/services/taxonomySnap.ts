@@ -1,7 +1,7 @@
 import { Types } from 'mongoose';
 import { Page, Category } from '@rose/db';
 import { resolveProviderForUser } from '../lib/providers.js';
-import { cosine } from '../lib/vec.js';
+import { dot, meanVec, toUnitFloat32 } from '../lib/vec.js';
 import { logger } from '../lib/logger.js';
 
 /**
@@ -30,7 +30,15 @@ import { logger } from '../lib/logger.js';
  * re-aggregate the user's pages on every call.
  */
 
-type Centroid = { vec: number[]; count: number };
+/**
+ * In-snapshot centroid: a unit-length Float32Array (so the per-
+ * candidate scoring loop is a plain dot product rather than a
+ * full cosine), plus the page count that contributed to it. The
+ * Float32 form halves memory vs the boxed-double `number[]` shape
+ * Mongo handed back, and pre-normalisation removes one Math.sqrt
+ * per scoring call.
+ */
+type Centroid = { vec: Float32Array; count: number };
 type Snapshot = {
   tagCentroids: Map<string, Centroid>;
   categoryCentroids: Map<string, Centroid>;
@@ -44,18 +52,6 @@ type Snapshot = {
 
 const CACHE_TTL_MS = 60_000;
 const CACHE = new Map<string, Snapshot>();
-
-function avg(vecs: number[][]): number[] | null {
-  if (vecs.length === 0) return null;
-  const len = vecs[0]!.length;
-  const out = new Array<number>(len).fill(0);
-  for (const v of vecs) {
-    if (v.length !== len) continue;
-    for (let i = 0; i < len; i++) out[i]! += v[i]!;
-  }
-  for (let i = 0; i < len; i++) out[i]! /= vecs.length;
-  return out;
-}
 
 async function buildSnapshot(userId: Types.ObjectId): Promise<Snapshot> {
   // Pull every page that has an embedding. Project just the fields we
@@ -92,8 +88,8 @@ async function buildSnapshot(userId: Types.ObjectId): Promise<Snapshot> {
 
   const tagCentroids = new Map<string, Centroid>();
   for (const [key, vecs] of tagBuckets) {
-    const v = avg(vecs);
-    if (v) tagCentroids.set(key, { vec: v, count: vecs.length });
+    const m = meanVec(vecs);
+    if (m) tagCentroids.set(key, { vec: toUnitFloat32(m), count: vecs.length });
   }
 
   // Resolve categoryId → display name in one round trip.
@@ -110,9 +106,9 @@ async function buildSnapshot(userId: Types.ObjectId): Promise<Snapshot> {
     const display = (cat.name as string | undefined) ?? '';
     const lower = display.toLowerCase();
     const vecs = categoryBuckets.get(id) ?? [];
-    const v = avg(vecs);
-    if (v && lower) {
-      categoryCentroids.set(lower, { vec: v, count: vecs.length });
+    const m = meanVec(vecs);
+    if (m && lower) {
+      categoryCentroids.set(lower, { vec: toUnitFloat32(m), count: vecs.length });
       categoryDisplay.set(lower, display);
     }
   }
@@ -159,10 +155,15 @@ export async function suggestTaxonomy(
   const snap = await getSnapshot(userId);
   const { maxTags = 30, maxCategories = 3, tagThreshold = 0.55, categoryThreshold = 0.55 } = opts;
 
+  // Pre-normalise the query once. Centroids are already unit-length
+  // Float32Arrays from `buildSnapshot`, so per-candidate scoring is
+  // a plain dot product — no Math.sqrt per call.
+  const q = toUnitFloat32(emailVec);
+
   const tagScored: SnapHint[] = [];
   for (const [key, centroid] of snap.tagCentroids) {
-    if (centroid.vec.length !== emailVec.length) continue;
-    const score = cosine(emailVec, centroid.vec);
+    if (centroid.vec.length !== q.length) continue;
+    const score = dot(q, centroid.vec);
     if (score >= tagThreshold) {
       tagScored.push({
         display: snap.tagDisplay.get(key) ?? key,
@@ -175,8 +176,8 @@ export async function suggestTaxonomy(
 
   const catScored: SnapHint[] = [];
   for (const [key, centroid] of snap.categoryCentroids) {
-    if (centroid.vec.length !== emailVec.length) continue;
-    const score = cosine(emailVec, centroid.vec);
+    if (centroid.vec.length !== q.length) continue;
+    const score = dot(q, centroid.vec);
     if (score >= categoryThreshold) {
       catScored.push({
         display: snap.categoryDisplay.get(key) ?? key,
@@ -239,18 +240,19 @@ export async function snapTagsByEmbedding(
     return dedup([...out, ...novel]);
   }
   for (const t of novel) {
-    let vec: number[];
+    let raw: number[];
     try {
-      vec = await provider.provider.embed(provider.model, t);
+      raw = await provider.provider.embed(provider.model, t);
     } catch (err) {
       logger.warn({ err, tag: t }, 'taxonomy-snap: tag embed failed; keeping novel');
       out.push(t);
       continue;
     }
+    const q = toUnitFloat32(raw);
     let best: { key: string; score: number } | null = null;
     for (const [key, centroid] of snap.tagCentroids) {
-      if (centroid.vec.length !== vec.length) continue;
-      const score = cosine(vec, centroid.vec);
+      if (centroid.vec.length !== q.length) continue;
+      const score = dot(q, centroid.vec);
       if (!best || score > best.score) best = { key, score };
     }
     if (best && best.score >= threshold) {
@@ -289,16 +291,17 @@ export async function snapCategoryByEmbedding(
     return name;
   }
   if (!provider.provider.supportsEmbeddings) return name;
-  let vec: number[];
+  let embedded: number[];
   try {
-    vec = await provider.provider.embed(provider.model, name);
+    embedded = await provider.provider.embed(provider.model, name);
   } catch {
     return name;
   }
+  const q = toUnitFloat32(embedded);
   let best: { key: string; score: number } | null = null;
   for (const [key, centroid] of snap.categoryCentroids) {
-    if (centroid.vec.length !== vec.length) continue;
-    const score = cosine(vec, centroid.vec);
+    if (centroid.vec.length !== q.length) continue;
+    const score = dot(q, centroid.vec);
     if (!best || score > best.score) best = { key, score };
   }
   if (best && best.score >= threshold) {
