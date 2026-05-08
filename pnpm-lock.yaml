@@ -289,9 +289,15 @@ importers:
       pino:
         specifier: ^9.5.0
         version: 9.14.0
+      robots-parser:
+        specifier: ^3.0.1
+        version: 3.0.1
       rss-parser:
         specifier: ^3.13.0
         version: 3.13.0
+      tldts:
+        specifier: ^6.1.75
+        version: 6.1.86
       turndown:
         specifier: ^7.2.4
         version: 7.2.4
@@ -3326,6 +3332,10 @@ packages:
   reusify@1.1.0:
     resolution: {integrity: sha512-g6QUff04oZpHs0eG5p83rFLhHeV00ug/Yf9nZM6fLeUrPguBTkTQOdpAWWspMh55TZfVQDPaN3NQJfbVRAxdIw==}
     engines: {iojs: '>=1.0.0', node: '>=0.10.0'}
+
+  robots-parser@3.0.1:
+    resolution: {integrity: sha512-s+pyvQeIKIZ0dx5iJiQk1tPLJAWln39+MI5jtM8wnyws+G5azk+dMnMX0qfbqNetKKNgcWWOdi0sfm+FbQbgdQ==}
+    engines: {node: '>=10.0.0'}
 
   rollup@4.60.2:
     resolution: {integrity: sha512-J9qZyW++QK/09NyN/zeO0dG/1GdGfyp9lV8ajHnRVLfo/uFsbji5mHnDgn/qYdUHyCkM2N+8VyspgZclfAh0eQ==}
@@ -6812,6 +6822,8 @@ snapshots:
       supports-preserve-symlinks-flag: 1.0.0
 
   reusify@1.1.0: {}
+
+  robots-parser@3.0.1: {}
 
   rollup@4.60.2:
     dependencies:
