@@ -564,8 +564,16 @@ export default function DaydreamSettings() {
          * enabled separately. Form persists via the same /api/daydream
          * patch handler.
          */}
-        <section className="card mt-4">
-          <h3 className="text-sm font-semibold">Topic research</h3>
+        {/* Visually distinct treatment from the surrounding Daydream
+            sub-cards: a 4-pixel rose top accent and a "Standalone
+            feature" eyebrow tell the user this isn't another Daydream
+            adapter — it's its own pipeline that uses Daydream as a
+            delivery channel. UX-Review-2 §4. */}
+        <section className="card mt-6 border-t-4 border-rose-500/70">
+          <div className="text-[10px] font-semibold uppercase tracking-widest text-rose-600 dark:text-rose-300">
+            Standalone feature
+          </div>
+          <h3 className="mt-1 text-sm font-semibold">Topic research</h3>
           <p className="mt-1 text-xs text-ink-500">
             When you click <strong>Research</strong> on a wiki page, Rose
             queries SearXNG, fetches the top results, and synthesises a

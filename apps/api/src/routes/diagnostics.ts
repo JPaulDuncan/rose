@@ -196,12 +196,110 @@ async function collectMongoStats() {
   return { state: stateLabel, collectionCounts: counts };
 }
 
+/**
+ * Recent slow queries from MongoDB's `system.profile` capped
+ * collection. The worker enables profiling at boot
+ * (`profile: 1, slowms: 100`); we read the most recent N entries
+ * and surface them in the diagnostics view so an operator can
+ * answer "which queries actually need indexes" without ssh'ing
+ * into the mongo container.
+ *
+ * The profiler is best-effort — Atlas tier restrictions or
+ * permission issues may prevent the worker from enabling it. In
+ * those cases this read returns an empty list and a `disabled`
+ * flag so the UI can render "profiling unavailable."
+ */
+type SlowQuery = {
+  ts: string;
+  ns: string;
+  op: string;
+  millis: number;
+  docsExamined: number | null;
+  nreturned: number | null;
+  /** Sample of the filter / pipeline / update — capped JSON. */
+  query: string;
+  planSummary: string | null;
+  /** True iff Mongo's planner used a collection scan. The whole
+   *  point of the indexes we added is to remove these — the UI
+   *  highlights them. */
+  collscan: boolean;
+};
+
+async function collectSlowQueries(): Promise<{
+  enabled: boolean;
+  level: number | null;
+  slowms: number | null;
+  recent: SlowQuery[];
+}> {
+  if (!mongoose.connection.db) {
+    return { enabled: false, level: null, slowms: null, recent: [] };
+  }
+  const db = mongoose.connection.db;
+  let level: number | null = null;
+  let slowms: number | null = null;
+  try {
+    const status = await db.command({ profile: -1 });
+    level = (status.was as number | undefined) ?? null;
+    slowms = (status.slowms as number | undefined) ?? null;
+  } catch (err) {
+    logger.debug({ err: (err as Error).message }, 'diagnostics: profile status check failed');
+    return { enabled: false, level: null, slowms: null, recent: [] };
+  }
+
+  if (!level || level === 0) {
+    return { enabled: false, level, slowms, recent: [] };
+  }
+
+  let docs: Record<string, unknown>[] = [];
+  try {
+    docs = (await db
+      .collection('system.profile')
+      .find({}, { sort: { ts: -1 }, limit: 50 })
+      .toArray()) as unknown as Record<string, unknown>[];
+  } catch (err) {
+    logger.debug({ err: (err as Error).message }, 'diagnostics: system.profile read failed');
+    return { enabled: false, level, slowms, recent: [] };
+  }
+
+  const recent: SlowQuery[] = docs.map((d) => {
+    const ns = String(d.ns ?? '');
+    // Pick the most-likely "what was this trying to do" payload to
+    // serialise. Different op types put their payload in different
+    // fields; we prefer command > filter > query > pipeline.
+    const cmd = (d.command ?? d.filter ?? d.query ?? d.pipeline) as unknown;
+    let queryStr = '';
+    try {
+      queryStr = JSON.stringify(cmd ?? {});
+      if (queryStr.length > 600) queryStr = queryStr.slice(0, 600) + '…';
+    } catch {
+      queryStr = '(unserializable)';
+    }
+    const planSummary = (d.planSummary as string | undefined) ?? null;
+    return {
+      ts: new Date((d.ts as Date | number) ?? Date.now()).toISOString(),
+      ns,
+      op: String(d.op ?? d.queryHash ?? 'op'),
+      millis: Number(d.millis ?? 0),
+      docsExamined:
+        typeof d.docsExamined === 'number' ? (d.docsExamined as number) : null,
+      nreturned:
+        typeof d.nreturned === 'number' ? (d.nreturned as number) : null,
+      query: queryStr,
+      planSummary,
+      collscan: typeof planSummary === 'string' && planSummary.includes('COLLSCAN'),
+    };
+  });
+
+  return { enabled: true, level, slowms, recent };
+}
+
 diagnosticsRouter.get('/', async (_req, res, next) => {
   try {
-    const [workers, queues, mongo] = await Promise.all([
+    const [workers, queues, mongo, slowQueries] = await Promise.all([
       collectWorkerSnapshots(),
       collectQueueStats(),
       collectMongoStats(),
+      collectSlowQueries(),
     ]);
     const totals = aggregateSnapshots(workers);
     res.json({
@@ -210,6 +308,7 @@ diagnosticsRouter.get('/', async (_req, res, next) => {
       totals,
       queues,
       mongo,
+      slowQueries,
     });
   } catch (err) {
     next(err);

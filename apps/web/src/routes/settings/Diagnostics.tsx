@@ -2,11 +2,13 @@ import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   Activity,
+  AlertTriangle,
   Cpu,
   Database,
   HardDrive,
   Layers,
   RefreshCw,
+  Search as SearchIcon,
 } from 'lucide-react';
 import { useApi } from '../../lib/api';
 import { Skeleton, SkeletonCard } from '../../components/Skeleton';
@@ -52,6 +54,18 @@ type WorkerSnapshot = {
   histograms: Record<string, Histogram>;
 };
 
+type SlowQuery = {
+  ts: string;
+  ns: string;
+  op: string;
+  millis: number;
+  docsExamined: number | null;
+  nreturned: number | null;
+  query: string;
+  planSummary: string | null;
+  collscan: boolean;
+};
+
 type Diagnostics = {
   generatedAt: string;
   workers: WorkerSnapshot[];
@@ -71,6 +85,12 @@ type Diagnostics = {
   mongo: {
     state: string;
     collectionCounts: Record<string, number>;
+  };
+  slowQueries?: {
+    enabled: boolean;
+    level: number | null;
+    slowms: number | null;
+    recent: SlowQuery[];
   };
 };
 
@@ -354,6 +374,95 @@ export default function DiagnosticsPage() {
                 )}
               </div>
             ))}
+          </div>
+        )}
+      </section>
+
+      {/* Slow-query panel — reads from MongoDB's system.profile capped
+          collection. The worker enables profiling at slowms=100 on
+          boot; ops that crossed the threshold show up here with
+          their plan summary. The whole point of the index work in
+          Phase A was to remove COLLSCAN entries; this panel is how
+          you see whether they actually went away. */}
+      <section className="card">
+        <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold">
+          <SearchIcon className="h-4 w-4 text-rose-500" /> Slow queries
+          {data.slowQueries?.enabled === false && (
+            <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 dark:bg-amber-950/40 dark:text-amber-200">
+              Profiler disabled
+            </span>
+          )}
+        </h3>
+        {!data.slowQueries || data.slowQueries.enabled === false ? (
+          <div className="text-xs italic text-ink-500">
+            MongoDB's slow-query profiler isn't active — either the
+            worker hasn't enabled it yet (it does at boot), or your
+            Mongo deployment doesn't grant the profiler privilege
+            (Atlas free tier, etc.). Without the profile, slow queries
+            are invisible to this dashboard.
+          </div>
+        ) : data.slowQueries.recent.length === 0 ? (
+          <div className="text-xs italic text-ink-500">
+            No queries above {data.slowQueries.slowms ?? 100}ms in the
+            recent window. Either the worker's been quiet or the
+            indexes are doing their job.
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead className="text-ink-500">
+                <tr>
+                  <th className="py-1.5 pr-3">When</th>
+                  <th className="py-1.5 pr-3">Collection · op</th>
+                  <th className="py-1.5 pr-3 text-right">ms</th>
+                  <th className="py-1.5 pr-3 text-right">Examined</th>
+                  <th className="py-1.5 pr-3">Plan</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.slowQueries.recent.slice(0, 20).map((q, i) => (
+                  <tr
+                    key={`${q.ts}-${i}`}
+                    className="border-t border-ink-200 align-top dark:border-ink-800"
+                  >
+                    <td className="py-1 pr-3 text-ink-500">
+                      {relTime(q.ts)}
+                    </td>
+                    <td className="py-1 pr-3 font-mono">
+                      <span className="block">{q.ns.replace(/^[^.]+\./, '')}</span>
+                      <span className="text-[10px] text-ink-500">{q.op}</span>
+                    </td>
+                    <td className="py-1 pr-3 text-right font-mono tabular-nums">
+                      {q.millis < 200 ? (
+                        q.millis
+                      ) : (
+                        <span className="font-medium text-amber-700 dark:text-amber-300">
+                          {q.millis}
+                        </span>
+                      )}
+                    </td>
+                    <td className="py-1 pr-3 text-right font-mono tabular-nums text-ink-500">
+                      {q.docsExamined != null ? q.docsExamined : '—'}
+                    </td>
+                    <td className="py-1 pr-3 font-mono">
+                      {q.collscan ? (
+                        <span className="inline-flex items-center gap-1 rounded bg-red-100 px-1.5 py-0.5 text-[10px] font-semibold text-red-700 dark:bg-red-950/40 dark:text-red-200">
+                          <AlertTriangle className="h-3 w-3" /> COLLSCAN
+                        </span>
+                      ) : (
+                        <span className="text-ink-500">{q.planSummary ?? '—'}</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {data.slowQueries.recent.length > 20 && (
+              <div className="mt-2 text-[11px] italic text-ink-500">
+                +{data.slowQueries.recent.length - 20} more in
+                system.profile.
+              </div>
+            )}
           </div>
         )}
       </section>

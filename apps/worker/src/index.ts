@@ -1,4 +1,5 @@
 import { Queue } from 'bullmq';
+import mongoose from 'mongoose';
 import { syncAllIndexes, runMigrations } from '@rose/db';
 import { connectMongo } from './lib/db.js';
 import { redis, bullConnection } from './lib/redis.js';
@@ -113,6 +114,39 @@ const has = (kind: WorkerMode | WorkerMode[]): boolean => {
  * so this does not block reads or writes against existing data even
  * when adding indexes to large collections.
  */
+/**
+ * Enable MongoDB's slow-query profiler at boot. Level 1 + slowms=100
+ * captures every operation that takes longer than 100ms in the
+ * `system.profile` capped collection — the diagnostics surface
+ * reads from there to render a slow-query panel without us having
+ * to instrument every Mongoose call site.
+ *
+ * Idempotent: profile level + slowms get set on every boot, so an
+ * operator can flip it off via a one-shot `db.setProfilingLevel(0)`
+ * and the worker will turn it back on next restart. Failures here
+ * are non-fatal — Mongo deployments without profiler privileges
+ * (Atlas tier restrictions, etc.) just continue without the data.
+ *
+ * Routed through bg-mode in split deploys for the same reason
+ * applySchemaMigrations is — one process owns the side-effectful
+ * boot work, so concurrent workers don't all reach for the same
+ * admin command.
+ */
+async function enableMongoProfiler() {
+  if (!has('bg')) return;
+  try {
+    const db = mongoose.connection.db;
+    if (!db) return;
+    await db.command({ profile: 1, slowms: 100, sampleRate: 1.0 });
+    logger.info({ slowms: 100 }, 'mongo: slow-query profiler enabled');
+  } catch (err) {
+    logger.warn(
+      { err: (err as Error).message },
+      'mongo: slow-query profiler enable failed (continuing)',
+    );
+  }
+}
+
 async function applySchemaMigrations() {
   if (!has('bg')) return;
   try {
@@ -169,6 +203,7 @@ async function bootstrap() {
   // Run before any worker registers so the indexes are in place
   // before the first BullMQ job hits the DB.
   await applySchemaMigrations();
+  await enableMongoProfiler();
 
   // -----------------------------------------------------------------
   // LLM-bound workers — generation, narrative synthesis, summarisation.

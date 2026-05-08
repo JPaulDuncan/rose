@@ -357,6 +357,14 @@ const userSchema = new Schema(
      * doesn't even want to see in /quarantine.
      */
     spamPolicy: {
+      // NAMING NOTE: the user-facing vocabulary (UX-Review-1's
+      // unification PR) is Block / Mute / Trust / Quarantine /
+      // Remove. The internal identifiers below — `senders` (=
+      // muted), `whitelistedSenders` (= trusted) — predate that
+      // rename and weren't migrated to avoid a destructive Mongo
+      // schema change. New code should consume them but should
+      // surface user-facing copy through the new vocabulary.
+      // `blockedSenders` matched the new vocabulary by accident.
       senders: { type: [String], default: [], index: true },
       tags: { type: [String], default: [], index: true },
       blockedSenders: { type: [String], default: [], index: true },
@@ -367,7 +375,7 @@ const userSchema = new Schema(
        *  bare domain that the eTLD+1 matcher will collapse to.
        *  All `.gov` and `.edu` senders are implicitly whitelisted
        *  regardless of this list — see `isSenderWhitelisted` in
-       *  @rose/email-parser. */
+       *  @rose/email-parser. UI surfaces this list as "Trust." */
       whitelistedSenders: { type: [String], default: [], index: true },
     },
     /**
