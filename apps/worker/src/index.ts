@@ -37,6 +37,7 @@ import {
 } from './processors/weatherSnapshots.js';
 import { startReputationDecaySweep } from './services/reputationSweep.js';
 import { startDaydreamSweeper } from './services/daydreamSweeper.js';
+import { reconcileSourceSchedules } from './services/sourceScheduleReconciler.js';
 import { getVapidKeys } from './lib/vapid.js';
 
 async function bootstrap() {
@@ -98,6 +99,18 @@ async function bootstrap() {
   // hydrates even when no user is actively browsing the home panel.
   startWeatherSnapshotWorker();
   await scheduleWeatherSnapshotSweeper();
+  // Reconcile per-source repeatables in case Redis lost its
+  // schedule data (volume wipe, persistence gap, etc.). Without
+  // this, a missing repeatable means the source silently stops
+  // polling forever — the only recovery today is editing the
+  // interval in the UI.
+  void reconcileSourceSchedules()
+    .then((r) =>
+      logger.info(r, 'source-schedule reconcile complete'),
+    )
+    .catch((err) =>
+      logger.warn({ err }, 'source-schedule reconcile failed'),
+    );
   logger.info('rose worker started');
 }
 
