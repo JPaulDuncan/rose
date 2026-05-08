@@ -6,7 +6,7 @@ import {
   BlockSenderRequest,
   type SpamPolicy,
 } from '@rose/shared';
-import { User, Page, Sender, Email } from '@rose/db';
+import { User, Page, Sender, SenderBrand, Email } from '@rose/db';
 import { senderDomainTag } from '@rose/email-parser';
 import { userIdOf } from '../middleware/auth.js';
 import { validateBody } from '../middleware/validate.js';
@@ -27,13 +27,72 @@ const QUARANTINE_THRESHOLD = 3;
 
 function brandKeyFor(addr: string): { brandKey: string; name: string; domain: string | null } | null {
   const at = addr.lastIndexOf('@');
-  if (at < 0) return null;
+  if (at < 0) {
+    // Bare-host whitelist entry (`axios.com`). Synthesise a local
+    // part so senderDomainTag has something to chew on, then derive
+    // the brand from the host the same way address-shaped entries do.
+    const host = addr.toLowerCase();
+    const brand = senderDomainTag(`x@${host}`);
+    if (brand) return { brandKey: brand.toLowerCase(), name: brand, domain: host };
+    return null;
+  }
   const local = addr.slice(0, at).toLowerCase();
   const domain = addr.slice(at + 1).toLowerCase();
   const brand = senderDomainTag(addr);
   if (brand) return { brandKey: brand.toLowerCase(), name: brand, domain };
   return { brandKey: `${local}@${domain}`, name: addr, domain };
 }
+
+/**
+ * Lift the auto-quarantine + user-spam flags off every page that
+ * shares a brand with `address`, and reset the corresponding Sender
+ * row(s). Used by both the explicit `/sender/:address/trust` action
+ * and the whitelist POST so that whitelisting `news@axios.com` also
+ * releases the existing `*.axios.com` pages sitting in quarantine.
+ *
+ * Brand resolution is the same as everywhere else (senderDomainTag /
+ * eTLD+1), so `axios.com` covers `api.axios.com` and `help.axios.com`.
+ * If the address is a personal-mail provider (no brand), we fall
+ * back to an exact-address match so we don't accidentally rescue
+ * unrelated mail from gmail.com, outlook.com, etc.
+ */
+async function liftQuarantineForBrand(
+  userId: Types.ObjectId,
+  address: string,
+): Promise<void> {
+  const info = brandKeyFor(address);
+  if (info && info.brandKey && !info.brandKey.includes('@')) {
+    // Brand match — pull the brand-global address list (every
+    // address any user has ever seen for this brand) and use that
+    // as the page filter so subdomain siblings (`api.axios.com`,
+    // `help.axios.com`) get rescued alongside the address the user
+    // actually trusted.
+    const brand = await SenderBrand.findOne({ brandKey: info.brandKey })
+      .select('addresses')
+      .lean();
+    const addressSet = new Set<string>([address]);
+    for (const a of (brand?.addresses as string[] | undefined) ?? []) {
+      addressSet.add(a.toLowerCase());
+    }
+    await Sender.updateMany(
+      { userId, brandKey: info.brandKey },
+      { $set: { autoQuarantine: false, spamMarkedCount: 0, rescuedCount: 0 } },
+    );
+    if (addressSet.size > 0) {
+      await Page.updateMany(
+        { userId, senderAddresses: { $in: [...addressSet] } },
+        { $set: { 'flags.userMarkedSpam': false, 'flags.autoQuarantined': false } },
+      );
+    }
+    return;
+  }
+  // Personal-mail / unbrandable fallback: exact address only.
+  await Page.updateMany(
+    { userId, senderAddresses: address },
+    { $set: { 'flags.userMarkedSpam': false, 'flags.autoQuarantined': false } },
+  );
+}
+
 
 /**
  * Days a spam-mark "lives" before it stops counting toward the
@@ -289,20 +348,10 @@ spamRouter.post('/sender/:address/trust', async (req, res) => {
     { _id: userId },
     { $pull: { 'spamPolicy.senders': address } },
   );
-  const info = brandKeyFor(address);
-  if (info) {
-    await Sender.updateOne(
-      { userId, brandKey: info.brandKey },
-      {
-        $set: { autoQuarantine: false, spamMarkedCount: 0, rescuedCount: 0 },
-      },
-    );
-  }
-  // Lift the spam flags from this sender's existing pages too.
-  await Page.updateMany(
-    { userId, senderAddresses: address },
-    { $set: { 'flags.userMarkedSpam': false, 'flags.autoQuarantined': false } },
-  );
+  // Brand-wide cleanup: clears Sender.autoQuarantine and lifts the
+  // userMarkedSpam / autoQuarantined flags off every page in the
+  // same registrable-domain family.
+  await liftQuarantineForBrand(userId, address);
   // Train the Bayes classifier on this brand's recent mail as ham —
   // explicit trust is just as strong a signal as a rescue.
   const emails = await Email.find({ userId, 'from.address': address })
@@ -464,6 +513,13 @@ spamRouter.post(
         $pull: { 'spamPolicy.senders': address },
       },
     );
+    // Without this, whitelisting only affects future ingest — pages
+    // already sitting in Quarantine for this brand stay there until
+    // a new email regenerates them. Treat the whitelist add as an
+    // explicit trust signal and release the brand's existing pages
+    // immediately, including subdomain siblings (`api.axios.com`,
+    // `help.axios.com` when the user trusts `news@axios.com`).
+    await liftQuarantineForBrand(userId, address);
     res.json({ ok: true, address });
   },
 );

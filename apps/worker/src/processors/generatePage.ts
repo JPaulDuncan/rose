@@ -1070,16 +1070,26 @@ export function startGeneratePageWorker() {
         hasLikelySpam: blendedSpamScore >= 0.5,
         hasMassMailing,
         isSparse: isThin,
-        userMarkedSpam: previousUserMarked || senderHit || tagHit,
+        // A whitelisted brand short-circuits both spam-marks: the
+        // user has explicitly said "this is fine", so we don't want
+        // a stale `previousUserMarked` flag dragging the page back
+        // into quarantine on regen.
+        userMarkedSpam: pageIsWhitelisted
+          ? false
+          : previousUserMarked || senderHit || tagHit,
         isNotificationStream: stream.yes,
         // A page is promotional when ≥ 60% of contributing emails are.
         isPromotional:
           pageEmails.length > 0 &&
           promotionalCount / pageEmails.length >= 0.6,
-        // Don't clear an existing autoQuarantine flag silently — it gets
-        // cleared explicitly on rescue.
-        autoQuarantined:
-          autoQuarantined || !!previousFlags.autoQuarantined || verdict.quarantine,
+        // Whitelist also forces autoQuarantined off — without this,
+        // a page that was auto-quarantined before the user trusted
+        // the brand would stay quarantined forever (the previous
+        // flag is sticky on regen by design, and a rule-driven
+        // `verdict.quarantine` could re-trigger it).
+        autoQuarantined: pageIsWhitelisted
+          ? false
+          : autoQuarantined || !!previousFlags.autoQuarantined || verdict.quarantine,
       };
       // Rule-driven flag.set actions override the heuristics above.
       const flags = { ...baseFlags, ...verdict.setFlags };
