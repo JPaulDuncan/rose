@@ -4,11 +4,12 @@ import { z } from 'zod';
 import { PageUpdateRequest, priorityForDate } from '@rose/shared';
 import { userIdOf } from '../middleware/auth.js';
 import { validateBody } from '../middleware/validate.js';
-import { Page, SenderBrand, DaydreamNote, TagCanonical, Email, titleCaseTag, normalizeTagKey, Category, normalizeCategoryName, displayCategoryName, Shipment, PromoCode } from '@rose/db';
+import { Page, SenderBrand, DaydreamNote, TagCanonical, Email, titleCaseTag, normalizeTagKey, Category, normalizeCategoryName, displayCategoryName, Shipment, PromoCode, User, WebDocument } from '@rose/db';
 import { PageRevision } from '@rose/db';
 import { SYSTEM_PROMPT_BASE, extractJson } from '@rose/llm';
 import { resolveProviderForUser } from '../lib/providers.js';
 import { logger } from '../lib/logger.js';
+import { topicResearchQueue } from '../lib/queues.js';
 
 /**
  * Resolve every senderAddress on a page to its (brandKey, name, logoUrl).
@@ -995,3 +996,153 @@ pagesRouter.post(
     }
   },
 );
+
+/**
+ * Topic research (web-integration Phase 1).
+ *
+ * POST /api/pages/:id/research
+ *   Enqueues a topicResearch job for the page. Body: `{ topicLabel?: string }`
+ *   — defaults to the page's primaryTopic or first tag. Gates:
+ *     1. The user must have webResearch.enabled in settings.
+ *     2. The page must not already have a run in flight (state must
+ *        be 'idle' or 'failed').
+ *   Returns 202 with the new researchState ('queued') on success.
+ *
+ * GET /api/pages/:id/research
+ *   Returns the page's research state plus the most recent
+ *   WebDocument set the orchestrator persisted. Used by the UI's
+ *   poll loop on the "Researched X ago" pill.
+ */
+pagesRouter.post('/:id/research', async (req, res, next) => {
+  try {
+    const userId = new Types.ObjectId(userIdOf(req));
+    const idParam = String(req.params.id ?? '');
+    if (!Types.ObjectId.isValid(idParam)) {
+      res.status(400).json({ error: 'invalid_id' });
+      return;
+    }
+    const pageId = new Types.ObjectId(idParam);
+    const user = (await User.findById(userId)
+      .select('settings.daydream.webResearch')
+      .lean()) as
+      | { settings?: { daydream?: { webResearch?: { enabled?: boolean } } } }
+      | null;
+    if (user?.settings?.daydream?.webResearch?.enabled !== true) {
+      res.status(403).json({
+        error: 'web_research_disabled',
+        message:
+          'Topic research is opt-in per user. Enable it in Settings → Daydream → Topic research.',
+      });
+      return;
+    }
+    const page = (await Page.findOne({ _id: pageId, userId })
+      .select('researchState topics tags primaryTopic title')
+      .lean()) as
+      | {
+          researchState?: 'idle' | 'queued' | 'running' | 'failed';
+          topics?: string[];
+          tags?: string[];
+          primaryTopic?: string | null;
+          title?: string;
+        }
+      | null;
+    if (!page) {
+      res.status(404).json({ error: 'page_not_found' });
+      return;
+    }
+    if (page.researchState === 'queued' || page.researchState === 'running') {
+      res
+        .status(409)
+        .json({ error: 'already_in_flight', researchState: page.researchState });
+      return;
+    }
+
+    const bodyTopic = (req.body as { topicLabel?: string } | undefined)?.topicLabel?.trim();
+    const topicLabel =
+      bodyTopic ||
+      page.primaryTopic ||
+      page.topics?.[0] ||
+      page.tags?.[0] ||
+      page.title ||
+      '';
+    if (!topicLabel) {
+      res.status(400).json({
+        error: 'no_topic',
+        message: 'No topic could be derived from the page; provide one explicitly.',
+      });
+      return;
+    }
+
+    await Page.updateOne(
+      { _id: pageId, userId },
+      { $set: { researchState: 'queued', lastResearchError: null } },
+    );
+    await topicResearchQueue.add(
+      'research',
+      {
+        userId: String(userId),
+        pageId: String(pageId),
+        topicLabel,
+      },
+      { attempts: 1, removeOnComplete: 100, removeOnFail: 100 },
+    );
+    res.status(202).json({
+      ok: true,
+      researchState: 'queued',
+      topicLabel,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+pagesRouter.get('/:id/research', async (req, res, next) => {
+  try {
+    const userId = new Types.ObjectId(userIdOf(req));
+    const idParam = String(req.params.id ?? '');
+    if (!Types.ObjectId.isValid(idParam)) {
+      res.status(400).json({ error: 'invalid_id' });
+      return;
+    }
+    const pageId = new Types.ObjectId(idParam);
+    const page = (await Page.findOne({ _id: pageId, userId })
+      .select(
+        'researchState lastResearchedAt lastResearchError webDocumentIds externalSources',
+      )
+      .lean()) as
+      | {
+          researchState?: 'idle' | 'queued' | 'running' | 'failed';
+          lastResearchedAt?: Date | null;
+          lastResearchError?: string | null;
+          webDocumentIds?: Types.ObjectId[];
+          externalSources?: { label: string; title: string; url: string; adapter?: string | null; fetchedAt?: Date | null }[];
+        }
+      | null;
+    if (!page) {
+      res.status(404).json({ error: 'page_not_found' });
+      return;
+    }
+
+    // Hydrate web-document hostKeys + relevance for the UI to
+    // render alongside the citation list. Cheap join — capped at
+    // SYNTHESIS_DOC_CAP (12) entries by the orchestrator already.
+    const webDocs = (page.webDocumentIds ?? []).length
+      ? await WebDocument.find({
+          userId,
+          _id: { $in: page.webDocumentIds },
+        })
+          .select('url title hostKey relevanceScore fetchedAt')
+          .lean()
+      : [];
+
+    res.json({
+      researchState: page.researchState ?? 'idle',
+      lastResearchedAt: page.lastResearchedAt ?? null,
+      lastResearchError: page.lastResearchError ?? null,
+      externalSources: page.externalSources ?? [],
+      webDocuments: webDocs,
+    });
+  } catch (err) {
+    next(err);
+  }
+});

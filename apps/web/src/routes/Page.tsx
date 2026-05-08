@@ -44,6 +44,7 @@ import { Skeleton, SkeletonCard, SkeletonLines } from '../components/Skeleton';
 import { adapterLabel } from '../lib/sourceLabel';
 import { ShareButton } from '../components/ShareButton';
 import { FavoriteButton } from '../components/FavoriteButton';
+import { ResearchButton } from '../components/ResearchButton';
 import { MapInset, type MapPin } from '../components/MapInset';
 
 type Citation = {
@@ -272,6 +273,7 @@ export default function PageView() {
             priority={page.priority ?? 'normal'}
             priorityOverride={page.priorityOverride ?? false}
           />
+          <ResearchButton pageId={page._id} pageTitle={page.title} />
           <ShareButton pageId={page._id} pageTitle={page.title} />
           <SpamMenu page={page} />
           <button

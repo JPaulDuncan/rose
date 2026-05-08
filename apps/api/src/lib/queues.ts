@@ -37,6 +37,12 @@ export const QUEUE_NAMES = {
    * worker fans out to matching recipes. See .devlogs/IFTTT-feature.md.
    */
   recipes: 'rose.recipes',
+  /**
+   * Topic-research orchestrator (web-integration Phase 1). Enqueued
+   * from POST /api/pages/:id/research; worker pulls + persists +
+   * updates the Page back to researchState='idle' on completion.
+   */
+  topicResearch: 'rose.topic-research',
 } as const;
 
 export type QueueName = (typeof QUEUE_NAMES)[keyof typeof QUEUE_NAMES];
@@ -65,5 +71,6 @@ export const libraryEmbedQueue = new Queue(QUEUE_NAMES.libraryEmbed, connection)
 export const tagDigestQueue = new Queue(QUEUE_NAMES.tagDigest, connection);
 export const postWriteHooksQueue = new Queue(QUEUE_NAMES.postWriteHooks, connection);
 export const recipesQueue = new Queue(QUEUE_NAMES.recipes, connection);
+export const topicResearchQueue = new Queue(QUEUE_NAMES.topicResearch, connection);
 
 export const generatePageEvents = new QueueEvents(QUEUE_NAMES.generatePage, connection);

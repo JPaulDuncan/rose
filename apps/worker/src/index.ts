@@ -32,6 +32,7 @@ import { startTagDigestWorker, startTagDigestSweeper } from './processors/tagDig
 import { startPostWriteHooksWorker } from './processors/postWriteHooks.js';
 import { startRecipesWorker } from './processors/recipes.js';
 import { startCleanupWorker, scheduleCleanupSweeper } from './processors/cleanup.js';
+import { startTopicResearchWorker } from './processors/topicResearch.js';
 import {
   startWeatherSnapshotWorker,
   scheduleWeatherSnapshotSweeper,
@@ -173,6 +174,10 @@ async function bootstrap() {
     startTagDigestWorker();
     startDigestEmailWorker();
     startRecipesWorker();
+    // Topic research is LLM-bound at the synthesis step (the long
+    // pole of any run); the fetch loop within the same job runs
+    // serially with the LLM call so concurrency caps with llm.
+    startTopicResearchWorker();
   }
 
   // -----------------------------------------------------------------

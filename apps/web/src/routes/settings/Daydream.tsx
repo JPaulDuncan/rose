@@ -556,6 +556,136 @@ export default function DaydreamSettings() {
           settingsHadExternalEnabled={!!settings?.externalSearch?.enabled}
         />
 
+        {/*
+         * Topic research (web-integration Phase 1). Sits below the
+         * other external-egress toggles so the user has already seen
+         * the "this fetches the open web" explainer up the page.
+         * Independent toggle — daydream and topic research can be
+         * enabled separately. Form persists via the same /api/daydream
+         * patch handler.
+         */}
+        <section className="card mt-4">
+          <h3 className="text-sm font-semibold">Topic research</h3>
+          <p className="mt-1 text-xs text-ink-500">
+            When you click <strong>Research</strong> on a wiki page, Rose
+            queries SearXNG, fetches the top results, and synthesises a
+            new version of the page that fuses your mail with current
+            web context. Off by default. Citations link back to the
+            original sources; we never bypass paywalls or follow links
+            inside spam.
+          </p>
+
+          <label className="mt-3 flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={form.webResearch?.enabled ?? false}
+              onChange={(e) =>
+                setForm({
+                  ...form,
+                  webResearch: {
+                    ...(form.webResearch ?? {
+                      enabled: false,
+                      dailyFetchBudget: 200,
+                      perRunFetchBudget: 25,
+                      perRunTimeoutMs: 5 * 60_000,
+                      topicThreshold: 0.55,
+                      denyHosts: [],
+                    }),
+                    enabled: e.target.checked,
+                  },
+                })
+              }
+            />
+            <span>Enable topic research</span>
+          </label>
+
+          {form.webResearch?.enabled && (
+            <div className="mt-3 grid gap-3 sm:grid-cols-3">
+              <label className="block text-xs">
+                <span className="mb-1 block font-medium">
+                  Per-run fetch budget
+                </span>
+                <input
+                  type="number"
+                  min={1}
+                  max={50}
+                  className="input"
+                  value={form.webResearch?.perRunFetchBudget ?? 25}
+                  onChange={(e) =>
+                    setForm({
+                      ...form,
+                      webResearch: {
+                        ...form.webResearch!,
+                        perRunFetchBudget: Math.max(
+                          1,
+                          Math.min(50, Number(e.target.value) || 25),
+                        ),
+                      },
+                    })
+                  }
+                />
+                <span className="mt-0.5 block text-[10px] text-ink-500">
+                  Max URLs fetched in one research run.
+                </span>
+              </label>
+              <label className="block text-xs">
+                <span className="mb-1 block font-medium">Topic threshold</span>
+                <input
+                  type="number"
+                  min={0.2}
+                  max={0.95}
+                  step={0.05}
+                  className="input"
+                  value={form.webResearch?.topicThreshold ?? 0.55}
+                  onChange={(e) =>
+                    setForm({
+                      ...form,
+                      webResearch: {
+                        ...form.webResearch!,
+                        topicThreshold: Math.max(
+                          0.2,
+                          Math.min(0.95, Number(e.target.value) || 0.55),
+                        ),
+                      },
+                    })
+                  }
+                />
+                <span className="mt-0.5 block text-[10px] text-ink-500">
+                  Cosine cutoff for keeping a fetched doc in the synthesis
+                  corpus. Higher = stricter.
+                </span>
+              </label>
+              <label className="block text-xs">
+                <span className="mb-1 block font-medium">
+                  Daily fetch budget
+                </span>
+                <input
+                  type="number"
+                  min={0}
+                  max={2000}
+                  className="input"
+                  value={form.webResearch?.dailyFetchBudget ?? 200}
+                  onChange={(e) =>
+                    setForm({
+                      ...form,
+                      webResearch: {
+                        ...form.webResearch!,
+                        dailyFetchBudget: Math.max(
+                          0,
+                          Math.min(2000, Number(e.target.value) || 200),
+                        ),
+                      },
+                    })
+                  }
+                />
+                <span className="mt-0.5 block text-[10px] text-ink-500">
+                  Cap on outbound fetches per 24h, across every run.
+                </span>
+              </label>
+            </div>
+          )}
+        </section>
+
 
         <div className="mt-5 flex justify-end">
           <button

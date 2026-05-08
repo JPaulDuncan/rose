@@ -103,6 +103,22 @@ export const DaydreamSettings = z.object({
       categoryIds: z.array(z.string()).default([]),
     })
     .default({}),
+  /**
+   * Topic-research preferences (web-integration Phase 1). The user
+   * opts in explicitly; nothing crawls the web on their behalf
+   * without this set. Every numeric is bounded to keep operator
+   * cost predictable.
+   */
+  webResearch: z
+    .object({
+      enabled: z.boolean().default(false),
+      dailyFetchBudget: z.number().int().min(0).max(2000).default(200),
+      perRunFetchBudget: z.number().int().min(1).max(50).default(25),
+      perRunTimeoutMs: z.number().int().min(30_000).max(20 * 60_000).default(5 * 60_000),
+      topicThreshold: z.number().min(0.2).max(0.95).default(0.55),
+      denyHosts: z.array(z.string()).default([]),
+    })
+    .default({}),
 });
 export type DaydreamSettings = z.infer<typeof DaydreamSettings>;
 
