@@ -30,6 +30,7 @@ import {
 } from '@rose/email-parser';
 import { redis, bullConnection } from '../lib/redis.js';
 import { logger } from '../lib/logger.js';
+import { observe, inc, METRIC } from '../lib/metrics.js';
 import { resolveProviderForUser, applyParamOverrides } from '../lib/providers.js';
 import {
   ensureEmailEmbedding,
@@ -580,6 +581,7 @@ export function startGeneratePageWorker() {
   const worker = new Worker<GenerateJobData>(
     QUEUE,
     async (job: Job<GenerateJobData>) => {
+      const jobT0 = Date.now();
       const userId = new Types.ObjectId(job.data.userId);
       // NOTE: `.select('+embedding embeddingModel')` switches Mongoose into
       // inclusion mode and returns ONLY those two fields — that bug erased
@@ -989,6 +991,9 @@ export function startGeneratePageWorker() {
           },
           'generate-page: provider call complete',
         );
+        observe(METRIC.OLLAMA_GEN_MS, Date.now() - llmStartedAt, {
+          model: genModel,
+        });
         try {
           // Incremental path expects PageMergeDraft (adds topicAliases).
           // If the LLM forgets the field, PageMergeDraft.default([])
@@ -1637,6 +1642,10 @@ export function startGeneratePageWorker() {
         },
         'generate-page: persisted',
       );
+      observe(METRIC.GENERATE_PAGE_DURATION_MS, Date.now() - jobT0, {
+        mode: assignment.mode,
+        wasNew: assignment.page ? 'false' : 'true',
+      });
 
       // -----------------------------------------------------------
       // Web-integration Phase 2 auto-trigger. Fire a topicResearch

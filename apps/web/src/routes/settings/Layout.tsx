@@ -28,6 +28,7 @@ const TABS = [
 const ADMIN_TABS = [
   { to: 'models', label: 'Models' },
   { to: 'admin', label: 'Admin' },
+  { to: 'diagnostics', label: 'Diagnostics' },
 ];
 
 export default function SettingsLayout() {

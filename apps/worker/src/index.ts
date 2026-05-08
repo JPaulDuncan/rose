@@ -3,6 +3,7 @@ import { syncAllIndexes, runMigrations } from '@rose/db';
 import { connectMongo } from './lib/db.js';
 import { redis, bullConnection } from './lib/redis.js';
 import { logger } from './lib/logger.js';
+import { startMetricsPublisher } from './lib/metrics.js';
 import { startGeneratePageWorker } from './processors/generatePage.js';
 import { startEmbedPageWorker } from './processors/embedPage.js';
 import { startImapSyncWorker } from './processors/imapSync.js';
@@ -158,6 +159,12 @@ async function applySchemaMigrations() {
 async function bootstrap() {
   await connectMongo();
   logger.info({ mode: MODE }, 'worker bootstrap');
+
+  // Every worker process publishes a metrics snapshot to Redis
+  // every 30s; the API's diagnostics endpoint aggregates across
+  // the live set. Started before workers register so the very
+  // first job's timings get captured.
+  startMetricsPublisher();
 
   // Run before any worker registers so the indexes are in place
   // before the first BullMQ job hits the DB.

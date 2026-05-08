@@ -15,6 +15,7 @@ import { Instruction } from '@rose/db';
 import { PageGenerationDraft } from '@rose/shared';
 import { bullConnection } from '../lib/redis.js';
 import { logger } from '../lib/logger.js';
+import { observe, inc, METRIC } from '../lib/metrics.js';
 import { resolveProviderForUser } from '../lib/providers.js';
 import { extractArticle } from '../services/extractArticle.js';
 import { fetchOne, hostKeyOf, urlHashOf } from '../services/fetchPool.js';
@@ -617,9 +618,13 @@ export function startTopicResearchWorker(): void {
             continue;
           }
 
+          const fetchT0 = Date.now();
           const result = await fetchOne(item.url, {
             etag: cached?.etag ?? null,
             lastModified: cached?.lastModified ?? null,
+          });
+          observe(METRIC.TOPIC_RESEARCH_FETCH_MS, Date.now() - fetchT0, {
+            outcome: result.kind,
           });
 
           if (result.kind === 'not-modified' && cached) {
@@ -652,6 +657,7 @@ export function startTopicResearchWorker(): void {
           }
 
           if (result.kind === 'robots-disallowed') {
+            inc(METRIC.TOPIC_RESEARCH_ROBOTS_BLOCKED, 1);
             // Persist a placeholder so we don't re-attempt.
             await WebDocument.updateOne(
               { userId, urlHash },
@@ -726,7 +732,11 @@ export function startTopicResearchWorker(): void {
           let embedding: number[];
           try {
             const text = `${article.title}\n${article.contentMd.slice(0, 8_000)}`;
+            const embT0 = Date.now();
             embedding = await provider.provider.embed(provider.model, text);
+            observe(METRIC.OLLAMA_EMBED_MS, Date.now() - embT0, {
+              model: provider.model,
+            });
           } catch (err) {
             logger.warn({ err, url: result.finalUrl }, 'topic-research: embed failed');
             continue;
@@ -735,6 +745,7 @@ export function startTopicResearchWorker(): void {
             ? dot(toUnitFloat32(embedding), centroid.vec)
             : 0;
           const offTopic = score < topicThreshold;
+          if (offTopic) inc(METRIC.TOPIC_RESEARCH_OFF_TOPIC, 1);
 
           const upsert = await WebDocument.findOneAndUpdate(
             { userId, urlHash },
@@ -966,6 +977,9 @@ export function startTopicResearchWorker(): void {
           },
           'topic-research: complete',
         );
+        observe(METRIC.TOPIC_RESEARCH_DURATION_MS, elapsedMs);
+        inc(METRIC.TOPIC_RESEARCH_FETCHES, fetched.length);
+        inc(METRIC.TOPIC_RESEARCH_KEPT, synthesisDocs.length);
 
         return {
           ok: true,

@@ -13,6 +13,7 @@ import { decryptJson, encryptJson } from '../lib/crypto.js';
 import { redis, bullConnection } from '../lib/redis.js';
 import { env } from '../lib/env.js';
 import { logger } from '../lib/logger.js';
+import { inc, METRIC } from '../lib/metrics.js';
 import { emitRecipeEvent } from '../lib/recipeEmit.js';
 import { detectShipmentsForEmail } from '@rose/shipments';
 import { detectPromoCodesForEmail } from '@rose/promo-codes';
@@ -139,6 +140,7 @@ export function startGmailSyncWorker() {
             priority: priorityForDate(cleaned.date ?? new Date()),
           },
         );
+        inc(METRIC.EMAIL_INGESTED, 1, { source: 'gmail' });
         const recipeFromAddr = cleaned.from?.address ?? null;
         const recipeBrandKey = recipeFromAddr
           ? senderDomainTag(recipeFromAddr)

@@ -16,6 +16,7 @@ import { instructionsRouter } from './routes/instructions.js';
 import { sourcesRouter } from './routes/sources.js';
 import { categoriesRouter } from './routes/categories.js';
 import { jobsRouter, jobsStreamRouter } from './routes/jobs.js';
+import { diagnosticsRouter } from './routes/diagnostics.js';
 import { digestRouter } from './routes/digest.js';
 import { eventsRouter } from './routes/events.js';
 import { streamsRouter } from './routes/streams.js';
@@ -103,6 +104,7 @@ export async function createServer(): Promise<Express> {
   // SSE stream auth via query param; mount before requireAuth-protected jobs.
   app.use('/api/jobs', jobsStreamRouter);
   app.use('/api/jobs', requireAuth, jobsRouter);
+  app.use('/api/diagnostics', requireAuth, diagnosticsRouter);
   app.use('/api/digest', requireAuth, digestRouter);
   app.use('/api/events', requireAuth, eventsRouter);
   app.use('/api/streams', requireAuth, streamsRouter);

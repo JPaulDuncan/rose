@@ -13,6 +13,7 @@ import {
 import { decryptJson } from '../lib/crypto.js';
 import { redis, bullConnection } from '../lib/redis.js';
 import { logger } from '../lib/logger.js';
+import { inc, METRIC } from '../lib/metrics.js';
 import { emitRecipeEvent } from '../lib/recipeEmit.js';
 import { detectShipmentsForEmail } from '@rose/shipments';
 import { detectPromoCodesForEmail } from '@rose/promo-codes';
@@ -213,6 +214,7 @@ export function startImapSyncWorker() {
                 logger.warn({ err, emailId: String(created._id) }, 'promo-code detection failed');
               }
               ingested += 1;
+              inc(METRIC.EMAIL_INGESTED, 1, { source: 'imap' });
             } catch (perMsgErr) {
               failed += 1;
               logger.warn({ uid, err: perMsgErr }, 'imap-sync: per-message failure (continuing)');
