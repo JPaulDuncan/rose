@@ -5,6 +5,10 @@ export { formatImapError } from './imapErrors.js';
 export {
   extractEmailMetadata,
   senderDomainTag,
+  compileSenderBlocklist,
+  isSenderBlocked,
+  isSenderWhitelisted,
+  DEFAULT_TRUSTED_TLDS,
   stripAdSections,
   isNominalTag,
   filterNominalTags,

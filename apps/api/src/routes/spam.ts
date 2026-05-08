@@ -108,6 +108,8 @@ async function getPolicy(userId: Types.ObjectId): Promise<SpamPolicy> {
     tags: (user?.spamPolicy?.tags as string[] | undefined) ?? [],
     blockedSenders:
       (user?.spamPolicy?.blockedSenders as string[] | undefined) ?? [],
+    whitelistedSenders:
+      (user?.spamPolicy?.whitelistedSenders as string[] | undefined) ?? [],
   };
 }
 
@@ -346,36 +348,69 @@ spamRouter.post('/block', validateBody(BlockSenderRequest), async (req, res) => 
   let pagesDeleted = 0;
   let pagesPruned = 0;
   if (removeExisting) {
+    // Brand-aware match: blocking `notices.medium.com` should
+    // delete every other `*.medium.com` row too. We compute the
+    // candidate brand for the blocked address; if it's a real
+    // brand, every email whose from-address resolves to the same
+    // brand gets purged. Personal-mail providers (gmail.com, …)
+    // return null from senderDomainTag and fall through to the
+    // exact-address path, preserving "block boss@example.com
+    // doesn't kill cousin@example.com" semantics.
+    const brand = senderDomainTag(address)?.toLowerCase() ?? null;
+    const matchedEmails = await Email.find({ userId })
+      .select('from')
+      .lean();
+    const matchedAddresses = new Set<string>();
+    matchedAddresses.add(address);
+    if (brand) {
+      for (const e of matchedEmails) {
+        const from = (e.from as { address?: string } | null)?.address?.toLowerCase();
+        if (!from) continue;
+        if (senderDomainTag(from)?.toLowerCase() === brand) {
+          matchedAddresses.add(from);
+        }
+      }
+    }
+    const addrFilter =
+      matchedAddresses.size === 1
+        ? { 'from.address': address }
+        : { 'from.address': { $in: [...matchedAddresses] } };
     // Train the Bayes classifier first while the spam emails still
     // exist — once we delete them we lose the training corpus.
-    const emails = await Email.find({ userId, 'from.address': address })
+    const emails = await Email.find({ userId, ...addrFilter })
       .sort({ date: -1 })
       .limit(200)
       .select('subject text')
       .lean();
     await trainBayesForEmails(userId, emails, true);
 
-    // Identify pages this sender contributed to. Pages where this
-    // sender is the SOLE contributor get deleted; pages with other
-    // contributors just lose the blocked sender's emails.
-    const affectedPages = await Page.find({ userId, senderAddresses: address })
+    // Identify pages any matching address contributed to. Pages
+    // where the matched set is the SOLE contributor get deleted;
+    // pages with other contributors just lose the blocked addresses.
+    const senderAddrFilter =
+      matchedAddresses.size === 1
+        ? { senderAddresses: address }
+        : { senderAddresses: { $in: [...matchedAddresses] } };
+    const affectedPages = await Page.find({ userId, ...senderAddrFilter })
       .select('_id senderAddresses sourceEmailIds')
       .lean();
     for (const page of affectedPages) {
-      const others = (page.senderAddresses ?? []).filter((a: string) => a !== address);
+      const others = (page.senderAddresses ?? []).filter(
+        (a: string) => !matchedAddresses.has(a),
+      );
       if (others.length === 0) {
         await Page.deleteOne({ _id: page._id, userId });
         pagesDeleted += 1;
       } else {
         await Page.updateOne(
           { _id: page._id, userId },
-          { $pull: { senderAddresses: address } },
+          { $pull: { senderAddresses: { $in: [...matchedAddresses] } } },
         );
         pagesPruned += 1;
       }
     }
 
-    const r = await Email.deleteMany({ userId, 'from.address': address });
+    const r = await Email.deleteMany({ userId, ...addrFilter });
     emailsDeleted = r.deletedCount ?? 0;
   }
 
@@ -394,6 +429,51 @@ spamRouter.delete('/block/:address', async (req, res) => {
   await User.updateOne(
     { _id: userId },
     { $pull: { 'spamPolicy.blockedSenders': address } },
+  );
+  res.json({ ok: true, address });
+});
+
+/**
+ * Trusted-sender whitelist. Mirrors the blocklist routes — POST
+ * adds, DELETE removes — but the effect is the inverse: the entry
+ * bypasses the blocklist, the spam classifier, and the
+ * auto-quarantine sweep. Useful for newsletters or transactional
+ * senders the user explicitly trusts despite spam-y signals.
+ *
+ * The .gov / .edu TLDs are implicitly whitelisted regardless of
+ * the contents of this list (see `isSenderWhitelisted` in
+ * @rose/email-parser); the list is for everything else.
+ */
+spamRouter.post(
+  '/whitelist',
+  validateBody(SpamSenderRequest),
+  async (req, res) => {
+    const userId = new Types.ObjectId(userIdOf(req));
+    const address = normSender((req.body as { address: string }).address);
+    if (!address) {
+      res.status(400).json({ error: 'invalid_request', message: 'address required' });
+      return;
+    }
+    await User.updateOne(
+      { _id: userId },
+      {
+        $addToSet: { 'spamPolicy.whitelistedSenders': address },
+        // A whitelisted sender shouldn't simultaneously be on the
+        // spam-mark list. Pull it from there if it was added in the
+        // past so the two lists don't contradict each other.
+        $pull: { 'spamPolicy.senders': address },
+      },
+    );
+    res.json({ ok: true, address });
+  },
+);
+
+spamRouter.delete('/whitelist/:address', async (req, res) => {
+  const userId = new Types.ObjectId(userIdOf(req));
+  const address = normSender(decodeURIComponent(req.params.address ?? ''));
+  await User.updateOne(
+    { _id: userId },
+    { $pull: { 'spamPolicy.whitelistedSenders': address } },
   );
   res.json({ ok: true, address });
 });

@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { Types } from 'mongoose';
 import { z } from 'zod';
-import { Recipe } from '@rose/db';
+import { Recipe, Page } from '@rose/db';
 import type { RecipeEvent } from '@rose/shared';
 import { userIdOf } from '../middleware/auth.js';
 import { validateBody } from '../middleware/validate.js';
@@ -113,6 +113,19 @@ topicWatchesRouter.get('/', async (req, res) => {
   })
     .sort({ createdAt: -1 })
     .lean();
+  // Each topic watch maps to one Page (upsert by recipeId on every
+  // run). Pull the slugs in a single $in query so the client can
+  // render an "Open" link per watch without N round-trips.
+  const recipeIds = watches.map((r) => r._id);
+  const pages = recipeIds.length
+    ? await Page.find({ userId, recipeId: { $in: recipeIds } })
+        .select('slug recipeId')
+        .lean()
+    : [];
+  const slugByRecipeId = new Map<string, string>();
+  for (const p of pages) {
+    if (p.recipeId) slugByRecipeId.set(String(p.recipeId), p.slug);
+  }
   res.json({
     watches: watches.map((r) => {
       const action = (r.actions ?? [])[0] as
@@ -143,6 +156,7 @@ topicWatchesRouter.get('/', async (req, res) => {
         includeNewsSearch:
           (action?.config as { includeNewsSearch?: boolean } | undefined)
             ?.includeNewsSearch ?? true,
+        pageSlug: slugByRecipeId.get(String(r._id)) ?? null,
         enabled: r.enabled,
         fireCount: r.fireCount ?? 0,
         errorCount: r.errorCount ?? 0,

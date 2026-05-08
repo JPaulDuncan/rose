@@ -660,6 +660,110 @@ function legacyLabel(host: string): string | null {
 }
 
 /**
+ * Compile a sender blocklist into the two lookups the ingest path
+ * needs: an exact-address set (for personal-mail addresses where
+ * subdomain unification doesn't apply) and a brand-label set (so
+ * "notices.medium.com" automatically blocks every other
+ * `*.medium.com` mailer the same brand uses).
+ *
+ * Brand membership is decided by `senderDomainTag`, which already
+ * returns null for personal-mail providers (gmail.com, outlook.com,
+ * …). A blocklist entry on a personal-mail domain will only ever
+ * exact-match — the user blocking `boss@example.com` doesn't
+ * accidentally block their cousin at `bob@example.com` if
+ * example.com is, in fact, on the personal-mail list. Brand-shaped
+ * entries cascade across subdomains the way the user expects.
+ *
+ * Bare-domain entries (no `@`) are accepted too: `medium.com` →
+ * brand label `Medium` → matches anything under `*.medium.com`.
+ */
+export function compileSenderBlocklist(
+  entries: Iterable<string | null | undefined>,
+): { addresses: Set<string>; brands: Set<string> } {
+  const addresses = new Set<string>();
+  const brands = new Set<string>();
+  for (const raw of entries) {
+    if (!raw) continue;
+    const entry = raw.toLowerCase().trim();
+    if (!entry) continue;
+    addresses.add(entry);
+    // Treat bare hosts the same as `something@host` for brand
+    // extraction. `senderDomainTag` requires an `@` to find the
+    // host, so prepend a dummy local part for hostless entries.
+    const synthetic = entry.includes('@') ? entry : `x@${entry}`;
+    const brand = senderDomainTag(synthetic);
+    if (brand) brands.add(brand.toLowerCase());
+  }
+  return { addresses, brands };
+}
+
+/**
+ * Decide whether a from-address is covered by a compiled blocklist.
+ * Tested first as exact match, then as a brand match — so `medium.com`
+ * in the blocklist catches `news@updates.medium.com`, while a
+ * gmail-address entry only matches itself.
+ */
+export function isSenderBlocked(
+  sets: { addresses: Set<string>; brands: Set<string> },
+  fromAddress: string | null | undefined,
+): boolean {
+  if (!fromAddress) return false;
+  const lower = fromAddress.toLowerCase().trim();
+  if (sets.addresses.has(lower)) return true;
+  const brand = senderDomainTag(lower);
+  if (brand && sets.brands.has(brand.toLowerCase())) return true;
+  return false;
+}
+
+/**
+ * TLDs that ship default-trusted. Mail from a `.gov` or `.edu`
+ * sender bypasses the blocklist + spam classifier + auto-quarantine
+ * regardless of the user's whitelist contents. Both label sets are
+ * authoritative-issuance TLDs (US government / accredited
+ * post-secondary institutions); blanket-trusting them is a strong
+ * default but a reasonable one for a personal newspaper.
+ *
+ * Add more here when you have a defensible reason. Don't add
+ * `.org` or country-code TLDs — those are open for anyone to
+ * register and would invite the exact spam they're meant to
+ * exclude.
+ */
+const ALWAYS_TRUSTED_TLDS: ReadonlyArray<string> = ['.gov', '.edu'];
+
+/**
+ * Decide whether a from-address is covered by the user's whitelist
+ * (or one of the always-trusted TLDs). Mirrors `isSenderBlocked` so
+ * the ingest path can compose them: whitelist wins, blocklist
+ * applies only when the sender isn't whitelisted.
+ *
+ * The TLD check covers both bare hosts (`whitehouse.gov`) and
+ * email addresses (`info@nasa.gov`); subdomains under a `.gov` /
+ * `.edu` parent inherit trust automatically (`mail.cdc.gov` →
+ * trusted because it ends in `.gov`).
+ */
+export function isSenderWhitelisted(
+  sets: { addresses: Set<string>; brands: Set<string> },
+  fromAddress: string | null | undefined,
+): boolean {
+  if (!fromAddress) return false;
+  const lower = fromAddress.toLowerCase().trim();
+  // Pull the host out, address-shaped or bare.
+  const at = lower.lastIndexOf('@');
+  const host = at >= 0 ? lower.slice(at + 1) : lower;
+  for (const suffix of ALWAYS_TRUSTED_TLDS) {
+    if (host.endsWith(suffix)) return true;
+  }
+  if (sets.addresses.has(lower)) return true;
+  const brand = senderDomainTag(lower);
+  if (brand && sets.brands.has(brand.toLowerCase())) return true;
+  return false;
+}
+
+/** Lowercased copies of the always-trusted TLDs so the SPA can
+ *  render an "always trusted" hint without duplicating the list. */
+export const DEFAULT_TRUSTED_TLDS = [...ALWAYS_TRUSTED_TLDS];
+
+/**
  * Pull a logo candidate out of the HTML head — the most likely brand
  * mark for the sender. Heuristics, in order of preference:
  *   - alt text or filename matches /logo|brand|wordmark|icon/

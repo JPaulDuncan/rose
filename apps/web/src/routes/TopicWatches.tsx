@@ -11,6 +11,7 @@ import {
   Clock,
   CheckCircle2,
   X as XIcon,
+  ExternalLink as ExternalLinkIcon,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useApi } from '../lib/api';
@@ -25,6 +26,9 @@ type TopicWatch = {
   customPrompt: string | null;
   maxResultsPerSource: number;
   includeNewsSearch: boolean;
+  /** Slug of the Page this watch upserts on each run, or null when
+   *  the watch hasn't fired successfully yet. */
+  pageSlug: string | null;
   enabled: boolean;
   fireCount: number;
   errorCount: number;
@@ -228,6 +232,15 @@ export default function TopicWatchesPage() {
                       )}
                     </div>
                     <div className="flex shrink-0 items-center gap-1">
+                      {w.pageSlug && (
+                        <Link
+                          to={`/p/${w.pageSlug}`}
+                          className="btn-ghost text-xs"
+                          title="Open the article this watch is keeping current"
+                        >
+                          <ExternalLinkIcon className="h-3.5 w-3.5" /> Open
+                        </Link>
+                      )}
                       <button
                         type="button"
                         className="btn-ghost text-xs"

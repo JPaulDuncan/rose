@@ -31,6 +31,10 @@ import { startTagDigestWorker, startTagDigestSweeper } from './processors/tagDig
 import { startPostWriteHooksWorker } from './processors/postWriteHooks.js';
 import { startRecipesWorker } from './processors/recipes.js';
 import { startCleanupWorker, scheduleCleanupSweeper } from './processors/cleanup.js';
+import {
+  startWeatherSnapshotWorker,
+  scheduleWeatherSnapshotSweeper,
+} from './processors/weatherSnapshots.js';
 import { startReputationDecaySweep } from './services/reputationSweep.js';
 import { startDaydreamSweeper } from './services/daydreamSweeper.js';
 import { getVapidKeys } from './lib/vapid.js';
@@ -90,6 +94,10 @@ async function bootstrap() {
   // notes / etc. older than the per-user retention windows.
   startCleanupWorker();
   await scheduleCleanupSweeper();
+  // Server-side weather-snapshot poll so the trend chart on /weather
+  // hydrates even when no user is actively browsing the home panel.
+  startWeatherSnapshotWorker();
+  await scheduleWeatherSnapshotSweeper();
   logger.info('rose worker started');
 }
 
