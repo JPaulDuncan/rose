@@ -13,9 +13,6 @@ import {
   Mail,
   AtSign,
   Calendar,
-  FileText,
-  Code2,
-  Reply as ReplyIcon,
   Trash2,
   Ban,
   ShieldOff,
@@ -195,16 +192,11 @@ export default function EmailView() {
     onError: (e: Error) => toast.error(e.message),
   });
 
-  // Default to HTML when present (it's almost always the most useful render
-  // for marketing/notification mail); fall back to plain text otherwise.
-  const initialView: 'text' | 'html' | 'raw' = data?.html
-    ? 'html'
-    : data?.text || data?.rawText
-      ? 'text'
-      : 'raw';
-  const [viewOverride, setViewOverride] = useState<'text' | 'html' | 'raw' | null>(null);
-  const view = viewOverride ?? initialView;
-  const setView = (v: 'text' | 'html' | 'raw') => setViewOverride(v);
+  // We render the HTML body when present (it's almost always the
+  // most useful view for marketing/notification mail) and fall back
+  // to plain text only when there's no HTML at all. Plain-text and
+  // raw-source views were dropped — the HTML pane already covers
+  // the 99% case and the rest can hit the source IMAP/Gmail UI.
 
   if (isLoading || !data) {
     if (error) {
@@ -370,11 +362,12 @@ export default function EmailView() {
           {replyOpen && (
             <DraftReply email={data} open={replyOpen} onOpenChange={setReplyOpen} />
           )}
-          <BodyTabs view={view} setView={setView} hasHtml={!!data.html} hasRaw={!!data.rawText} />
           <div>
-            {view === 'text' && <TextBody text={data.text || data.rawText || ''} />}
-            {view === 'html' && data.html && <HtmlBody html={data.html} />}
-            {view === 'raw' && <TextBody text={data.rawText || data.text || ''} mono />}
+            {data.html ? (
+              <HtmlBody html={data.html} />
+            ) : (
+              <TextBody text={data.text || data.rawText || ''} />
+            )}
           </div>
 
           {recipeSeed && (
@@ -773,84 +766,30 @@ function EmailActionsBar({
   );
 }
 
-function BodyTabs({
-  view,
-  setView,
-  hasHtml,
-  hasRaw,
-}: {
-  view: 'text' | 'html' | 'raw';
-  setView: (v: 'text' | 'html' | 'raw') => void;
-  hasHtml: boolean;
-  hasRaw: boolean;
-}) {
-  return (
-    <div className="flex gap-1 border-b border-ink-200 dark:border-ink-800">
-      {hasHtml && (
-        <TabButton active={view === 'html'} onClick={() => setView('html')}>
-          <Code2 className="h-3.5 w-3.5" /> HTML
-        </TabButton>
-      )}
-      <TabButton active={view === 'text'} onClick={() => setView('text')}>
-        <FileText className="h-3.5 w-3.5" /> Plain text
-      </TabButton>
-      {hasRaw && (
-        <TabButton active={view === 'raw'} onClick={() => setView('raw')}>
-          Raw
-        </TabButton>
-      )}
-    </div>
-  );
-}
-
-function TabButton({
-  active,
-  onClick,
-  children,
-}: {
-  active: boolean;
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={
-        'inline-flex items-center gap-1 px-3 py-1.5 text-sm border-b-2 -mb-px ' +
-        (active
-          ? 'border-rose-500 font-medium text-rose-700 dark:text-rose-300'
-          : 'border-transparent text-ink-500 hover:text-ink-900 dark:hover:text-ink-100')
-      }
-    >
-      {children}
-    </button>
-  );
-}
-
-function TextBody({ text, mono }: { text: string; mono?: boolean }) {
+function TextBody({ text }: { text: string }) {
   if (!text.trim()) {
     return (
       <div className="card text-sm text-ink-500">No plain-text body for this email.</div>
     );
   }
   return (
-    <pre
-      className={
-        'card whitespace-pre-wrap break-words text-sm leading-relaxed ' +
-        (mono ? 'font-mono text-xs' : 'font-sans')
-      }
-    >
+    <pre className="card whitespace-pre-wrap break-words font-sans text-sm leading-relaxed">
       {text}
     </pre>
   );
 }
 
 /**
- * HTML email renderer. We sandbox in an iframe so untrusted markup can't
- * touch the rest of the SPA, and we do a defensive strip of script/style
- * tags before injecting. The iframe gets `sandbox` (no scripts, no
- * top-navigation) and a `srcdoc` with the cleaned HTML.
+ * HTML email renderer. The iframe is the security boundary — `sandbox`
+ * with a tightly scoped allowlist blocks scripts, forms, and same-origin
+ * access, while `allow-popups` + `allow-popups-to-escape-sandbox` lets
+ * anchor clicks open in a new top-level tab so the destination site
+ * doesn't slam into our `X-Frame-Options` and refuse to render.
+ *
+ * We also rewrite anchors to `target="_blank" rel="noopener noreferrer"`
+ * during sanitize and inject a `<base target="_blank">` as a default,
+ * so even bare `<a href>` tags pop a new tab instead of trying to
+ * navigate the iframe itself.
  */
 function HtmlBody({ html }: { html: string }) {
   const ref = useRef<HTMLIFrameElement>(null);
@@ -862,7 +801,7 @@ function HtmlBody({ html }: { html: string }) {
         ref={ref}
         title="Email HTML body"
         srcDoc={cleaned}
-        sandbox=""
+        sandbox="allow-popups allow-popups-to-escape-sandbox"
         className="block w-full bg-white"
         style={{ height: tall }}
         onLoad={() => {
@@ -880,16 +819,32 @@ function HtmlBody({ html }: { html: string }) {
 }
 
 function sanitizeHtml(html: string): string {
-  return html
+  const stripped = html
     .replace(/<script[\s\S]*?<\/script>/gi, '')
     .replace(/<iframe[\s\S]*?<\/iframe>/gi, '')
     .replace(/<object[\s\S]*?<\/object>/gi, '')
     .replace(/<embed[\s\S]*?<\/embed>/gi, '')
     .replace(/<link[^>]*>/gi, '')
     .replace(/<meta[^>]*>/gi, '')
+    .replace(/<base[^>]*>/gi, '')
     .replace(/\son\w+\s*=\s*"[^"]*"/gi, '')
     .replace(/\son\w+\s*=\s*'[^']*'/gi, '')
-    .replace(/javascript:/gi, '#blocked-js:');
+    .replace(/javascript:/gi, '#blocked-js:')
+    // Force every <a> to open in a new tab and disable opener access.
+    // Target/rel get normalised regardless of what the email shipped.
+    .replace(/<a\b([^>]*)>/gi, (_m, attrs: string) => {
+      const cleaned = attrs
+        .replace(/\starget\s*=\s*("[^"]*"|'[^']*'|\S+)/gi, '')
+        .replace(/\srel\s*=\s*("[^"]*"|'[^']*'|\S+)/gi, '');
+      return `<a${cleaned} target="_blank" rel="noopener noreferrer">`;
+    });
+  // Inject <base target="_blank"> so anchors without an href on a
+  // descendant element still default to opening a new tab. We slip
+  // it in after <head> if present, otherwise prepend a minimal head.
+  if (/<head\b[^>]*>/i.test(stripped)) {
+    return stripped.replace(/<head\b[^>]*>/i, (m) => `${m}<base target="_blank">`);
+  }
+  return `<head><base target="_blank"></head>${stripped}`;
 }
 
 function Section({
