@@ -90,6 +90,45 @@ const MAX_RECURSION_DEPTH = 1;
  *  host trust); the actual cosine check happens after fetch. */
 const RECURSE_SCORE_THRESHOLD = 0.4;
 
+/**
+ * Parse a date string + a fallback into a real Date or null. Used
+ * for the recency-weighted ranking — articles tagged 2026-05-09
+ * deserve a higher rank than 2014 background pieces with similar
+ * topical relevance, but we should never crash a research run on a
+ * malformed date string from a CMS.
+ */
+function parsePublishedAt(
+  primary: string | Date | null | undefined,
+  fallback: Date | null | undefined,
+): Date | null {
+  if (primary instanceof Date) return Number.isFinite(primary.getTime()) ? primary : null;
+  if (typeof primary === 'string' && primary.trim()) {
+    const d = new Date(primary);
+    if (Number.isFinite(d.getTime())) return d;
+  }
+  if (fallback instanceof Date && Number.isFinite(fallback.getTime())) return fallback;
+  return null;
+}
+
+/**
+ * Recency factor in [0.6, 1.0]. The synthesis-corpus sort uses
+ * (relevance × recency) so a fresh-but-mediocre article doesn't
+ * elbow out a strong-relevance background piece, but among
+ * docs with similar topical scores the newer one wins.
+ *
+ * Curve: today = 1.0, week-old = 0.9, month-old = 0.78,
+ * year-old = 0.6. Continuous and monotone; clamps at 0.6 so
+ * historical context isn't deweighted into uselessness.
+ */
+function recencyFactor(publishedAt: Date | null): number {
+  if (!publishedAt) return 0.85;
+  const ageDays = (Date.now() - publishedAt.getTime()) / 86_400_000;
+  if (ageDays <= 1) return 1.0;
+  // exp decay with half-life ~ 90 days, clamped to floor 0.6.
+  const factor = Math.exp(-ageDays / 90);
+  return Math.max(0.6, factor);
+}
+
 /** Hard cap on how many links per source article we'll consider
  *  pushing onto the frontier. Big news articles can have 50+
  *  in-body anchors; we don't want one source to eat the whole
@@ -581,6 +620,12 @@ export function startTopicResearchWorker(): void {
           contentMd: string;
           hostKey: string;
           relevanceScore: number;
+          /** Best-guess publication date — article meta first, HTTP
+           *  Last-Modified second, fetchedAt last. Used to weight
+           *  recency into the synthesis-corpus ranking so a "Iran"
+           *  research run prefers this week's coverage over 2009
+           *  background pieces with similar topical relevance. */
+          publishedAt: Date | null;
           docId: Types.ObjectId;
         }[] = [];
         let processedCount = 0;
@@ -612,6 +657,7 @@ export function startTopicResearchWorker(): void {
                 contentMd: cached.contentMd,
                 hostKey: cached.hostKey,
                 relevanceScore: cached.relevanceScore ?? 0,
+                publishedAt: parsePublishedAt(cached.lastModified, cached.fetchedAt),
                 docId: cached._id,
               });
             }
@@ -650,6 +696,7 @@ export function startTopicResearchWorker(): void {
                 contentMd: cached.contentMd,
                 hostKey: cached.hostKey,
                 relevanceScore: cached.relevanceScore ?? 0,
+                publishedAt: parsePublishedAt(cached.lastModified, cached.fetchedAt),
                 docId: cached._id,
               });
             }
@@ -787,6 +834,10 @@ export function startTopicResearchWorker(): void {
               contentMd: article.contentMd,
               hostKey: result.hostKey,
               relevanceScore: score,
+              publishedAt: parsePublishedAt(
+                article.publishedAt ?? result.lastModified,
+                result.fetchedAt,
+              ),
               docId: upsert!._id as Types.ObjectId,
             });
 
@@ -836,9 +887,15 @@ export function startTopicResearchWorker(): void {
           return { skipped: 'no-on-topic-results' };
         }
 
-        // Sort by relevance, cap to synthesis budget.
-        fetched.sort((a, b) => b.relevanceScore - a.relevanceScore);
-        const synthesisDocs = fetched.slice(0, SYNTHESIS_DOC_CAP);
+        // Rank by relevance × recency, cap to synthesis budget.
+        // Pure cosine relevance is preserved on the WebDocument row
+        // (so the cache-display in Codex remains semantically stable);
+        // this composite is a per-run ranking-only score.
+        const ranked = fetched
+          .map((d) => ({ doc: d, score: d.relevanceScore * recencyFactor(d.publishedAt) }))
+          .sort((a, b) => b.score - a.score)
+          .map((x) => x.doc);
+        const synthesisDocs = ranked.slice(0, SYNTHESIS_DOC_CAP);
 
         // -------------------------------------------------------------
         // 6. Build the synthesis corpus.

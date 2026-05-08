@@ -92,7 +92,14 @@ type TimelineEntry = {
 };
 type StreamsResponse = { streams: Stream[]; timeline: TimelineEntry[] };
 
-type TabKey = 'pinned' | 'categories' | 'senders' | 'entities' | 'index' | 'streams';
+type TabKey =
+  | 'pinned'
+  | 'categories'
+  | 'senders'
+  | 'entities'
+  | 'index'
+  | 'streams'
+  | 'web';
 const TABS: { key: TabKey; label: string; icon: typeof BookOpen }[] = [
   { key: 'pinned', label: 'Pinned', icon: Star },
   { key: 'categories', label: 'Categories', icon: BookOpen },
@@ -100,6 +107,7 @@ const TABS: { key: TabKey; label: string; icon: typeof BookOpen }[] = [
   { key: 'entities', label: 'Entities', icon: Tag },
   { key: 'index', label: 'Index', icon: Bookmark },
   { key: 'streams', label: 'Streams', icon: Activity },
+  { key: 'web', label: 'Web sources', icon: Globe },
 ];
 
 /**
@@ -161,6 +169,7 @@ export default function CodexPage() {
       {tab === 'entities' && <EntitiesTab />}
       {tab === 'index' && <IndexTab />}
       {tab === 'streams' && <StreamsTab />}
+      {tab === 'web' && <WebSourcesTab />}
     </div>
   );
 }
@@ -1438,4 +1447,265 @@ function fmtTime(d: Date) {
 
 function EmptyHint({ label }: { label: string }) {
   return <div className="card text-center text-sm text-ink-500">{label}</div>;
+}
+
+/**
+ * Codex → Web sources tab (web-integration Phase 3).
+ *
+ * Lists every WebDocument the topic-research orchestrator has
+ * pulled, grouped by hostKey. Designed to answer "what HAS Rose
+ * been reading on my behalf?" at a glance, with a one-click
+ * "Forget this hostname" lever that propagates the host onto
+ * settings.daydream.webResearch.denyHosts so future runs skip it.
+ *
+ * The table foregrounds the high-signal facts:
+ *   • Doc count + on-topic count per host (the diff is the
+ *     research budget that landed off-topic).
+ *   • Most-recent fetch (a quiet host with old timestamps got
+ *     "researched" once and isn't refreshing — that's signal).
+ *   • Average relevance (low + many docs ≈ "stop crawling here").
+ *
+ * Sample URLs expand under each host so the user can audit.
+ */
+type WebHostSummary = {
+  hostKey: string;
+  docCount: number;
+  onTopicCount: number;
+  offTopicCount: number;
+  robotsBlockedCount: number;
+  lastFetchedAt: string;
+  avgRelevance: number;
+  sample: {
+    _id: string;
+    title: string;
+    url: string;
+    relevanceScore: number;
+    offTopic: boolean;
+    robotsAllowed: boolean;
+    fetchedAt: string;
+    topicLabel: string;
+    triggeringPageId: string | null;
+    fetchDepth: number;
+    discoveredVia: string;
+  }[];
+};
+
+type WebSourcesResponse = {
+  hosts: WebHostSummary[];
+  denyHosts: string[];
+  totals: { hostCount: number; docCount: number; onTopicCount: number };
+};
+
+function relTime(iso: string | null): string {
+  if (!iso) return '';
+  const t = new Date(iso).getTime();
+  const sec = Math.round((Date.now() - t) / 1000);
+  if (sec < 60) return 'just now';
+  if (sec < 3600) return `${Math.round(sec / 60)} min ago`;
+  if (sec < 86_400) return `${Math.round(sec / 3600)} h ago`;
+  return `${Math.round(sec / 86_400)} d ago`;
+}
+
+function WebSourcesTab() {
+  const api = useApi();
+  const qc = useQueryClient();
+  const { data, isLoading } = useQuery({
+    queryKey: ['web-sources'],
+    queryFn: () => api.get<WebSourcesResponse>('/api/web-documents'),
+  });
+
+  const forget = useMutation({
+    mutationFn: ({ hostKey, deleteCached }: { hostKey: string; deleteCached: boolean }) =>
+      api.post<{ ok: true; deletedCount: number }>('/api/web-documents/forget-host', {
+        hostKey,
+        deleteCached,
+      }),
+    onSuccess: (r, vars) => {
+      toast.success(
+        vars.deleteCached && r.deletedCount
+          ? `Forgot ${vars.hostKey} and deleted ${r.deletedCount} cached page${r.deletedCount === 1 ? '' : 's'}.`
+          : `Future research will skip ${vars.hostKey}.`,
+      );
+      qc.invalidateQueries({ queryKey: ['web-sources'] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const unforget = useMutation({
+    mutationFn: (hostKey: string) =>
+      api.post<{ ok: true }>('/api/web-documents/unforget-host', { hostKey }),
+    onSuccess: (_r, hostKey) => {
+      toast.success(`${hostKey} is allowed again.`);
+      qc.invalidateQueries({ queryKey: ['web-sources'] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  if (isLoading) return <EmptyHint label="Loading…" />;
+  if (!data) return <EmptyHint label="Couldn't load web sources." />;
+
+  const denyHostsSet = new Set(data.denyHosts);
+  const allBlocked = data.denyHosts.filter(
+    (h) => !data.hosts.find((x) => x.hostKey === h),
+  );
+
+  if (data.hosts.length === 0 && allBlocked.length === 0) {
+    return (
+      <div className="card text-sm text-ink-500">
+        Topic research hasn't fetched anything yet. Click <strong>Research</strong>{' '}
+        on a wiki page to seed the first set of sources, or enable{' '}
+        <em>Topic research</em> in Settings → Daydream so it runs automatically
+        on your incoming mail.
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap gap-3 text-xs text-ink-500">
+        <Stat label="Hosts" value={String(data.totals.hostCount)} />
+        <Stat label="Total docs" value={String(data.totals.docCount)} />
+        <Stat label="On-topic" value={String(data.totals.onTopicCount)} />
+      </div>
+
+      {data.hosts.map((h) => {
+        const blocked = denyHostsSet.has(h.hostKey);
+        return (
+          <details
+            key={h.hostKey}
+            className={
+              'card space-y-2 ' +
+              (blocked ? 'opacity-60' : '')
+            }
+          >
+            <summary className="flex cursor-pointer flex-wrap items-baseline gap-x-3 gap-y-1">
+              <span className="font-mono text-sm font-semibold">{h.hostKey}</span>
+              <span className="text-xs text-ink-500">
+                {h.docCount} doc{h.docCount === 1 ? '' : 's'} · {h.onTopicCount}{' '}
+                on-topic · last fetch {relTime(h.lastFetchedAt)} · avg
+                relevance {h.avgRelevance.toFixed(2)}
+              </span>
+              {blocked && (
+                <span className="rounded bg-red-100 px-1.5 py-0.5 text-[10px] font-semibold text-red-700 dark:bg-red-950/50 dark:text-red-200">
+                  Denied
+                </span>
+              )}
+              {h.robotsBlockedCount > 0 && (
+                <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 dark:bg-amber-950/50 dark:text-amber-200">
+                  {h.robotsBlockedCount} robots-blocked
+                </span>
+              )}
+            </summary>
+            <div className="mt-2 space-y-1 border-t border-ink-200 pt-2 text-xs dark:border-ink-800">
+              {h.sample.map((s) => (
+                <div key={s._id} className="flex items-baseline gap-2">
+                  <span
+                    className={
+                      'shrink-0 rounded px-1 text-[10px] tabular-nums ' +
+                      (s.offTopic
+                        ? 'bg-ink-100 text-ink-500 dark:bg-ink-800'
+                        : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300')
+                    }
+                    title={s.offTopic ? 'Off-topic — not used in synthesis' : 'On-topic'}
+                  >
+                    {s.relevanceScore.toFixed(2)}
+                  </span>
+                  <a
+                    href={s.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="min-w-0 flex-1 truncate text-rose-600 hover:underline dark:text-rose-400"
+                    title={s.url}
+                  >
+                    {s.title || s.url}
+                  </a>
+                  {s.fetchDepth > 0 && (
+                    <span
+                      className="shrink-0 text-[10px] text-ink-400"
+                      title="Discovered via in-body link recursion"
+                    >
+                      depth {s.fetchDepth}
+                    </span>
+                  )}
+                  {s.topicLabel && (
+                    <span className="shrink-0 text-[10px] italic text-ink-400">
+                      {s.topicLabel}
+                    </span>
+                  )}
+                </div>
+              ))}
+            </div>
+            <div className="mt-2 flex gap-2 border-t border-ink-200 pt-2 dark:border-ink-800">
+              {blocked ? (
+                <button
+                  type="button"
+                  onClick={() => unforget.mutate(h.hostKey)}
+                  disabled={unforget.isPending}
+                  className="btn-ghost text-xs text-emerald-700 dark:text-emerald-300"
+                >
+                  Allow again
+                </button>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      forget.mutate({ hostKey: h.hostKey, deleteCached: false })
+                    }
+                    disabled={forget.isPending}
+                    className="btn-ghost text-xs text-amber-700 dark:text-amber-300"
+                    title={`Future research runs skip ${h.hostKey}; existing cache stays.`}
+                  >
+                    Skip in future
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      forget.mutate({ hostKey: h.hostKey, deleteCached: true })
+                    }
+                    disabled={forget.isPending}
+                    className="btn-ghost text-xs text-red-700 dark:text-red-300"
+                    title={`Skip future runs AND delete the ${h.docCount} cached page${h.docCount === 1 ? '' : 's'} from this host.`}
+                  >
+                    Skip + delete cached
+                  </button>
+                </>
+              )}
+            </div>
+          </details>
+        );
+      })}
+
+      {allBlocked.length > 0 && (
+        <details className="card mt-4 text-xs">
+          <summary className="cursor-pointer font-semibold">
+            {allBlocked.length} denied host{allBlocked.length === 1 ? '' : 's'} (no cached docs)
+          </summary>
+          <ul className="mt-2 space-y-1">
+            {allBlocked.map((h) => (
+              <li key={h} className="flex items-center gap-2 text-xs">
+                <span className="font-mono text-ink-500">{h}</span>
+                <button
+                  type="button"
+                  onClick={() => unforget.mutate(h)}
+                  className="btn-ghost text-[10px] text-emerald-700 dark:text-emerald-300"
+                >
+                  Allow again
+                </button>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+    </div>
+  );
+}
+
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <span className="rounded border border-ink-200 px-2 py-1 dark:border-ink-800">
+      <span className="mr-1 text-ink-500">{label}:</span>
+      <span className="font-mono tabular-nums">{value}</span>
+    </span>
+  );
 }
