@@ -38,6 +38,11 @@ import {
   recomputeCentroid,
 } from '../services/pageAssignment.js';
 import { upsertSendersFromPage } from '../services/senderUpsert.js';
+import {
+  suggestTaxonomy,
+  snapTagsByEmbedding,
+  snapCategoryByEmbedding,
+} from '../services/taxonomySnap.js';
 import { bayesScoreFor } from '../lib/bayesScore.js';
 import { evaluateRules, type RuleVerdict, emptyVerdict } from '../services/rules.js';
 import { dispatchWebhookEvent } from './webhookDeliver.js';
@@ -487,7 +492,7 @@ export function startGeneratePageWorker() {
       }
 
       // Ensure the trigger email has a cached embedding before assignment.
-      await ensureEmailEmbedding(triggerEmail);
+      const triggerEmbed = await ensureEmailEmbedding(triggerEmail);
       // RSS items always feed topic-mode pages (one wiki page per topic),
       // bypassing sender/thread grouping. For email we use the existing
       // thread → subject-template → sender+centroid path. A rule with
@@ -545,6 +550,16 @@ export function startGeneratePageWorker() {
             .map((c) => `${c.name}\t${countById.get(String(c._id)) ?? 0}`)
             .join('\n')
         : '(none yet — pick null or invent a specific category)';
+      // Embedding-driven pre-pass. Before the LLM runs, find the
+      // user's tags + categories that are most semantically similar
+      // to the trigger email and surface them as preferred candidates.
+      // Strongly biases the model toward the established vocabulary
+      // and avoids near-duplicate tags ("crypto" vs "cryptocurrency").
+      // Cold-start users have no centroids — `taxonomyHints` falls
+      // back to empty arrays in that case.
+      const taxonomyHints = triggerEmbed
+        ? await suggestTaxonomy(userId, triggerEmbed.vec)
+        : { tags: [], categories: [] };
       const stream = isNotificationStream(pageEmails);
 
       // Decide rebuild vs incremental. Incremental kicks in when the
@@ -639,6 +654,26 @@ export function startGeneratePageWorker() {
         ? `\nNOTIFICATION STREAM DETECTED: ${Math.round(stream.ratio * 100)}% of these messages share the same subject template. Treat this page as a long-running notification stream — write a stable, dashboard-style summary instead of a per-message description. Required H2 sections: "Overview" (what this stream is and how often it fires), "Recent Activity" (a tight bullet list of the most recent occurrences with timestamp + the one-line distinguishing detail per item — citing each), and "Patterns" (any common themes you observe across instances). Do NOT enumerate every message individually.`
         : '';
       const elidedNote = elidedSummary ? `\nNOTE: ${elidedSummary}` : '';
+      // Embedding-driven hints injected into the prompt. The LLM
+      // sees the existing categories block as before; this adds an
+      // explicit "your nearest neighbours by semantic similarity"
+      // shortlist so it doesn't have to scan the whole list every
+      // time. Only included when we actually have hints — empty
+      // strings would just confuse the model.
+      const taxonomyGuidance = (() => {
+        const parts: string[] = [];
+        if (taxonomyHints.tags.length > 0) {
+          parts.push(
+            `\nNEAREST EXISTING TAGS by semantic similarity to this email (prefer these over near-duplicates — e.g. don't emit "crypto" if "cryptocurrency" appears below): ${taxonomyHints.tags.map((t) => t.display).join(', ')}.`,
+          );
+        }
+        if (taxonomyHints.categories.length > 0) {
+          parts.push(
+            `\nNEAREST EXISTING CATEGORIES by semantic similarity: ${taxonomyHints.categories.map((c) => c.display).join(', ')}. Strongly prefer one of these over inventing a new category.`,
+          );
+        }
+        return parts.join('');
+      })();
 
       let prompt: string;
       if (useIncremental) {
@@ -653,7 +688,7 @@ export function startGeneratePageWorker() {
           new_email_count: String(newEmails.length),
           sender_summary: describeSenders(pageEmails),
           existing_categories: categoriesBlock,
-          extra_instructions: streamGuidance.trim() || '(none)',
+          extra_instructions: (streamGuidance + taxonomyGuidance).trim() || '(none)',
         });
       } else {
         const generateTemplate = await getInstructionTemplate(userId, 'generate');
@@ -664,7 +699,7 @@ export function startGeneratePageWorker() {
           email_count: String(pageEmails.length),
           sender_summary: describeSenders(pageEmails),
           existing_categories: categoriesBlock,
-          extra_instructions: (streamGuidance + elidedNote).trim() || '(none)',
+          extra_instructions: (streamGuidance + elidedNote + taxonomyGuidance).trim() || '(none)',
         });
       }
 
@@ -831,6 +866,34 @@ export function startGeneratePageWorker() {
           );
           throw new Error('LLM returned invalid JSON for page generation');
         }
+      }
+
+      // Embedding-driven post-pass: snap LLM-emitted tags + category
+      // onto existing vocabulary entries when the embeddings are
+      // close enough. Catches near-duplicates the prompt biasing
+      // didn't fully prevent ("crypto" → "cryptocurrency", "AI
+      // safety" → "ai-safety", etc.) — at zero LLM cost. Runs
+      // before the LLM-based `canonicalizeTags` so the downstream
+      // step has fewer unknowns to resolve and rarely needs to
+      // reach for the generation model. Rule-driven `assignCategory`
+      // still wins below; we only canonicalise the LLM's own suggestion.
+      try {
+        const snapped = await snapTagsByEmbedding(userId, draft.tags ?? []);
+        draft.tags = snapped;
+      } catch (err) {
+        logger.warn({ err }, 'generate-page: embedding tag snap failed; using raw LLM tags');
+      }
+      try {
+        const snapped = await snapCategoryByEmbedding(
+          userId,
+          draft.suggestedCategory ?? null,
+        );
+        draft.suggestedCategory = snapped;
+      } catch (err) {
+        logger.warn(
+          { err },
+          'generate-page: embedding category snap failed; using raw LLM suggestion',
+        );
       }
 
       // Categories. A `assign.category` rule wins over the LLM's
