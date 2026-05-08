@@ -1,3 +1,10 @@
+// Schema-sync + one-shot data migrations. Re-exported so the
+// worker bootstrap can `await syncAllIndexes(); await runMigrations();`
+// once it's connected to Mongo, without each consumer reaching into
+// the @rose/db internals.
+export { syncAllIndexes, runMigrations } from './migrations.js';
+export type { SyncIndexResult, Migration } from './migrations.js';
+
 export { User } from './models/User.js';
 export type { UserDoc } from './models/User.js';
 export { Email } from './models/Email.js';

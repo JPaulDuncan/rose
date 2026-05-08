@@ -1,4 +1,5 @@
 import { Queue } from 'bullmq';
+import { syncAllIndexes, runMigrations } from '@rose/db';
 import { connectMongo } from './lib/db.js';
 import { redis, bullConnection } from './lib/redis.js';
 import { logger } from './lib/logger.js';
@@ -97,9 +98,69 @@ const has = (kind: WorkerMode | WorkerMode[]): boolean => {
   return Array.isArray(kind) ? kind.includes(MODE) : kind === MODE;
 };
 
+/**
+ * Index sync + one-shot migrations live with one mode in split
+ * deploys, otherwise four worker processes race to call
+ * `syncIndexes` simultaneously. MongoDB serialises createIndex
+ * internally so the result is correct, but the noise is needless;
+ * the `bg` worker is the natural single-instance migration owner
+ * (light cadence, slow boot is fine, no traffic depends on it).
+ * The single-process `all` mode runs them too.
+ *
+ * Index creation runs in the background by default on MongoDB 4.2+,
+ * so this does not block reads or writes against existing data even
+ * when adding indexes to large collections.
+ */
+async function applySchemaMigrations() {
+  if (!has('bg')) return;
+  try {
+    const t0 = Date.now();
+    const indexResult = await syncAllIndexes();
+    const indexMs = Date.now() - t0;
+    logger.info(
+      {
+        models: indexResult.models.length,
+        created: indexResult.created,
+        dropped: indexResult.dropped,
+        failed: indexResult.failed,
+        elapsedMs: indexMs,
+      },
+      'schema indexes synced',
+    );
+    if (indexResult.failed.length > 0) {
+      // Emit failures at warn but don't block startup — a single
+      // misconfigured index shouldn't keep the whole worker down.
+      for (const f of indexResult.failed) {
+        logger.warn({ model: f.model, error: f.error }, 'index sync failed for model');
+      }
+    }
+  } catch (err) {
+    logger.error({ err }, 'index sync failed (continuing)');
+  }
+  try {
+    const t0 = Date.now();
+    const migResult = await runMigrations();
+    if (migResult.applied.length > 0 || migResult.skipped.length > 0) {
+      logger.info(
+        { applied: migResult.applied, skipped: migResult.skipped.length, elapsedMs: Date.now() - t0 },
+        'data migrations complete',
+      );
+    }
+  } catch (err) {
+    // Data migrations failing IS something to flag — they may have
+    // left the DB in a half-applied state. Surface loudly but don't
+    // hard-exit; an operator should investigate.
+    logger.error({ err }, 'data migrations failed; investigate before next deploy');
+  }
+}
+
 async function bootstrap() {
   await connectMongo();
   logger.info({ mode: MODE }, 'worker bootstrap');
+
+  // Run before any worker registers so the indexes are in place
+  // before the first BullMQ job hits the DB.
+  await applySchemaMigrations();
 
   // -----------------------------------------------------------------
   // LLM-bound workers — generation, narrative synthesis, summarisation.
