@@ -128,7 +128,14 @@ services:
       dockerfile: infra/docker/worker.Dockerfile
     restart: unless-stopped
     env_file: .env
+    # Single-process worker — registers every queue handler in one
+    # Node process. This is the default; opt into the four split
+    # workers below by running `docker compose --profile split up`
+    # AND first stopping this service (`docker compose stop worker`)
+    # so you don't end up with both the single worker and the split
+    # workers competing for the same queues.
     environment:
+      WORKER_MODE: all
       # V8 tuning for the data-pipeline workload. The default heap is
       # tuned for a request/response web server; we churn through
       # large LLM prompts and jsdom DOMs and want the GC to be less
@@ -139,6 +146,91 @@ services:
       #       jsdom / parser allocations clear in one cycle instead
       #       of being promoted to old-gen and triggering major GCs.
       NODE_OPTIONS: "--max-old-space-size=2048 --max-semi-space-size=64"
+    depends_on:
+      api:
+        condition: service_started
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # ------------------------------------------------------------------
+  # Split-mode workers (perf-roadmap Phase B). Enable with
+  #   docker compose --profile split up
+  # which boots the four specialised workers below INSTEAD of the
+  # single `worker` service. Each mode subscribes only to the queues
+  # in its lane, so a heavy jsdom parse on worker-cpu can't stall the
+  # IMAP heartbeat on worker-io. Same Dockerfile across all four —
+  # the routing is purely env-driven.
+  # ------------------------------------------------------------------
+  worker-llm:
+    build:
+      context: ../..
+      dockerfile: infra/docker/worker.Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    profiles: ["split"]
+    environment:
+      WORKER_MODE: llm
+      # LLM workers buffer big prompts; bump heap.
+      NODE_OPTIONS: "--max-old-space-size=2048 --max-semi-space-size=64"
+    depends_on:
+      api:
+        condition: service_started
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker-io:
+    build:
+      context: ../..
+      dockerfile: infra/docker/worker.Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    profiles: ["split"]
+    environment:
+      WORKER_MODE: io
+      NODE_OPTIONS: "--max-old-space-size=1024 --max-semi-space-size=32"
+    depends_on:
+      api:
+        condition: service_started
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker-cpu:
+    build:
+      context: ../..
+      dockerfile: infra/docker/worker.Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    profiles: ["split"]
+    environment:
+      WORKER_MODE: cpu
+      # CPU workers churn through DOMs + embedding buffers; bump
+      # young-gen aggressively so the parse/extract churn stays out
+      # of major-GC pauses.
+      NODE_OPTIONS: "--max-old-space-size=2048 --max-semi-space-size=128"
+    depends_on:
+      api:
+        condition: service_started
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker-bg:
+    build:
+      context: ../..
+      dockerfile: infra/docker/worker.Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    profiles: ["split"]
+    environment:
+      WORKER_MODE: bg
+      NODE_OPTIONS: "--max-old-space-size=512 --max-semi-space-size=32"
     depends_on:
       api:
         condition: service_started

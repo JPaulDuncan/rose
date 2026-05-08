@@ -40,78 +40,183 @@ import { startDaydreamSweeper } from './services/daydreamSweeper.js';
 import { reconcileSourceSchedules } from './services/sourceScheduleReconciler.js';
 import { getVapidKeys } from './lib/vapid.js';
 
+/**
+ * Worker process topology — perf-roadmap Phase B.
+ *
+ * The single-process `all` mode boots every worker in one Node
+ * process; that's the original shape and remains the default for
+ * solo self-hosted deploys where the operator wants one container
+ * to manage. The four split modes (`llm`, `io`, `cpu`, `bg`)
+ * register only a subset of workers per process so multi-container
+ * deploys can scale CPU-bound work independently from LLM-bound work
+ * and from background sweeps. Pick a mode by setting `WORKER_MODE`
+ * in the environment; same Docker image, four service entries in
+ * compose.
+ *
+ * Routing rules:
+ *   • `llm`   — every worker that issues Ollama generations or
+ *               long synthesis prompts. Concurrency is bounded by
+ *               Ollama's NUM_PARALLEL; small replica count.
+ *   • `io`    — sync workers that mostly wait on the network
+ *               (IMAP / Gmail / RSS / website / Slack / Discord /
+ *               Gcal / library / fetchAndParse). High concurrency
+ *               within the process; scale replicas for throughput.
+ *   • `cpu`   — embed + post-write hooks + library embed. CPU-bound
+ *               work that benefits from matching `os.cpus().length`.
+ *   • `bg`    — push, outbound, webhooks, weather snapshots, cleanup,
+ *               recipes, briefing/digest sweepers. Light, opinionated
+ *               cadence work; one replica is plenty.
+ *
+ * Sweepers, repeatable schedulers, and one-shot bootstrap tasks run
+ * on the process whose mode owns the corresponding worker — there's
+ * no point scheduling weather snapshots if the snapshot worker isn't
+ * registered. The `all` mode runs everything (current behaviour).
+ *
+ * Operationally the cleanest split (compose `replicas:` count in
+ * parentheses) is:
+ *   - worker-llm  (1)  WORKER_MODE=llm
+ *   - worker-io   (2)  WORKER_MODE=io
+ *   - worker-cpu  (1)  WORKER_MODE=cpu
+ *   - worker-bg   (1)  WORKER_MODE=bg
+ * but the actual replica counts are the operator's call.
+ */
+type WorkerMode = 'all' | 'llm' | 'io' | 'cpu' | 'bg';
+
+function parseWorkerMode(): WorkerMode {
+  const raw = (process.env.WORKER_MODE ?? 'all').toLowerCase();
+  if (raw === 'all' || raw === 'llm' || raw === 'io' || raw === 'cpu' || raw === 'bg') {
+    return raw as WorkerMode;
+  }
+  logger.warn({ raw }, `unknown WORKER_MODE; falling back to 'all'`);
+  return 'all';
+}
+
+const MODE: WorkerMode = parseWorkerMode();
+const has = (kind: WorkerMode | WorkerMode[]): boolean => {
+  if (MODE === 'all') return true;
+  return Array.isArray(kind) ? kind.includes(MODE) : kind === MODE;
+};
+
 async function bootstrap() {
   await connectMongo();
-  startGeneratePageWorker();
-  startEmbedPageWorker();
-  startImapSyncWorker();
-  startGmailSyncWorker();
-  startRssSyncWorker();
-  startWebsiteSyncWorker();
-  startSlackSyncWorker();
-  startDiscordSyncWorker();
-  startGcalSyncWorker();
-  startSummarizeSenderWorker();
-  startFetchAndParseWorker();
-  startSendOutboundWorker();
-  startDigestEmailWorker();
-  startWebhookDeliverWorker();
-  startPushNotifyWorker();
-  startEventSoonSweep();
-  startBriefingWorker();
-  startDaydreamWorker();
-  startDaydreamSweeper();
-  startLibrarySyncWorker();
-  startLibraryEmbedWorker();
-  startLibrarySweeper();
-  startTagDigestWorker();
-  startTagDigestSweeper();
-  startPostWriteHooksWorker();
-  startRecipesWorker();
-  // Initialise VAPID keys at boot (generates on first run, persists
-  // to var/vapid.json so the API can read the public half).
-  getVapidKeys();
-  startReputationDecaySweep();
-  // Repeatable hourly sweep that fires the digest mailer for every
-  // user whose configured local time matches the current hour.
-  const digestQueue = new Queue('rose.digest-email', { connection: bullConnection() });
-  await digestQueue.add(
-    'sweep',
-    {},
-    { repeat: { every: 60 * 60 * 1000 }, jobId: 'digest:sweep' },
-  );
-  // Kick off an immediate one-shot so the user doesn't wait an hour
-  // after first enabling.
-  await digestQueue.add('sweep', {}, { attempts: 1, removeOnComplete: 10 });
-  // Same hourly sweep pattern for the LLM-narrative briefing.
-  const briefingQueue = new Queue('rose.briefing', { connection: bullConnection() });
-  await briefingQueue.add(
-    'sweep',
-    {},
-    { repeat: { every: 60 * 60 * 1000 }, jobId: 'briefing:sweep' },
-  );
-  await briefingQueue.add('sweep', {}, { attempts: 1, removeOnComplete: 10 });
-  // Daily retention sweep — prunes emails / revisions / daydream
-  // notes / etc. older than the per-user retention windows.
-  startCleanupWorker();
-  await scheduleCleanupSweeper();
-  // Server-side weather-snapshot poll so the trend chart on /weather
-  // hydrates even when no user is actively browsing the home panel.
-  startWeatherSnapshotWorker();
-  await scheduleWeatherSnapshotSweeper();
-  // Reconcile per-source repeatables in case Redis lost its
-  // schedule data (volume wipe, persistence gap, etc.). Without
-  // this, a missing repeatable means the source silently stops
-  // polling forever — the only recovery today is editing the
-  // interval in the UI.
-  void reconcileSourceSchedules()
-    .then((r) =>
-      logger.info(r, 'source-schedule reconcile complete'),
-    )
-    .catch((err) =>
-      logger.warn({ err }, 'source-schedule reconcile failed'),
+  logger.info({ mode: MODE }, 'worker bootstrap');
+
+  // -----------------------------------------------------------------
+  // LLM-bound workers — generation, narrative synthesis, summarisation.
+  // -----------------------------------------------------------------
+  if (has('llm')) {
+    startGeneratePageWorker();
+    startSummarizeSenderWorker();
+    startBriefingWorker();
+    startDaydreamWorker();
+    startTagDigestWorker();
+    startDigestEmailWorker();
+    startRecipesWorker();
+  }
+
+  // -----------------------------------------------------------------
+  // I/O-bound workers — network sync, fetch, polling.
+  // -----------------------------------------------------------------
+  if (has('io')) {
+    startImapSyncWorker();
+    startGmailSyncWorker();
+    startRssSyncWorker();
+    startWebsiteSyncWorker();
+    startSlackSyncWorker();
+    startDiscordSyncWorker();
+    startGcalSyncWorker();
+    startFetchAndParseWorker();
+    startLibrarySyncWorker();
+  }
+
+  // -----------------------------------------------------------------
+  // CPU-bound workers — embedding, post-write hooks (entity / place
+  // extraction), library embedding. These are the workers that
+  // benefit most from `os.cpus().length`-scale concurrency.
+  // -----------------------------------------------------------------
+  if (has('cpu')) {
+    startEmbedPageWorker();
+    startLibraryEmbedWorker();
+    startPostWriteHooksWorker();
+  }
+
+  // -----------------------------------------------------------------
+  // Background workers — push, outbound, webhooks, weather, cleanup.
+  // Light cadence; one replica is enough.
+  // -----------------------------------------------------------------
+  if (has('bg')) {
+    startSendOutboundWorker();
+    startWebhookDeliverWorker();
+    startPushNotifyWorker();
+    startEventSoonSweep();
+    startCleanupWorker();
+    startWeatherSnapshotWorker();
+  }
+
+  // -----------------------------------------------------------------
+  // VAPID + reputation decay run alongside push, so they go on
+  // worker-bg in split mode.
+  // -----------------------------------------------------------------
+  if (has('bg')) {
+    // Initialise VAPID keys at boot (generates on first run, persists
+    // to var/vapid.json so the API can read the public half).
+    getVapidKeys();
+    startReputationDecaySweep();
+  }
+
+  // -----------------------------------------------------------------
+  // Repeatable schedulers + one-shot kicks. We co-locate each with
+  // the worker that handles it: digest sweep → llm, briefing sweep
+  // → llm, cleanup → bg, weather → bg, library sweeper → io,
+  // tag-digest sweeper → llm, daydream sweeper → llm.
+  // -----------------------------------------------------------------
+  if (has('llm')) {
+    const digestQueue = new Queue('rose.digest-email', { connection: bullConnection() });
+    await digestQueue.add(
+      'sweep',
+      {},
+      { repeat: { every: 60 * 60 * 1000 }, jobId: 'digest:sweep' },
     );
-  logger.info('rose worker started');
+    await digestQueue.add('sweep', {}, { attempts: 1, removeOnComplete: 10 });
+
+    const briefingQueue = new Queue('rose.briefing', { connection: bullConnection() });
+    await briefingQueue.add(
+      'sweep',
+      {},
+      { repeat: { every: 60 * 60 * 1000 }, jobId: 'briefing:sweep' },
+    );
+    await briefingQueue.add('sweep', {}, { attempts: 1, removeOnComplete: 10 });
+
+    startTagDigestSweeper();
+    startDaydreamSweeper();
+  }
+
+  if (has('io')) {
+    startLibrarySweeper();
+  }
+
+  if (has('bg')) {
+    await scheduleCleanupSweeper();
+    await scheduleWeatherSnapshotSweeper();
+  }
+
+  // -----------------------------------------------------------------
+  // Source-schedule reconciler. Re-arms missing per-source repeatables
+  // (IMAP / Gmail / RSS / website / Slack / Discord / Gcal). The
+  // queues for those live with worker-io, so the reconciler runs
+  // there. In `all` mode it runs once as before.
+  // -----------------------------------------------------------------
+  if (has('io')) {
+    void reconcileSourceSchedules()
+      .then((r) =>
+        logger.info(r, 'source-schedule reconcile complete'),
+      )
+      .catch((err) =>
+        logger.warn({ err }, 'source-schedule reconcile failed'),
+      );
+  }
+
+  logger.info({ mode: MODE }, 'rose worker started');
 }
 
 bootstrap().catch((err) => {
