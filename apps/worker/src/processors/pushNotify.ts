@@ -9,7 +9,7 @@ import {
 } from '@rose/db';
 import { senderDomainTag } from '@rose/email-parser';
 import { getVapidKeys, webpush } from '../lib/vapid.js';
-import { redis } from '../lib/redis.js';
+import { redis, bullConnection } from '../lib/redis.js';
 import { logger } from '../lib/logger.js';
 
 const QUEUE = 'rose.push-notify';
@@ -96,7 +96,7 @@ export async function evaluatePageNotifications(
     if (tag) senderBrandKeys.add(tag.toLowerCase());
   }
 
-  const queue = new Queue(QUEUE, { connection: redis });
+  const queue = new Queue(QUEUE, { connection: bullConnection() });
   for (const r of rules) {
     let matches = false;
     const m = (r.match ?? {}) as { tag?: string; brandKey?: string };
@@ -158,7 +158,7 @@ export async function eventSoonSweep(): Promise<void> {
       .limit(5)
       .lean();
     for (const e of events) {
-      const queue = new Queue(QUEUE, { connection: redis });
+      const queue = new Queue(QUEUE, { connection: bullConnection() });
       await queue.add(
         'event-soon',
         {
@@ -196,7 +196,7 @@ export function startPushNotifyWorker() {
         logger.info({ userId: String(userId), ...r }, 'push: delivered');
       }
     },
-    { connection: redis, concurrency: 4 },
+    { connection: bullConnection(), concurrency: 4 },
   );
   worker.on('failed', (job, err) =>
     logger.warn({ jobId: job?.id, err: err.message }, 'push-notify failed'),

@@ -1,7 +1,7 @@
 import { Worker, type Job } from 'bullmq';
 import { Types } from 'mongoose';
 import { Page, type PageDoc } from '@rose/db';
-import { redis } from '../lib/redis.js';
+import { redis, bullConnection } from '../lib/redis.js';
 import { logger } from '../lib/logger.js';
 import { runPostWriteEntityExtraction } from '../services/extractEntities.js';
 import { hashContent } from '../services/extractPlaces.js';
@@ -55,7 +55,7 @@ export function startPostWriteHooksWorker() {
       }
     },
     {
-      connection: redis,
+      connection: bullConnection(),
       concurrency: 2,
       lockDuration: 2 * 60_000,
     },

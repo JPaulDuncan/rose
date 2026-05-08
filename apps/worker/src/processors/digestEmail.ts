@@ -5,12 +5,12 @@ import {
   Source,
   OutboundMessage,
 } from '@rose/db';
-import { redis } from '../lib/redis.js';
+import { redis, bullConnection } from '../lib/redis.js';
 import { logger } from '../lib/logger.js';
 import { renderDigestEmail } from '../services/digestMail.js';
 
 const QUEUE = 'rose.digest-email';
-const sendQueue = new Queue('rose.send-outbound', { connection: redis });
+const sendQueue = new Queue('rose.send-outbound', { connection: bullConnection() });
 
 type DigestJobData = { userId?: string; force?: boolean };
 
@@ -148,7 +148,16 @@ export function startDigestEmailWorker() {
       if (sent > 0) logger.info({ swept: candidates.length, sent }, 'digest-email: sweep');
       return { swept: candidates.length, sent };
     },
-    { connection: redis, concurrency: 1, lockDuration: 10 * 60_000, stalledInterval: 60_000, maxStalledCount: 1 },
+    {
+      connection: bullConnection(),
+      concurrency: 1,
+      lockDuration: 10 * 60_000,
+      stalledInterval: 60_000,
+      // Tolerate a single transient stall before failing — LLM-bound
+      // jobs have a long tail and a strict count of 1 retires
+      // recoverable runs unnecessarily.
+      maxStalledCount: 2,
+    },
   );
   worker.on('failed', (job, err) =>
     logger.error({ jobId: job?.id, err }, 'digest-email failed'),

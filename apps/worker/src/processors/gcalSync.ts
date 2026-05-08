@@ -4,7 +4,7 @@ import { google } from 'googleapis';
 import { Source, CalendarEvent } from '@rose/db';
 import type { GcalConfig } from '@rose/shared';
 import { decryptJson, encryptJson } from '../lib/crypto.js';
-import { redis } from '../lib/redis.js';
+import { redis, bullConnection } from '../lib/redis.js';
 import { logger } from '../lib/logger.js';
 import { env } from '../lib/env.js';
 
@@ -183,7 +183,7 @@ export function startGcalSyncWorker() {
         'gcal-sync: done',
       );
     },
-    { connection: redis, concurrency: 1 },
+    { connection: bullConnection(), concurrency: 1 },
   );
   worker.on('failed', (job, err) =>
     logger.error({ jobId: job?.id, err: err.message }, 'gcal-sync failed'),

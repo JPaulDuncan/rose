@@ -9,7 +9,7 @@ import {
   type OutboundMessageDoc,
 } from '@rose/db';
 import { decryptJson } from '../lib/crypto.js';
-import { redis } from '../lib/redis.js';
+import { redis, bullConnection } from '../lib/redis.js';
 import { logger } from '../lib/logger.js';
 import { env } from '../lib/env.js';
 import type { ImapConfig } from '@rose/shared';
@@ -179,7 +179,7 @@ export function startSendOutboundWorker() {
         throw err;
       }
     },
-    { connection: redis, concurrency: 2 },
+    { connection: bullConnection(), concurrency: 2 },
   );
   worker.on('failed', (job, err) =>
     logger.error({ jobId: job?.id, err }, 'send-outbound failed'),

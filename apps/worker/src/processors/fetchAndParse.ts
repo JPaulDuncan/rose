@@ -16,11 +16,11 @@ import { senderDomainTag } from '@rose/email-parser';
 import { detectPromoCodesForEmail } from '@rose/promo-codes';
 import { detectShipmentsForEmail } from '@rose/shipments';
 import { safeFetch, UnsafeUrlError } from '../lib/safeFetch.js';
-import { redis } from '../lib/redis.js';
+import { redis, bullConnection } from '../lib/redis.js';
 import { logger } from '../lib/logger.js';
 
 const QUEUE = 'rose.fetch-and-parse';
-const generateQueue = new Queue('rose.generate-page', { connection: redis });
+const generateQueue = new Queue('rose.generate-page', { connection: bullConnection() });
 
 type FetchJobData =
   | {
@@ -358,7 +358,7 @@ export function startFetchAndParseWorker() {
         throw err;
       }
     },
-    { connection: redis, concurrency: 4 },
+    { connection: bullConnection(), concurrency: 4 },
   );
   worker.on('failed', (job, err) =>
     logger.error({ jobId: job?.id, err }, 'fetch-and-parse failed'),

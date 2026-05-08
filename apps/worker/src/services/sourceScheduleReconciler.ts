@@ -1,6 +1,6 @@
 import { Queue } from 'bullmq';
 import { Source } from '@rose/db';
-import { redis } from '../lib/redis.js';
+import { bullConnection } from '../lib/redis.js';
 import { logger } from '../lib/logger.js';
 
 /**
@@ -52,10 +52,48 @@ export async function reconcileSourceSchedules(): Promise<{
   function queueFor(type: string): Queue {
     let q = queues.get(type);
     if (!q) {
-      q = new Queue(QUEUE_BY_TYPE[type]!, { connection: redis });
+      q = new Queue(QUEUE_BY_TYPE[type]!, { connection: bullConnection() });
       queues.set(type, q);
     }
     return q;
+  }
+
+  /**
+   * Page through every repeatable for the given queue and build a
+   * lookup of repeatKey → repeatable. Without paging, the previous
+   * `getRepeatableJobs(0, 5000)` call silently truncated above 5000
+   * entries, leaving sources past the cap silently un-armed. Also a
+   * meaningful CPU win: we used to call this once per source, now
+   * once per type.
+   */
+  const repeatablesByType = new Map<
+    string,
+    Map<string, { id: string | null; key: string; every: number | null }>
+  >();
+  async function loadRepeatables(type: string): Promise<
+    Map<string, { id: string | null; key: string; every: number | null }>
+  > {
+    const cached = repeatablesByType.get(type);
+    if (cached) return cached;
+    const queue = queueFor(type);
+    const PAGE = 1000;
+    const map = new Map<string, { id: string | null; key: string; every: number | null }>();
+    for (let start = 0; ; start += PAGE) {
+      const batch = await queue.getRepeatableJobs(start, start + PAGE - 1, true);
+      for (const r of batch) {
+        if (!r.id) continue;
+        const every =
+          typeof r.every === 'number'
+            ? r.every
+            : r.every
+              ? Number(r.every)
+              : null;
+        map.set(r.id, { id: r.id, key: r.key, every });
+      }
+      if (batch.length < PAGE) break;
+    }
+    repeatablesByType.set(type, map);
+    return map;
   }
 
   let reArmed = 0;
@@ -68,31 +106,27 @@ export async function reconcileSourceSchedules(): Promise<{
       const repeatKey = `${type}:${String(s._id)}`;
 
       const queue = queueFor(type);
-      // BullMQ stores repeatables in a sorted set per queue. We can't
-      // query by our friendly jobId directly; getRepeatableJobs()
-      // returns the live list and we filter by `id` (which mirrors
-      // the jobId we passed at add-time).
-      const existing = await queue.getRepeatableJobs(0, 5000, true);
-      const match = existing.find((r) => r.id === repeatKey);
-      // `every` comes back from BullMQ as a string-encoded number on
-      // recent versions; normalise to a number before comparing.
-      const matchEvery = match
-        ? typeof match.every === 'number'
-          ? match.every
-          : match.every
-            ? Number(match.every)
-            : null
-        : null;
-      if (match && matchEvery === every) {
+      const existing = await loadRepeatables(type);
+      const match = existing.get(repeatKey);
+      if (match && match.every === every) {
         alreadyArmed += 1;
         continue;
       }
-      // Drop whatever stale entry exists (mismatched interval, or
-      // none — both are no-ops from removeRepeatableByKey's perspective).
-      try {
-        await queue.removeRepeatableByKey(repeatKey);
-      } catch (err) {
-        logger.debug({ err, repeatKey }, 'reconcile: removeRepeatableByKey failed (continuing)');
+      // Only call removeRepeatableByKey when a stale match exists —
+      // and pass BullMQ's internal `key`, not the friendly jobId. The
+      // previous code passed `repeatKey` (the jobId) which is the
+      // wrong identifier; removeRepeatableByKey would silently fail
+      // and the duplicate add below would land alongside the stale
+      // schedule, doubling up the polling cadence.
+      if (match) {
+        try {
+          await queue.removeRepeatableByKey(match.key);
+        } catch (err) {
+          logger.debug(
+            { err, repeatKey, key: match.key },
+            'reconcile: removeRepeatableByKey failed (continuing)',
+          );
+        }
       }
       try {
         await queue.add(

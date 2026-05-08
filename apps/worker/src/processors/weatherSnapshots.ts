@@ -3,7 +3,7 @@ import { Types } from 'mongoose';
 import { z } from 'zod';
 import { User, WeatherSnapshot } from '@rose/db';
 import { webFetchJson } from '@rose/llm';
-import { redis } from '../lib/redis.js';
+import { redis, bullConnection } from '../lib/redis.js';
 import { logger } from '../lib/logger.js';
 import { webCache } from '../lib/webFetchCache.js';
 
@@ -177,7 +177,7 @@ export function startWeatherSnapshotWorker(): void {
       const r = await runSweep();
       logger.info(r, 'weather-snapshot: sweep complete');
     },
-    { connection: redis, concurrency: 1 },
+    { connection: bullConnection(), concurrency: 1 },
   );
   worker.on('failed', (job, err) =>
     logger.error({ err, jobId: job?.id }, 'weather-snapshot: sweep failed'),
@@ -187,7 +187,7 @@ export function startWeatherSnapshotWorker(): void {
 /** Schedule the 30-minute repeatable + an immediate one-shot at
  *  boot so trend data starts accruing without waiting half an hour. */
 export async function scheduleWeatherSnapshotSweeper(): Promise<void> {
-  const queue = new Queue(QUEUE, { connection: redis });
+  const queue = new Queue(QUEUE, { connection: bullConnection() });
   await queue.add(
     'sweep',
     {},

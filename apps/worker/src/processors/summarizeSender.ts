@@ -2,7 +2,7 @@ import { Worker, type Job } from 'bullmq';
 import { Types } from 'mongoose';
 import { Sender, SenderBrand, Email, Instruction } from '@rose/db';
 import { renderTemplate, SYSTEM_PROMPT_BASE } from '@rose/llm';
-import { redis } from '../lib/redis.js';
+import { redis, bullConnection } from '../lib/redis.js';
 import { logger } from '../lib/logger.js';
 import { resolveProviderForUser } from '../lib/providers.js';
 
@@ -125,7 +125,13 @@ export function startSummarizeSenderWorker() {
       }
       logger.info({ senderId: String(sender._id) }, 'summary written');
     },
-    { connection: redis, concurrency: 2, lockDuration: 5 * 60_000, stalledInterval: 60_000, maxStalledCount: 1 },
+    {
+      connection: bullConnection(),
+      concurrency: 2,
+      lockDuration: 10 * 60_000,
+      stalledInterval: 60_000,
+      maxStalledCount: 2,
+    },
   );
   worker.on('failed', (job, err) =>
     logger.error({ jobId: job?.id, err }, 'summarize-sender failed'),

@@ -6,7 +6,7 @@ import { priorityForDate, type DiscordConfig } from '@rose/shared';
 import { detectPromoCodesForEmail } from '@rose/promo-codes';
 import { detectShipmentsForEmail } from '@rose/shipments';
 import { decryptJson, encryptJson } from '../lib/crypto.js';
-import { redis } from '../lib/redis.js';
+import { redis, bullConnection } from '../lib/redis.js';
 import { logger } from '../lib/logger.js';
 import {
   fetchAfter,
@@ -15,7 +15,7 @@ import {
 } from '../lib/discordClient.js';
 
 const QUEUE = 'rose.discord-sync';
-const generateQueue = new Queue('rose.generate-page', { connection: redis });
+const generateQueue = new Queue('rose.generate-page', { connection: bullConnection() });
 
 type DiscordJobData = { sourceId: string; userId: string };
 
@@ -184,7 +184,7 @@ export function startDiscordSyncWorker() {
         'discord-sync: done',
       );
     },
-    { connection: redis, concurrency: 2 },
+    { connection: bullConnection(), concurrency: 2 },
   );
   worker.on('failed', (job, err) =>
     logger.error({ jobId: job?.id, err: err.message }, 'discord-sync failed'),

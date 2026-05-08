@@ -21,7 +21,7 @@ import {
 import { decryptJson } from '../lib/crypto.js';
 import { env } from '../lib/env.js';
 import { DaydreamSynthesisOutput } from '@rose/shared';
-import { redis } from '../lib/redis.js';
+import { redis, bullConnection } from '../lib/redis.js';
 import { logger } from '../lib/logger.js';
 import { resolveProviderForUser } from '../lib/providers.js';
 import { webCache } from '../lib/webFetchCache.js';
@@ -674,11 +674,14 @@ export function startDaydreamWorker(): void {
       return { skipped: 'unknown-kind' };
     },
     {
-      connection: redis,
+      connection: bullConnection(),
       concurrency: 1,
-      lockDuration: 5 * 60_000,
+      // Daydream researches a topic via federated search + LLM
+      // synthesis; runs occasionally exceed 5 min when SearXNG is
+      // slow. Bump the lock to keep BullMQ from re-firing the job.
+      lockDuration: 10 * 60_000,
       stalledInterval: 60_000,
-      maxStalledCount: 1,
+      maxStalledCount: 2,
     },
   );
 

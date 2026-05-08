@@ -10,7 +10,7 @@ import {
 } from '@rose/db';
 import { renderTemplate, SYSTEM_PROMPT_BASE } from '@rose/llm';
 import { slugify } from '@rose/shared';
-import { redis } from '../lib/redis.js';
+import { redis, bullConnection } from '../lib/redis.js';
 import { logger } from '../lib/logger.js';
 import { resolveProviderForUser, applyParamOverrides } from '../lib/providers.js';
 import { runPostWriteEntityExtraction } from '../services/extractEntities.js';
@@ -343,7 +343,13 @@ export function startBriefingWorker() {
       }
       return { swept: candidates.length, generated };
     },
-    { connection: redis, concurrency: 1, lockDuration: 10 * 60_000, stalledInterval: 60_000, maxStalledCount: 1 },
+    {
+      connection: bullConnection(),
+      concurrency: 1,
+      lockDuration: 10 * 60_000,
+      stalledInterval: 60_000,
+      maxStalledCount: 2,
+    },
   );
   worker.on('failed', (job, err) =>
     logger.error({ jobId: job?.id, err }, 'briefing failed'),

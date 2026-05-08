@@ -12,11 +12,11 @@ import { senderDomainTag } from '@rose/email-parser';
 import { decryptJson } from '../lib/crypto.js';
 import { emitRecipeEvent } from '../lib/recipeEmit.js';
 import { assertSafeHttpUrl, UnsafeUrlError } from '../lib/safeFetch.js';
-import { redis } from '../lib/redis.js';
+import { redis, bullConnection } from '../lib/redis.js';
 import { logger } from '../lib/logger.js';
 
 const QUEUE = 'rose.website-sync';
-const generateQueue = new Queue('rose.generate-page', { connection: redis });
+const generateQueue = new Queue('rose.generate-page', { connection: bullConnection() });
 
 type WebsiteJobData = { sourceId: string; userId: string };
 
@@ -329,7 +329,7 @@ export function startWebsiteSyncWorker() {
         'website-sync: ingested updated snapshot',
       );
     },
-    { connection: redis, concurrency: 4 },
+    { connection: bullConnection(), concurrency: 4 },
   );
   worker.on('failed', (job, err) =>
     logger.error({ jobId: job?.id, err }, 'website-sync failed'),

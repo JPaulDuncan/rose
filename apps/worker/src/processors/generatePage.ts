@@ -28,7 +28,7 @@ import {
   compileSenderBlocklist,
   isSenderWhitelisted,
 } from '@rose/email-parser';
-import { redis } from '../lib/redis.js';
+import { redis, bullConnection } from '../lib/redis.js';
 import { logger } from '../lib/logger.js';
 import { resolveProviderForUser, applyParamOverrides } from '../lib/providers.js';
 import {
@@ -60,7 +60,7 @@ import {
 } from '../services/eventExtraction.js';
 
 const QUEUE = 'rose.generate-page';
-const embedQueue = new Queue('rose.embed-page', { connection: redis });
+const embedQueue = new Queue('rose.embed-page', { connection: bullConnection() });
 
 type GenerateJobData = { emailId: string; userId: string };
 
@@ -393,7 +393,7 @@ async function reprioritizeGeneratePageBacklog(): Promise<{
   scanned: number;
   rewritten: number;
 }> {
-  const queue = new Queue<GenerateJobData>(QUEUE, { connection: redis });
+  const queue = new Queue<GenerateJobData>(QUEUE, { connection: bullConnection() });
   try {
     const jobs = await queue.getJobs(['waiting', 'delayed', 'paused'], 0, 5000);
     let rewritten = 0;
@@ -1497,7 +1497,18 @@ export function startGeneratePageWorker() {
       );
       return { pageId: pageId.toString(), slug };
     },
-    { connection: redis, concurrency: 2, lockDuration: 5 * 60_000, stalledInterval: 60_000, maxStalledCount: 1 },
+    {
+      connection: bullConnection(),
+      concurrency: 2,
+      // LLM streaming for long topic pages can exceed 5 min; bump
+      // the lock so BullMQ doesn't declare the job stalled mid-stream
+      // and double-fire it.
+      lockDuration: 10 * 60_000,
+      stalledInterval: 60_000,
+      // First stall is recoverable (transient Ollama hiccup); a
+      // second consecutive stall is what we actually want to fail.
+      maxStalledCount: 2,
+    },
   );
 
   worker.on('failed', (job, err) =>

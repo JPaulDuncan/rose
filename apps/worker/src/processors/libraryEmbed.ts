@@ -1,7 +1,7 @@
 import { Worker, type Job } from 'bullmq';
 import { Types } from 'mongoose';
 import { LibraryDocument } from '@rose/db';
-import { redis } from '../lib/redis.js';
+import { redis, bullConnection } from '../lib/redis.js';
 import { logger } from '../lib/logger.js';
 import { resolveProviderForUser } from '../lib/providers.js';
 
@@ -51,7 +51,7 @@ export function startLibraryEmbedWorker(): void {
       return { dims: vec.length };
     },
     {
-      connection: redis,
+      connection: bullConnection(),
       concurrency: 4,
       lockDuration: 2 * 60_000,
       stalledInterval: 60_000,

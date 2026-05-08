@@ -17,7 +17,18 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
-    command: ["redis-server", "--appendonly", "yes"]
+    # AOF + everysec is the standard durability/perf compromise for
+    # BullMQ. Without AOF a Redis crash loses any scheduled-job state
+    # since the last RDB snapshot (default 5 min) — meaning sources
+    # silently stop polling and pending jobs vanish. `everysec`
+    # caps the loss at 1 second of writes for a small write-throughput
+    # cost.
+    command:
+      - "redis-server"
+      - "--appendonly"
+      - "yes"
+      - "--appendfsync"
+      - "everysec"
     volumes:
       - redis_data:/data
     ports:
@@ -42,11 +53,21 @@ services:
       # an optional vision model) don't have to evict each other on every
       # request. Tune down if VRAM is tight.
       OLLAMA_MAX_LOADED_MODELS: "3"
-      # Allow concurrent requests to the same model so embedding bursts
-      # don't serialise behind one another.
-      OLLAMA_NUM_PARALLEL: "2"
-      # Hold a model in memory for 30 minutes of idle before unloading.
-      OLLAMA_KEEP_ALIVE: "30m"
+      # Allow up to 4 concurrent requests against the same model. Once
+      # the worker process is split (perf-roadmap Phase B) multiple
+      # worker-llm replicas can saturate this; until then it lets a
+      # batched embed call interleave with a streaming generation.
+      OLLAMA_NUM_PARALLEL: "4"
+      # Hold a model in memory for 24h of idle before unloading. The
+      # default of 5 min meant that an idle Ollama would unload after
+      # lunch, and the next call after lunch ate a 30s reload. 24h
+      # leaves the models hot for any reasonable usage pattern; an
+      # operator who wants memory back can SIGHUP the container.
+      OLLAMA_KEEP_ALIVE: "24h"
+      # Flash attention is a meaningful throughput win on long contexts
+      # (synthesis prompts, multi-thread email pages). Cheap to enable;
+      # falls back automatically on hardware that doesn't support it.
+      OLLAMA_FLASH_ATTENTION: "1"
     # GPU passthrough. The `gpus: all` shortcut is honoured by Docker
     # Compose v2.30+ and Docker Desktop on Windows/macOS. The legacy
     # `deploy.resources.reservations.devices` block is from the Swarm
@@ -107,6 +128,17 @@ services:
       dockerfile: infra/docker/worker.Dockerfile
     restart: unless-stopped
     env_file: .env
+    environment:
+      # V8 tuning for the data-pipeline workload. The default heap is
+      # tuned for a request/response web server; we churn through
+      # large LLM prompts and jsdom DOMs and want the GC to be less
+      # aggressive about minor collections.
+      #   --max-old-space-size: cap heap at 2 GB so a runaway leak
+      #       OOM-kills the container instead of paging out the host.
+      #   --max-semi-space-size: bump young-gen to 64 MB so transient
+      #       jsdom / parser allocations clear in one cycle instead
+      #       of being promoted to old-gen and triggering major GCs.
+      NODE_OPTIONS: "--max-old-space-size=2048 --max-semi-space-size=64"
     depends_on:
       api:
         condition: service_started

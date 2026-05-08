@@ -1,6 +1,6 @@
 import { Worker, Queue, type Job } from 'bullmq';
 import { User, runRetentionCleanup } from '@rose/db';
-import { redis } from '../lib/redis.js';
+import { redis, bullConnection } from '../lib/redis.js';
 import { logger } from '../lib/logger.js';
 
 const QUEUE = 'rose.cleanup';
@@ -37,7 +37,7 @@ export function startCleanupWorker() {
       const r = await runCleanupSweep();
       logger.info({ users: r.users }, 'cleanup sweep: done');
     },
-    { connection: redis, concurrency: 1 },
+    { connection: bullConnection(), concurrency: 1 },
   );
   worker.on('failed', (job, err) =>
     logger.error({ err, jobId: job?.id }, 'cleanup sweep failed'),
@@ -48,7 +48,7 @@ export function startCleanupWorker() {
 /** Schedule a daily cleanup sweep + an immediate one at boot so
  *  newly-tweaked retention settings take effect without a 24h wait. */
 export async function scheduleCleanupSweeper(): Promise<void> {
-  const queue = new Queue(QUEUE, { connection: redis });
+  const queue = new Queue(QUEUE, { connection: bullConnection() });
   await queue.add(
     'sweep',
     {},

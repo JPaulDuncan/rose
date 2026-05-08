@@ -8,14 +8,14 @@ import {
   User,
   type LibrarySourceDoc,
 } from '@rose/db';
-import { redis } from '../lib/redis.js';
+import { redis, bullConnection } from '../lib/redis.js';
 import { logger } from '../lib/logger.js';
 import { webFetch } from '@rose/llm';
 
 const QUEUE = 'rose.library-sync';
 const SWEEP_INTERVAL_MS = 5 * 60_000;
 
-const embedQueue = new Queue('rose.library-embed', { connection: redis });
+const embedQueue = new Queue('rose.library-embed', { connection: bullConnection() });
 
 const parser = new Parser({
   headers: { 'User-Agent': 'Rose/1.0 (+https://rose.local; library)' },
@@ -347,11 +347,11 @@ export function startLibrarySyncWorker(): void {
       }
     },
     {
-      connection: redis,
+      connection: bullConnection(),
       concurrency: 2,
-      lockDuration: 5 * 60_000,
+      lockDuration: 10 * 60_000,
       stalledInterval: 60_000,
-      maxStalledCount: 1,
+      maxStalledCount: 2,
     },
   );
   worker.on('failed', (job, err) =>
@@ -368,7 +368,7 @@ export function startLibrarySyncWorker(): void {
  */
 export function startLibrarySweeper(): void {
   let inFlight = false;
-  const queue = new Queue<LibrarySyncJobData>(QUEUE, { connection: redis });
+  const queue = new Queue<LibrarySyncJobData>(QUEUE, { connection: bullConnection() });
   const tick = async () => {
     if (inFlight) return;
     inFlight = true;

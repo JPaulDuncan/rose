@@ -1,6 +1,6 @@
 import { Queue } from 'bullmq';
 import { connectMongo } from './lib/db.js';
-import { redis } from './lib/redis.js';
+import { redis, bullConnection } from './lib/redis.js';
 import { logger } from './lib/logger.js';
 import { startGeneratePageWorker } from './processors/generatePage.js';
 import { startEmbedPageWorker } from './processors/embedPage.js';
@@ -74,7 +74,7 @@ async function bootstrap() {
   startReputationDecaySweep();
   // Repeatable hourly sweep that fires the digest mailer for every
   // user whose configured local time matches the current hour.
-  const digestQueue = new Queue('rose.digest-email', { connection: redis });
+  const digestQueue = new Queue('rose.digest-email', { connection: bullConnection() });
   await digestQueue.add(
     'sweep',
     {},
@@ -84,7 +84,7 @@ async function bootstrap() {
   // after first enabling.
   await digestQueue.add('sweep', {}, { attempts: 1, removeOnComplete: 10 });
   // Same hourly sweep pattern for the LLM-narrative briefing.
-  const briefingQueue = new Queue('rose.briefing', { connection: redis });
+  const briefingQueue = new Queue('rose.briefing', { connection: bullConnection() });
   await briefingQueue.add(
     'sweep',
     {},

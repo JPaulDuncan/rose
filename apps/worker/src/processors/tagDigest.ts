@@ -3,7 +3,7 @@ import { Types } from 'mongoose';
 import { z } from 'zod';
 import { Page, TagDigest, Instruction, User } from '@rose/db';
 import { renderTemplate, SYSTEM_PROMPT_BASE } from '@rose/llm';
-import { redis } from '../lib/redis.js';
+import { redis, bullConnection } from '../lib/redis.js';
 import { logger } from '../lib/logger.js';
 import { resolveProviderForUser } from '../lib/providers.js';
 
@@ -247,11 +247,11 @@ export function startTagDigestWorker(): void {
       return { ok: true, headline: parsed.headline };
     },
     {
-      connection: redis,
+      connection: bullConnection(),
       concurrency: 1,
-      lockDuration: 5 * 60_000,
+      lockDuration: 10 * 60_000,
       stalledInterval: 60_000,
-      maxStalledCount: 1,
+      maxStalledCount: 2,
     },
   );
   worker.on('failed', (job, err) =>
@@ -269,7 +269,7 @@ export function startTagDigestWorker(): void {
  * tag) by checking whether a digest already exists for today.
  */
 export function startTagDigestSweeper(): void {
-  const queue = new Queue<TagDigestJobData>(QUEUE, { connection: redis });
+  const queue = new Queue<TagDigestJobData>(QUEUE, { connection: bullConnection() });
   const SWEEP_INTERVAL_MS = 60 * 60_000; // hourly
   let inFlight = false;
   const tick = async () => {

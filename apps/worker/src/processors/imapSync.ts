@@ -11,7 +11,7 @@ import {
   isSenderWhitelisted,
 } from '@rose/email-parser';
 import { decryptJson } from '../lib/crypto.js';
-import { redis } from '../lib/redis.js';
+import { redis, bullConnection } from '../lib/redis.js';
 import { logger } from '../lib/logger.js';
 import { emitRecipeEvent } from '../lib/recipeEmit.js';
 import { detectShipmentsForEmail } from '@rose/shipments';
@@ -19,7 +19,7 @@ import { detectPromoCodesForEmail } from '@rose/promo-codes';
 import { priorityForDate, type ImapConfig } from '@rose/shared';
 
 const QUEUE = 'rose.imap-sync';
-const generateQueue = new Queue('rose.generate-page', { connection: redis });
+const generateQueue = new Queue('rose.generate-page', { connection: bullConnection() });
 
 type ImapJobData = { sourceId: string; userId: string };
 
@@ -224,7 +224,7 @@ export function startImapSyncWorker() {
         await client.logout().catch(() => null);
       }
     },
-    { connection: redis, concurrency: 2 },
+    { connection: bullConnection(), concurrency: 2 },
   );
   worker.on('failed', (job, err) => logger.error({ jobId: job?.id, err }, 'imap-sync failed'));
   return worker;

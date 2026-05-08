@@ -10,7 +10,7 @@ import {
   isSenderWhitelisted,
 } from '@rose/email-parser';
 import { decryptJson, encryptJson } from '../lib/crypto.js';
-import { redis } from '../lib/redis.js';
+import { redis, bullConnection } from '../lib/redis.js';
 import { env } from '../lib/env.js';
 import { logger } from '../lib/logger.js';
 import { emitRecipeEvent } from '../lib/recipeEmit.js';
@@ -19,7 +19,7 @@ import { detectPromoCodesForEmail } from '@rose/promo-codes';
 import { priorityForDate } from '@rose/shared';
 
 const QUEUE = 'rose.gmail-sync';
-const generateQueue = new Queue('rose.generate-page', { connection: redis });
+const generateQueue = new Queue('rose.generate-page', { connection: bullConnection() });
 
 type GmailJobData = { sourceId: string; userId: string };
 
@@ -162,7 +162,7 @@ export function startGmailSyncWorker() {
       source.lastError = null;
       await source.save();
     },
-    { connection: redis, concurrency: 1 },
+    { connection: bullConnection(), concurrency: 1 },
   );
   worker.on('failed', (job, err) => logger.error({ jobId: job?.id, err }, 'gmail-sync failed'));
   return worker;

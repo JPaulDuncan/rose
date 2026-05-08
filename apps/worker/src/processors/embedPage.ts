@@ -1,6 +1,6 @@
 import { Worker, type Job } from 'bullmq';
 import { Page } from '@rose/db';
-import { redis } from '../lib/redis.js';
+import { redis, bullConnection } from '../lib/redis.js';
 import { logger } from '../lib/logger.js';
 import { resolveProviderForUser } from '../lib/providers.js';
 
@@ -26,7 +26,7 @@ export function startEmbedPageWorker() {
       page.embeddingModel = `${provider.id}:${model}`;
       await page.save();
     },
-    { connection: redis, concurrency: 4 },
+    { connection: bullConnection(), concurrency: 4 },
   );
   worker.on('failed', (job, err) => logger.error({ jobId: job?.id, err }, 'embed-page failed'));
   return worker;

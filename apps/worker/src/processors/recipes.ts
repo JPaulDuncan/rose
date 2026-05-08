@@ -22,7 +22,7 @@ import {
   conditionMatches,
 } from '@rose/shared';
 import { assertSafeHttpUrl, type DaydreamSnippet } from '@rose/llm';
-import { redis } from '../lib/redis.js';
+import { redis, bullConnection } from '../lib/redis.js';
 import { logger } from '../lib/logger.js';
 import { pushToUser } from './pushNotify.js';
 import { deleteOnSource as deleteEmailOnSource } from '../lib/sourceMailDelete.js';
@@ -353,8 +353,8 @@ the snippets below.
 SNIPPETS:
 {{snippets}}`;
 
-const embedPageQueue = new Queue('rose.embed-page', { connection: redis });
-const postWriteHooksQueue = new Queue('rose.post-write-hooks', { connection: redis });
+const embedPageQueue = new Queue('rose.embed-page', { connection: bullConnection() });
+const postWriteHooksQueue = new Queue('rose.post-write-hooks', { connection: bullConnection() });
 
 /**
  * Run a Daydream-powered briefing on a topic and persist it as a Page.
@@ -928,7 +928,7 @@ export function startRecipesWorker() {
     async (job: Job<RecipeEvent>) => {
       await processEvent(job.data);
     },
-    { connection: redis, concurrency: 4 },
+    { connection: bullConnection(), concurrency: 4 },
   );
   worker.on('failed', (job, err) =>
     logger.error({ jobId: job?.id, err }, 'recipes dispatch failed'),

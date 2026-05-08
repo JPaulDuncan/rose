@@ -3,7 +3,7 @@ import { createHmac, randomUUID } from 'node:crypto';
 import { Types } from 'mongoose';
 import { WebhookSubscription } from '@rose/db';
 import { decryptJson } from '../lib/crypto.js';
-import { redis } from '../lib/redis.js';
+import { redis, bullConnection } from '../lib/redis.js';
 import { logger } from '../lib/logger.js';
 
 const QUEUE = 'rose.webhook-deliver';
@@ -30,7 +30,7 @@ export async function dispatchWebhookEvent(
     .lean();
   if (!subs.length) return;
   const queue = (await import('bullmq')).Queue;
-  const q = new queue(QUEUE, { connection: redis });
+  const q = new queue(QUEUE, { connection: bullConnection() });
   for (const s of subs) {
     await q.add(
       event,
@@ -97,7 +97,7 @@ export function startWebhookDeliverWorker() {
         clearTimeout(timer);
       }
     },
-    { connection: redis, concurrency: 4 },
+    { connection: bullConnection(), concurrency: 4 },
   );
   worker.on('failed', (job, err) =>
     logger.warn({ jobId: job?.id, err: err.message }, 'webhook-deliver failed (will retry)'),
