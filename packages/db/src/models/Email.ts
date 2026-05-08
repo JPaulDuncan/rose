@@ -173,6 +173,17 @@ const emailSchema = new Schema(
 
 emailSchema.index({ userId: 1, messageId: 1 }, { unique: true, sparse: true });
 emailSchema.index({ userId: 1, rawHash: 1 }, { unique: true });
+// Hot path: spam-trust + recipe ingest both query by `from.address`
+// to find all emails from a sender. Without this it's a collscan
+// over the user's full mailbox — expensive on heavy users (10k+
+// emails) and on every brand-trust action.
+emailSchema.index({ userId: 1, 'from.address': 1 });
+// Date-bounded queries (briefing, tag digest, retention sweeps)
+// scan by recency. Compound (userId, date) so the sort is index-
+// served and we can range-scan a single user's recent window.
+emailSchema.index({ userId: 1, date: -1 });
+// Thread membership scans during page assignment + reply drafting.
+emailSchema.index({ userId: 1, threadKey: 1 });
 
 export type EmailDoc = HydratedDocument<InferSchemaType<typeof emailSchema>> & {
   _id: Types.ObjectId;

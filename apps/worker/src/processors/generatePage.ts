@@ -68,9 +68,13 @@ async function getInstructionTemplate(
   userId: Types.ObjectId,
   scope: 'generate' | 'categorize' | 'consolidate',
 ): Promise<string> {
-  const userDefault = await Instruction.findOne({ userId, scope, isDefault: true });
-  if (userDefault) return userDefault.template;
-  const system = await Instruction.findOne({ userId, scope, isSystem: true });
+  const userDefault = await Instruction.findOne({ userId, scope, isDefault: true })
+    .select('template')
+    .lean();
+  if (userDefault?.template) return userDefault.template;
+  const system = await Instruction.findOne({ userId, scope, isSystem: true })
+    .select('template')
+    .lean();
   return system?.template ?? '';
 }
 

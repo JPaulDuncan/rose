@@ -114,8 +114,10 @@ export function startImapSyncWorker() {
                 skippedDup += 1;
                 continue;
               }
-              const exists = await Email.findOne({ userId, rawHash: cleaned.rawHash });
-              if (exists) {
+              // Cover-query existence check — Mongo returns `{_id}` or
+              // null without hydrating the doc, much cheaper than the
+              // previous `findOne` for what's just a duplicate gate.
+              if (await Email.exists({ userId, rawHash: cleaned.rawHash })) {
                 skippedDup += 1;
                 continue;
               }

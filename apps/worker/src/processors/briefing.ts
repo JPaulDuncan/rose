@@ -126,9 +126,13 @@ async function templateFor(userId: Types.ObjectId): Promise<string> {
     userId,
     scope: 'briefing',
     isDefault: true,
-  });
-  if (userOverride) return userOverride.template;
-  const system = await Instruction.findOne({ userId, scope: 'briefing', isSystem: true });
+  })
+    .select('template')
+    .lean();
+  if (userOverride?.template) return userOverride.template;
+  const system = await Instruction.findOne({ userId, scope: 'briefing', isSystem: true })
+    .select('template')
+    .lean();
   return system?.template ?? '';
 }
 

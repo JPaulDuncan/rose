@@ -363,6 +363,20 @@ pageSchema.index(
   { userId: 1, recipeId: 1 },
   { sparse: true },
 );
+// Category-rollup aggregation in generatePage runs `Page.aggregate
+// [{$match: {userId, categoryId: {$ne: null}}}, {$group: ...}]` on
+// every page generation. Without this it's a collscan; with it,
+// the $match phase is fully covered.
+pageSchema.index(
+  { userId: 1, categoryId: 1 },
+  { partialFilterExpression: { categoryId: { $type: 'objectId' } } },
+);
+// Spam-trust + sender-deletion queries hit `senderAddresses`. The
+// array semantics mean Mongo builds a multikey index — fine for
+// our scale (per-page address counts are small).
+pageSchema.index({ userId: 1, senderAddresses: 1 });
+// Tag-page lookups (Tag.tsx, recipe page-find by tag).
+pageSchema.index({ userId: 1, tags: 1 });
 pageSchema.index(
   { title: 'text', summary: 'text', contentMd: 'text', tags: 'text' },
   { weights: { title: 10, summary: 5, tags: 3, contentMd: 1 }, name: 'PageTextIndex' },

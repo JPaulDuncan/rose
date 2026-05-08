@@ -26,13 +26,17 @@ async function templateFor(userId: Types.ObjectId): Promise<string | null> {
     userId,
     scope: 'tag-digest',
     isDefault: true,
-  });
-  if (userOverride) return userOverride.template;
+  })
+    .select('template')
+    .lean();
+  if (userOverride?.template) return userOverride.template;
   const system = await Instruction.findOne({
     userId,
     scope: 'tag-digest',
     isSystem: true,
-  });
+  })
+    .select('template')
+    .lean();
   return system?.template ?? null;
 }
 

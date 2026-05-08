@@ -62,6 +62,15 @@ const senderSchema = new Schema(
 
 senderSchema.index({ userId: 1, brandKey: 1 }, { unique: true });
 senderSchema.index({ userId: 1, lastSeenAt: -1 });
+// generatePage queries `Sender.find({userId, addresses: {$in},
+// autoQuarantine: true})` on every page write to decide if any
+// contributing sender is currently quarantined. Partial index
+// keeps it tiny — only the small minority of senders that are
+// quarantined live in the index.
+senderSchema.index(
+  { userId: 1, autoQuarantine: 1 },
+  { partialFilterExpression: { autoQuarantine: true } },
+);
 
 export type SenderDoc = HydratedDocument<InferSchemaType<typeof senderSchema>> & {
   _id: Types.ObjectId;

@@ -85,8 +85,9 @@ export function startGmailSyncWorker() {
         const fromAddr = cleaned.from?.address?.toLowerCase() ?? '';
         const isWhitelisted = isSenderWhitelisted(whitelisted, fromAddr);
         if (fromAddr && !isWhitelisted && isSenderBlocked(blocked, fromAddr)) continue;
-        const exists = await Email.findOne({ userId, rawHash: cleaned.rawHash });
-        if (exists) continue;
+        // Cover-query dedup check — `exists` is much cheaper than
+        // hydrating a full Email doc just to discover we'd skip it.
+        if (await Email.exists({ userId, rawHash: cleaned.rawHash })) continue;
         const created = await Email.create({
           userId,
           sourceId: source._id,

@@ -15,13 +15,17 @@ async function templateFor(userId: Types.ObjectId): Promise<string | null> {
     userId,
     scope: 'sender',
     isDefault: true,
-  });
-  if (userOverride) return userOverride.template;
+  })
+    .select('template')
+    .lean();
+  if (userOverride?.template) return userOverride.template;
   const system = await Instruction.findOne({
     userId,
     scope: 'sender',
     isSystem: true,
-  });
+  })
+    .select('template')
+    .lean();
   return system?.template ?? null;
 }
 
