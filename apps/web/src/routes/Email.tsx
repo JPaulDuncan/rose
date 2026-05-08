@@ -22,12 +22,14 @@ import {
   ShieldCheck,
   ChevronDown,
   Zap,
+  Sparkles,
   X as XIcon,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useApi } from '../lib/api';
 import { DraftReply } from '../components/DraftReply';
 import { RecipeWizard, type RecipeFormValues } from '../components/RecipeWizard';
+import { LinksCard, CountedSection } from '../components/LinksCard';
 
 type EmailDetail = {
   _id: string;
@@ -66,6 +68,7 @@ type SpamPolicy = {
   senders: string[];
   tags: string[];
   blockedSenders: string[];
+  whitelistedSenders?: string[];
 };
 
 export default function EmailView() {
@@ -96,6 +99,8 @@ export default function EmailView() {
   const senderAddr = data?.from?.address?.toLowerCase() ?? '';
   const isSpamMarked = !!senderAddr && (spamPolicy?.senders ?? []).includes(senderAddr);
   const isBlocked = !!senderAddr && (spamPolicy?.blockedSenders ?? []).includes(senderAddr);
+  const isWhitelisted =
+    !!senderAddr && (spamPolicy?.whitelistedSenders ?? []).includes(senderAddr);
 
   const deleteLocal = useMutation({
     mutationFn: async () => api.del<{ ok: true }>(`/api/emails/${id}`),
@@ -167,6 +172,24 @@ export default function EmailView() {
       api.del<{ ok: true }>(`/api/spam/block/${encodeURIComponent(senderAddr)}`),
     onSuccess: () => {
       toast.success('Unblocked — future mail from this sender will ingest normally');
+      qc.invalidateQueries({ queryKey: ['spam-policy'] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+  const whitelistSender = useMutation({
+    mutationFn: async () =>
+      api.post<{ ok: true }>('/api/spam/whitelist', { address: senderAddr }),
+    onSuccess: () => {
+      toast.success('Trusted — bypasses blocklist + classifier');
+      qc.invalidateQueries({ queryKey: ['spam-policy'] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+  const unwhitelistSender = useMutation({
+    mutationFn: async () =>
+      api.del<{ ok: true }>(`/api/spam/whitelist/${encodeURIComponent(senderAddr)}`),
+    onSuccess: () => {
+      toast.success('Removed from trusted senders');
       qc.invalidateQueries({ queryKey: ['spam-policy'] });
     },
     onError: (e: Error) => toast.error(e.message),
@@ -292,10 +315,13 @@ export default function EmailView() {
         subject={data.subject ?? ''}
         isSpamMarked={isSpamMarked}
         isBlocked={isBlocked}
+        isWhitelisted={isWhitelisted}
         onAddToRecipe={(kind) =>
           setRecipeSeed(seedFromEmail(kind, senderAddr, data.subject ?? ''))
         }
         onReply={() => setReplyOpen(true)}
+        onWhitelist={() => whitelistSender.mutate()}
+        onUnwhitelist={() => unwhitelistSender.mutate()}
         onDeleteLocal={() => {
           if (confirm('Remove this email from your inbox? It stays on the source mailbox.')) {
             deleteLocal.mutate();
@@ -328,113 +354,113 @@ export default function EmailView() {
           markSpam.isPending ||
           unmarkSpam.isPending ||
           blockSender.isPending ||
-          unblockSender.isPending
+          unblockSender.isPending ||
+          whitelistSender.isPending ||
+          unwhitelistSender.isPending
         }
       />
 
-      <BodyTabs view={view} setView={setView} hasHtml={!!data.html} hasRaw={!!data.rawText} />
-      <div className="mt-3">
-        {view === 'text' && <TextBody text={data.text || data.rawText || ''} />}
-        {view === 'html' && data.html && <HtmlBody html={data.html} />}
-        {view === 'raw' && <TextBody text={data.rawText || data.text || ''} mono />}
-      </div>
-
-      <DraftReply email={data} open={replyOpen} onOpenChange={setReplyOpen} />
-
-      {recipeSeed && (
-        <AddToRecipePanel
-          seed={recipeSeed}
-          onClose={() => setRecipeSeed(null)}
-        />
-      )}
-
-      {data.topics && data.topics.length > 0 && (
-        <Section title="Topics" icon={<TagIcon className="h-4 w-4 text-rose-500" />}>
-          <div className="flex flex-wrap gap-1.5">
-            {data.topics.map((t) => (
-              <Link
-                key={t}
-                to={`/t/${encodeURIComponent(t)}`}
-                className="pill hover:bg-rose-100 hover:text-rose-800 dark:hover:bg-rose-950/40 dark:hover:text-rose-300"
-              >
-                {t}
-              </Link>
-            ))}
+      {/* Two-column layout below the toolbar — body + attachments
+          on the left, reference rail (Topics → Links → Routing) on
+          the right. `minmax(0, …fr)` rather than bare `fr` so a
+          long unbreakable token in the rail can't squeeze the body
+          column. */}
+      <div className="mt-2 grid gap-6 lg:grid-cols-[minmax(0,7fr)_minmax(0,3fr)]">
+        <div className="min-w-0 space-y-4">
+          <BodyTabs view={view} setView={setView} hasHtml={!!data.html} hasRaw={!!data.rawText} />
+          <div>
+            {view === 'text' && <TextBody text={data.text || data.rawText || ''} />}
+            {view === 'html' && data.html && <HtmlBody html={data.html} />}
+            {view === 'raw' && <TextBody text={data.rawText || data.text || ''} mono />}
           </div>
-        </Section>
-      )}
 
-      {data.links && data.links.length > 0 && (
-        <Section
-          title={`Links (${data.links.length})`}
-          icon={<LinkIcon className="h-4 w-4 text-rose-500" />}
-        >
-          <ul className="space-y-1.5 text-sm">
-            {data.links.slice(0, 50).map((l) => (
-              <li key={l.url} className="flex items-start gap-2">
-                <ExternalLink className="mt-0.5 h-3.5 w-3.5 shrink-0 text-ink-400" />
-                <a
-                  href={l.url}
-                  target="_blank"
-                  rel="noreferrer noopener"
-                  className="min-w-0 flex-1 truncate text-rose-600 hover:underline dark:text-rose-400"
-                  title={l.url}
-                >
-                  {l.text || hostOf(l.url)}
-                </a>
-                <span className="shrink-0 text-xs text-ink-400">{hostOf(l.url)}</span>
-              </li>
-            ))}
-          </ul>
-        </Section>
-      )}
-
-      {data.attachments && data.attachments.length > 0 && (
-        <Section
-          title={`Attachments (${data.attachments.length})`}
-          icon={<Paperclip className="h-4 w-4 text-rose-500" />}
-        >
-          <ul className="space-y-1.5 text-sm">
-            {data.attachments.map((a, i) => (
-              <li key={`${a.filename}-${i}`} className="flex items-center gap-2">
-                <Paperclip className="h-3.5 w-3.5 shrink-0 text-ink-400" />
-                <span className="min-w-0 flex-1 truncate font-medium">{a.filename}</span>
-                <span className="shrink-0 text-xs text-ink-500">{a.contentType}</span>
-                <span className="shrink-0 text-xs text-ink-400">{formatBytes(a.size)}</span>
-              </li>
-            ))}
-          </ul>
-        </Section>
-      )}
-
-      <Section
-        title="Routing metadata"
-        icon={<AtSign className="h-4 w-4 text-rose-500" />}
-        muted
-      >
-        <dl className="grid grid-cols-1 gap-y-1 text-xs sm:grid-cols-[140px_1fr]">
-          <dt className="text-ink-500">Email ID</dt>
-          <dd>
-            <code>{data._id}</code>
-          </dd>
-          {data.threadKey && (
-            <>
-              <dt className="text-ink-500">Thread key</dt>
-              <dd className="break-all">
-                <code>{data.threadKey}</code>
-              </dd>
-            </>
+          {replyOpen && (
+            <DraftReply email={data} open={replyOpen} onOpenChange={setReplyOpen} />
           )}
-          {data.subjectTemplate && (
-            <>
-              <dt className="text-ink-500">Subject template</dt>
-              <dd>
-                <code>{data.subjectTemplate}</code>
-              </dd>
-            </>
+          {recipeSeed && (
+            <AddToRecipePanel seed={recipeSeed} onClose={() => setRecipeSeed(null)} />
           )}
-        </dl>
-      </Section>
+
+          {data.attachments && data.attachments.length > 0 && (
+            <Section
+              title={`Attachments (${data.attachments.length})`}
+              icon={<Paperclip className="h-4 w-4 text-rose-500" />}
+            >
+              <ul className="space-y-1.5 text-sm">
+                {data.attachments.map((a, i) => (
+                  <li key={`${a.filename}-${i}`} className="flex items-center gap-2">
+                    <Paperclip className="h-3.5 w-3.5 shrink-0 text-ink-400" />
+                    <span className="min-w-0 flex-1 truncate font-medium">{a.filename}</span>
+                    <span className="shrink-0 text-xs text-ink-500">{a.contentType}</span>
+                    <span className="shrink-0 text-xs text-ink-400">{formatBytes(a.size)}</span>
+                  </li>
+                ))}
+              </ul>
+            </Section>
+          )}
+        </div>
+
+        <aside className="space-y-4 lg:sticky lg:top-4 lg:self-start">
+          {data.topics && data.topics.length > 0 && (
+            <CountedSection
+              icon={<TagIcon className="h-4 w-4 text-rose-500" />}
+              title="Topics"
+              count={data.topics.length}
+              collapseAt={20}
+            >
+              <div className="flex flex-wrap gap-1.5">
+                {data.topics.map((t) => (
+                  <Link
+                    key={t}
+                    to={`/t/${encodeURIComponent(t)}`}
+                    className="pill hover:bg-rose-100 hover:text-rose-800 dark:hover:bg-rose-950/40 dark:hover:text-rose-300"
+                  >
+                    {t}
+                  </Link>
+                ))}
+              </div>
+            </CountedSection>
+          )}
+
+          {data.links && data.links.length > 0 && (
+            <LinksCard links={data.links.map((l) => ({ url: l.url, text: l.text }))} />
+          )}
+
+          <CountedSection
+            icon={<AtSign className="h-4 w-4 text-rose-500" />}
+            title="Routing"
+            count={
+              1 +
+              (data.threadKey ? 1 : 0) +
+              (data.subjectTemplate ? 1 : 0)
+            }
+            collapseAt={2}
+          >
+            <dl className="grid grid-cols-[max-content_1fr] gap-x-3 gap-y-1 text-xs">
+              <dt className="text-ink-500">Email ID</dt>
+              <dd className="min-w-0 truncate">
+                <code className="text-[11px]">{data._id}</code>
+              </dd>
+              {data.threadKey && (
+                <>
+                  <dt className="text-ink-500">Thread key</dt>
+                  <dd className="min-w-0 break-all">
+                    <code className="text-[11px]">{data.threadKey}</code>
+                  </dd>
+                </>
+              )}
+              {data.subjectTemplate && (
+                <>
+                  <dt className="text-ink-500">Subject template</dt>
+                  <dd className="min-w-0 break-words">
+                    <code className="text-[11px]">{data.subjectTemplate}</code>
+                  </dd>
+                </>
+              )}
+            </dl>
+          </CountedSection>
+        </aside>
+      </div>
     </div>
   );
 }
@@ -454,6 +480,7 @@ function EmailActionsBar({
   subject,
   isSpamMarked,
   isBlocked,
+  isWhitelisted,
   onReply,
   onDeleteLocal,
   onDeleteOnSource,
@@ -461,6 +488,8 @@ function EmailActionsBar({
   onUnmarkSpam,
   onBlock,
   onUnblock,
+  onWhitelist,
+  onUnwhitelist,
   onAddToRecipe,
   busy,
 }: {
@@ -470,6 +499,7 @@ function EmailActionsBar({
   subject: string;
   isSpamMarked: boolean;
   isBlocked: boolean;
+  isWhitelisted: boolean;
   onReply: () => void;
   onDeleteLocal: () => void;
   onDeleteOnSource: () => void;
@@ -477,6 +507,8 @@ function EmailActionsBar({
   onUnmarkSpam: () => void;
   onBlock: () => void;
   onUnblock: () => void;
+  onWhitelist: () => void;
+  onUnwhitelist: () => void;
   onAddToRecipe: (kind: 'sender' | 'subject') => void;
   busy: boolean;
 }) {
@@ -502,8 +534,9 @@ function EmailActionsBar({
         className="btn-primary text-xs"
         onClick={onReply}
         disabled={busy}
+        title="Open the LLM-drafted reply panel"
       >
-        <ReplyIcon className="h-3.5 w-3.5" /> Reply
+        <Sparkles className="h-3.5 w-3.5" /> Draft reply
       </button>
 
       {/* Split delete: primary action is local-only; dropdown adds
@@ -613,6 +646,33 @@ function EmailActionsBar({
             title={`Block ${senderAddr} — drops future messages at ingest and removes existing ones.`}
           >
             <Ban className="h-3.5 w-3.5" /> Block sender
+          </button>
+        )
+      )}
+
+      {/* Whitelist / un-whitelist sender. Counterpart to Block: forces
+          this sender past the spam classifier even if the heuristics
+          would otherwise flag them. */}
+      {senderAddr && (
+        isWhitelisted ? (
+          <button
+            type="button"
+            className="btn-ghost text-xs text-ink-600 dark:text-ink-300"
+            onClick={onUnwhitelist}
+            disabled={busy}
+            title={`Remove ${senderAddr} from your trusted-senders list.`}
+          >
+            <ShieldOff className="h-3.5 w-3.5" /> Untrust
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="btn-ghost text-xs text-emerald-700 dark:text-emerald-300"
+            onClick={onWhitelist}
+            disabled={busy}
+            title={`Whitelist ${senderAddr} — always accept their mail past the spam filter.`}
+          >
+            <ShieldCheck className="h-3.5 w-3.5" /> Trust sender
           </button>
         )
       )}
