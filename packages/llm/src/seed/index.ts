@@ -515,7 +515,7 @@ Output the JSON object only.`,
   },
   {
     name: 'synthesise.topic-page',
-    scope: 'synthesise',
+    scope: 'synthesis',
     description:
       'Topic-research synthesis (web-integration Phase 1). Fuses the user\'s own emails about a topic, prior internal pages on the same topic, and freshly fetched web articles into a single news-shaped wiki page. Citations are required for every claim, and the user\'s mail context anchors the lede so the page reads as personal-newspaper rather than encyclopedia.',
     variables: [

@@ -77,10 +77,173 @@ const SearxResponse = z.object({
  *  pass the threshold we'd never want them all in-context. */
 const SYNTHESIS_DOC_CAP = 12;
 
+/** Recursion depth ceiling. depth 0 = direct from search; depth 1
+ *  = harvested from inside a depth-0 article; etc. Phase 2 caps at
+ *  1, which empirically delivers most of the value (a top news
+ *  article links to its own follow-up coverage and to source
+ *  material) without runaway. */
+const MAX_RECURSION_DEPTH = 1;
+
+/** Score floor for a harvested link to make it onto the frontier.
+ *  The pre-fetch score is purely heuristic (anchor-text overlap +
+ *  host trust); the actual cosine check happens after fetch. */
+const RECURSE_SCORE_THRESHOLD = 0.4;
+
+/** Hard cap on how many links per source article we'll consider
+ *  pushing onto the frontier. Big news articles can have 50+
+ *  in-body anchors; we don't want one source to eat the whole
+ *  remaining budget. */
+const MAX_LINKS_HARVESTED_PER_DOC = 12;
+
 /** Max characters of each web doc fed into the synthesis prompt.
  *  Real article body can be much longer; the synthesis only needs
  *  enough prose to extract claims + quotes. */
 const SYNTHESIS_DOC_SLICE = 4_000;
+
+/**
+ * Tokenise a topic label or anchor text into lowercase word-shaped
+ * chunks. Strips punctuation, drops one-character words. Used by
+ * the link-harvest scorer; not exported.
+ */
+function tokenize(s: string): string[] {
+  return (s ?? '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]+/g, ' ')
+    .split(/\s+/)
+    .filter((t) => t.length > 1);
+}
+
+/**
+ * Hosts that get a small +0.1 score boost during link-harvest
+ * because they typically yield substantive coverage we can extract.
+ * Mirrors the fetchPool's HIGH_TRAFFIC_HOSTS — those rate-limit
+ * harder, but if a link points there, we want it. The list is
+ * deliberately tiny; expanding it is a per-deploy decision.
+ */
+const TRUSTED_RECURSION_HOSTS = new Set([
+  'apnews.com',
+  'bbc.com',
+  'bbc.co.uk',
+  'reuters.com',
+  'nytimes.com',
+  'washingtonpost.com',
+  'wikipedia.org',
+  'theguardian.com',
+  'npr.org',
+]);
+
+/**
+ * Score a candidate link for promotion to the frontier. Cheap
+ * heuristic only — the embed-cosine check happens after fetch, so
+ * this scorer just needs to filter the obvious junk.
+ *
+ * Inputs:
+ *   • topicTokens: lowercase word tokens from the topic label.
+ *   • parentHost: hostKey of the source article. Same-host links
+ *     get a small penalty so the recursion explores other voices
+ *     instead of recursing into the same site's "related stories".
+ *
+ * Returns 0–1. The threshold is `RECURSE_SCORE_THRESHOLD`.
+ */
+function scoreLink(
+  href: string,
+  anchorText: string,
+  topicTokens: Set<string>,
+  parentHost: string,
+): number {
+  // Non-http schemes / fragments / absurdly short hrefs.
+  let hostKey = '';
+  try {
+    const u = new URL(href);
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return 0;
+    hostKey = hostKeyOf(href);
+  } catch {
+    return 0;
+  }
+  if (!hostKey) return 0;
+
+  // Anchor-text overlap with topic tokens — primary signal.
+  const anchorTokens = tokenize(anchorText);
+  if (anchorTokens.length === 0) return 0;
+  let hits = 0;
+  for (const t of anchorTokens) if (topicTokens.has(t)) hits += 1;
+  const overlap = hits / Math.max(1, Math.min(anchorTokens.length, topicTokens.size));
+
+  let score = overlap;
+
+  // Trusted host nudge.
+  if (TRUSTED_RECURSION_HOSTS.has(hostKey)) score += 0.1;
+
+  // Same-host as parent — small penalty to encourage source
+  // diversity in the recursed corpus.
+  if (hostKey === parentHost) score -= 0.05;
+
+  // Junk URLs (login, register, share-on-social, paywall landing)
+  // suppress harshly. These tend to dominate page chrome.
+  if (/(login|signin|sign-in|register|subscribe|paywall|share[?/])/i.test(href)) {
+    score -= 0.3;
+  }
+
+  // Anchor texts that are pure click-bait or navigational chrome.
+  if (anchorText.length < 8 && anchorTokens.length === 1) score -= 0.1;
+  if (/^(home|menu|next|prev|back|click here)$/i.test(anchorText.trim())) {
+    return 0;
+  }
+
+  return Math.max(0, Math.min(1, score));
+}
+
+/**
+ * Harvest in-body anchors from an article HTML string. Returns
+ * scored, deduped, top-K candidate links above the recursion
+ * threshold. Uses a regex sweep rather than a full DOM parse —
+ * `extractArticle` already paid for one DOM parse; doing a second
+ * just to enumerate `<a href>` is wasteful when the regex catches
+ * the steady-state shape.
+ *
+ * The regex deliberately doesn't try to handle every edge case —
+ * the worst it can do is drop a link, which the next research run
+ * will probably surface via SearXNG anyway.
+ */
+function harvestLinks(
+  bodyHtml: string,
+  parentUrl: string,
+  topicLabel: string,
+  parentHost: string,
+  visitedUrls: Set<string>,
+): { url: string; anchorText: string; score: number }[] {
+  const topicTokens = new Set(tokenize(topicLabel));
+  if (topicTokens.size === 0) return [];
+
+  // <a href="..." ...>text</a> — text is everything up to the
+  // closing tag, including stripped HTML. We do a second pass to
+  // strip inner tags from the captured anchor text.
+  const anchorRe = /<a\b[^>]*\shref=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
+  const stripTagsRe = /<[^>]*>/g;
+  const candidates = new Map<string, { url: string; anchorText: string; score: number }>();
+  let m: RegExpExecArray | null;
+  while ((m = anchorRe.exec(bodyHtml))) {
+    const rawHref = m[1] ?? '';
+    const anchorRaw = (m[2] ?? '').replace(stripTagsRe, ' ').trim();
+    let abs: string;
+    try {
+      abs = new URL(rawHref, parentUrl).toString();
+    } catch {
+      continue;
+    }
+    if (visitedUrls.has(abs)) continue;
+    const score = scoreLink(abs, anchorRaw, topicTokens, parentHost);
+    if (score < RECURSE_SCORE_THRESHOLD) continue;
+    // Dedup — keep the highest-scoring instance of each URL.
+    const prev = candidates.get(abs);
+    if (!prev || score > prev.score) {
+      candidates.set(abs, { url: abs, anchorText: anchorRaw, score });
+    }
+  }
+  return [...candidates.values()]
+    .sort((a, b) => b.score - a.score)
+    .slice(0, MAX_LINKS_HARVESTED_PER_DOC);
+}
 
 async function searchUrls(query: string, signal?: AbortSignal): Promise<
   { url: string; title: string; snippet: string }[]
@@ -253,7 +416,7 @@ function renderWebDocs(
 async function getSynthesisInstruction(userId: Types.ObjectId): Promise<string> {
   const userOverride = await Instruction.findOne({
     userId,
-    scope: 'synthesise',
+    scope: 'synthesis',
     isDefault: true,
   })
     .select('template')
@@ -261,7 +424,7 @@ async function getSynthesisInstruction(userId: Types.ObjectId): Promise<string> 
   if (userOverride?.template) return userOverride.template;
   const system = await Instruction.findOne({
     userId,
-    scope: 'synthesise',
+    scope: 'synthesis',
     isSystem: true,
   })
     .select('template')
@@ -352,12 +515,28 @@ export function startTopicResearchWorker(): void {
         }
 
         // -------------------------------------------------------------
-        // 4. Query plan + SearXNG harvest. Dedup URLs across queries.
+        // 4. Query plan + SearXNG harvest. Seeds the priority frontier
+        //    at depth 0; the loop in step 5 may push depth-1 entries
+        //    onto the same frontier as it processes articles and
+        //    harvests their in-body links.
         // -------------------------------------------------------------
         const deadline = t0 + timeoutMs;
         const queries = buildQueries(topicLabel);
         const seen = new Set<string>();
-        const frontier: { url: string; title: string; query: string }[] = [];
+        type FrontierItem = {
+          url: string;
+          title: string;
+          query: string | null;
+          depth: number;
+          parentUrl: string | null;
+          /** Heuristic priority for ordering. Search seeds get a flat
+           *  high priority (1.0); harvested links carry their
+           *  link-time score so the most-promising recursion targets
+           *  jump ahead in the queue. */
+          priority: number;
+          discoveredVia: 'searxng' | 'recursion';
+        };
+        const frontier: FrontierItem[] = [];
         for (const q of queries) {
           if (Date.now() >= deadline) break;
           const results = await searchUrls(q);
@@ -367,7 +546,15 @@ export function startTopicResearchWorker(): void {
             const host = hostKeyOf(r.url);
             if (host && denyHosts.has(host)) continue;
             seen.add(r.url);
-            frontier.push({ url: r.url, title: r.title, query: q });
+            frontier.push({
+              url: r.url,
+              title: r.title,
+              query: q,
+              depth: 0,
+              parentUrl: null,
+              priority: 1.0,
+              discoveredVia: 'searxng',
+            });
           }
           if (frontier.length >= fetchBudget) break;
         }
@@ -379,9 +566,12 @@ export function startTopicResearchWorker(): void {
         }
 
         // -------------------------------------------------------------
-        // 5. Fetch + extract + embed + score. Persist a WebDocument
-        //    row regardless of relevance so the cache works on the
-        //    next run.
+        // 5. Drain the frontier — fetch, extract, embed, score, and
+        //    optionally harvest links to recurse on. Pop highest-
+        //    priority each iteration so depth-0 seeds drain first
+        //    and high-scoring recursion candidates compete on merit.
+        //    Persist every URL (even off-topic) so subsequent runs
+        //    short-circuit on the cache.
         // -------------------------------------------------------------
         const provider = await resolveProviderForUser(userId, 'embedding');
         const fetched: {
@@ -392,8 +582,16 @@ export function startTopicResearchWorker(): void {
           relevanceScore: number;
           docId: Types.ObjectId;
         }[] = [];
-        for (const item of frontier) {
+        let processedCount = 0;
+        while (frontier.length > 0) {
           if (Date.now() >= deadline) break;
+          if (processedCount >= fetchBudget) break;
+
+          // Pop the highest-priority frontier item. Sort each
+          // iteration — frontier sizes stay tiny (≤ fetchBudget).
+          frontier.sort((a, b) => b.priority - a.priority);
+          const item = frontier.shift()!;
+          processedCount += 1;
           const urlHash = urlHashOf(item.url);
           // Skip if we have a fresh cached copy.
           const cached = (await WebDocument.findOne({ userId, urlHash })
@@ -467,7 +665,9 @@ export function startTopicResearchWorker(): void {
                   topicLabel,
                   triggeringPageId: pageId,
                   searchQuery: item.query,
-                  discoveredVia: 'searxng',
+                  discoveredVia: item.discoveredVia,
+                  fetchDepth: item.depth,
+                  parentUrl: item.parentUrl,
                 },
                 $set: {
                   robotsAllowed: false,
@@ -504,7 +704,9 @@ export function startTopicResearchWorker(): void {
                   topicLabel,
                   triggeringPageId: pageId,
                   searchQuery: item.query,
-                  discoveredVia: 'searxng',
+                  discoveredVia: item.discoveredVia,
+                  fetchDepth: item.depth,
+                  parentUrl: item.parentUrl,
                 },
                 $set: {
                   title: item.title,
@@ -542,9 +744,11 @@ export function startTopicResearchWorker(): void {
                 url: result.finalUrl,
                 urlHash,
                 triggeringPageId: pageId,
-                discoveredVia: 'searxng',
+                discoveredVia: item.discoveredVia,
                 searchQuery: item.query,
                 topicLabel,
+                fetchDepth: item.depth,
+                parentUrl: item.parentUrl,
               },
               $set: {
                 hostKey: result.hostKey,
@@ -574,6 +778,43 @@ export function startTopicResearchWorker(): void {
               relevanceScore: score,
               docId: upsert!._id as Types.ObjectId,
             });
+
+            // Harvest in-body links and push promising ones onto the
+            // frontier at depth+1. Bounded by the budget — if we're
+            // already saturated, skip the harvest. The link scorer is
+            // heuristic only; the real quality gate is the cosine
+            // check after the next-hop fetch.
+            if (
+              item.depth < MAX_RECURSION_DEPTH &&
+              processedCount + frontier.length < fetchBudget
+            ) {
+              const candidates = harvestLinks(
+                result.bodyHtml,
+                result.finalUrl,
+                topicLabel,
+                result.hostKey,
+                seen,
+              );
+              for (const c of candidates) {
+                if (processedCount + frontier.length >= fetchBudget) break;
+                if (seen.has(c.url)) continue;
+                const host = hostKeyOf(c.url);
+                if (host && denyHosts.has(host)) continue;
+                seen.add(c.url);
+                frontier.push({
+                  url: c.url,
+                  title: c.anchorText.slice(0, 200),
+                  query: null,
+                  depth: item.depth + 1,
+                  parentUrl: result.finalUrl,
+                  // Recursed items get their link-time score as
+                  // priority, capped under 1.0 so the search-seed
+                  // frontier always drains first.
+                  priority: Math.min(0.95, c.score),
+                  discoveredVia: 'recursion',
+                });
+              }
+            }
           }
         }
 

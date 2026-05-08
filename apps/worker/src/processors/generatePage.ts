@@ -61,6 +61,24 @@ import {
 
 const QUEUE = 'rose.generate-page';
 const embedQueue = new Queue('rose.embed-page', { connection: bullConnection() });
+// Topic-research auto-trigger queue. Fire-and-forget enqueues from
+// generatePage when a strong-signal topic surfaces and the user has
+// webResearch enabled. The orchestrator itself lives in
+// processors/topicResearch.ts on the worker-llm class.
+const topicResearchQueue = new Queue('rose.topic-research', {
+  connection: bullConnection(),
+});
+
+/**
+ * Cooldown between auto-trigger research runs for the same page.
+ * The user can still hit Research manually inside this window —
+ * this only suppresses the *automatic* enqueue from generatePage,
+ * which can fire frequently when a topic page is updated by new
+ * mail. 6h is short enough that breaking-news topics refresh in a
+ * day, long enough that ten emails landing in 5 minutes don't
+ * each kick a research run.
+ */
+const AUTO_RESEARCH_COOLDOWN_MS = 6 * 3600 * 1000;
 
 type GenerateJobData = { emailId: string; userId: string };
 
@@ -422,6 +440,126 @@ async function reprioritizeGeneratePageBacklog(): Promise<{
   } finally {
     await queue.close();
   }
+}
+
+/**
+ * Fire-and-forget enqueue of a topic-research job when the page has
+ * a strong-signal topic and the user has webResearch enabled. Gates:
+ *
+ *   1. User has settings.daydream.webResearch.enabled === true.
+ *   2. The page has either a primaryTopic or a strong tag/topic.
+ *      We don't try to embed-derive a topic from scratch; topic
+ *      research only fires when the existing pipeline already
+ *      labelled the page as "about" something specific.
+ *   3. Page isn't quarantined or user-marked-spam — those are
+ *      explicit "don't surface" signals; researching them would
+ *      be an amplification.
+ *   4. Page is in topic / source-topic mode. Thread-mode pages are
+ *      ad-hoc back-and-forth; topic research doesn't make sense
+ *      for "Re: lunch on Friday".
+ *   5. Cooldown — skip if a research run completed within the last
+ *      AUTO_RESEARCH_COOLDOWN_MS. The user can still hit Research
+ *      manually inside the window.
+ *   6. researchState isn't already queued or running. Belt-and-
+ *      suspenders against a manual trigger landing concurrently.
+ */
+async function maybeAutoTriggerTopicResearch(args: {
+  userId: Types.ObjectId;
+  pageId: Types.ObjectId;
+  flags: Record<string, boolean>;
+  page: PageDoc | null;
+  draft: { tags?: string[] };
+  topics: string[];
+}): Promise<void> {
+  const { userId, pageId, flags, draft, topics } = args;
+
+  // Hard gates — quarantine + spam + briefing/synthesis modes.
+  if (flags.userMarkedSpam || flags.autoQuarantined) return;
+
+  const user = (await User.findById(userId)
+    .select('settings.daydream.webResearch.enabled')
+    .lean()) as
+    | {
+        settings?: { daydream?: { webResearch?: { enabled?: boolean } } };
+      }
+    | null;
+  if (user?.settings?.daydream?.webResearch?.enabled !== true) return;
+
+  // Re-load the freshly-saved page to read the persisted state and
+  // confirm we're not racing the API trigger.
+  const fresh = (await Page.findById(pageId)
+    .select(
+      'researchState lastResearchedAt primaryTopic tags topics groupingMode title',
+    )
+    .lean()) as
+    | {
+        researchState?: 'idle' | 'queued' | 'running' | 'failed';
+        lastResearchedAt?: Date | null;
+        primaryTopic?: string | null;
+        tags?: string[];
+        topics?: string[];
+        groupingMode?: string | null;
+        title?: string;
+      }
+    | null;
+  if (!fresh) return;
+  if (fresh.researchState === 'queued' || fresh.researchState === 'running') return;
+
+  // Mode gate.
+  const mode = fresh.groupingMode ?? null;
+  if (mode !== 'topic' && mode !== 'source-topic') return;
+
+  // Cooldown.
+  if (
+    fresh.lastResearchedAt &&
+    Date.now() - new Date(fresh.lastResearchedAt).getTime() <
+      AUTO_RESEARCH_COOLDOWN_MS
+  ) {
+    return;
+  }
+
+  // Topic resolution — primaryTopic > first persisted topic > first
+  // tag > the topics array we computed during this generation.
+  const topicLabel =
+    fresh.primaryTopic ||
+    fresh.topics?.[0] ||
+    fresh.tags?.[0] ||
+    topics[0] ||
+    draft.tags?.[0] ||
+    null;
+  if (!topicLabel || topicLabel.length < 2) return;
+
+  // Mark queued atomically; the job will set running when it picks up.
+  await Page.updateOne(
+    { _id: pageId, researchState: { $in: ['idle', 'failed', null] } },
+    { $set: { researchState: 'queued', lastResearchError: null } },
+  );
+
+  await topicResearchQueue.add(
+    'research',
+    {
+      userId: String(userId),
+      pageId: String(pageId),
+      topicLabel,
+    },
+    {
+      attempts: 1,
+      removeOnComplete: 100,
+      removeOnFail: 100,
+      // Auto-triggers are background — let any user-initiated
+      // research jump the queue ahead of them.
+      priority: 100,
+    },
+  );
+
+  logger.info(
+    {
+      pageId: String(pageId),
+      topicLabel,
+      reason: 'auto-trigger',
+    },
+    'topic-research: enqueued',
+  );
 }
 
 export function startGeneratePageWorker() {
@@ -1499,6 +1637,29 @@ export function startGeneratePageWorker() {
         },
         'generate-page: persisted',
       );
+
+      // -----------------------------------------------------------
+      // Web-integration Phase 2 auto-trigger. Fire a topicResearch
+      // job opportunistically when the page has a clear topic and
+      // the user has opted in. Quarantined / spam-marked pages are
+      // excluded — we don't want to crawl on behalf of pages we
+      // don't trust. Cooldown guards against the obvious
+      // amplification path (every new email kicks another run).
+      // Errors here are swallowed; the page-generation result is
+      // already persisted.
+      // -----------------------------------------------------------
+      try {
+        await maybeAutoTriggerTopicResearch({
+          userId,
+          pageId,
+          flags: baseFlags,
+          page: assignment.page,
+          draft,
+          topics,
+        });
+      } catch (err) {
+        logger.warn({ err, pageId: String(pageId) }, 'topic-research: auto-trigger failed');
+      }
       return { pageId: pageId.toString(), slug };
     },
     {
