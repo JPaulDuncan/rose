@@ -210,6 +210,27 @@ const userSchema = new Schema(
           categoryIds: { type: [Schema.Types.ObjectId], default: [] },
         },
       },
+      /**
+       * Topic-research preferences (web-integration Phase 1). Default
+       * `enabled: false` — opting in requires an explicit toggle so
+       * the system never crawls the web on a user's behalf without
+       * acknowledgement. Daily fetch budget caps the per-user
+       * outbound HTTP volume regardless of how many topics queue up.
+       */
+      webResearch: {
+        enabled: { type: Boolean, default: false },
+        /** Per-user 24h fetch budget across all research runs. */
+        dailyFetchBudget: { type: Number, default: 200 },
+        /** Per-research-run hard cap on number of fetches. */
+        perRunFetchBudget: { type: Number, default: 25 },
+        /** Per-research-run wall-clock cap, milliseconds. */
+        perRunTimeoutMs: { type: Number, default: 5 * 60_000 },
+        /** Cosine threshold for keeping fetched docs in-corpus. */
+        topicThreshold: { type: Number, default: 0.55 },
+        /** Hostnames the user explicitly never wants research to
+         *  pull from. Compared as a suffix match on the eTLD+1. */
+        denyHosts: { type: [String], default: [] },
+      },
     },
     /**
      * Per-user provider configuration. API keys are stored encrypted via

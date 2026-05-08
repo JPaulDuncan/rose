@@ -353,6 +353,38 @@ const pageSchema = new Schema(
       ],
       default: [],
     },
+    /**
+     * Topic-research state machine (web-integration Phase 1).
+     *
+     *   • `idle`     — never researched, or last run completed.
+     *   • `queued`   — a topicResearch job is on the queue.
+     *   • `running`  — the orchestrator picked the job up.
+     *   • `failed`   — the last run threw; reason on `lastResearchError`.
+     *
+     * The UI's "Research" button reads this to gate enqueues (no
+     * point queueing a second run while one's already in flight)
+     * and renders the "Researched <relative time>" pill from
+     * `lastResearchedAt`.
+     */
+    researchState: {
+      type: String,
+      enum: ['idle', 'queued', 'running', 'failed'],
+      default: 'idle',
+    },
+    lastResearchedAt: { type: Date, default: null },
+    lastResearchError: { type: String, default: null },
+    /**
+     * WebDocument refs harvested by the most recent topic-research
+     * run. Same role as `sourceEmailIds` for the email path; the
+     * synthesis prompt cites them as `[w1]`, `[w2]`, … and the
+     * right-rail `<ExternalSourcesSection>` joins on these to
+     * render the citation list.
+     */
+    webDocumentIds: {
+      type: [Schema.Types.ObjectId],
+      default: [],
+      ref: 'WebDocument',
+    },
   },
   { timestamps: true },
 );
