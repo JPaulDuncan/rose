@@ -82,6 +82,8 @@ export { Shipment } from './models/Shipment.js';
 export type { ShipmentDoc } from './models/Shipment.js';
 export { PromoCode } from './models/PromoCode.js';
 export type { PromoCodeDoc } from './models/PromoCode.js';
+export { AlertRule } from './models/AlertRule.js';
+export type { AlertRuleDoc } from './models/AlertRule.js';
 export { uniqueSlug } from './util/uniqueSlug.js';
 export {
   applyRetentionForUser,

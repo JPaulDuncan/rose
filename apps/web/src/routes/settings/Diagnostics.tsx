@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { useApi } from '../../lib/api';
 import { Skeleton, SkeletonCard } from '../../components/Skeleton';
+import { AlertRulesPanel } from '../../components/AlertRulesPanel';
 
 /**
  * Operator-facing dashboard reading /api/diagnostics. Built to
@@ -221,6 +222,13 @@ export default function DiagnosticsPage() {
           icon={<HardDrive className="h-4 w-4 text-rose-500" />}
         />
       </div>
+
+      {/* Alert rules — the operator-facing notification engine that
+          watches the same metrics this dashboard renders and pushes
+          when thresholds trip. Sits high on the page so the operator
+          can see "what am I being told about" alongside the live
+          state. */}
+      <AlertRulesPanel />
 
       {/* Mongo + the largest collections. */}
       <section className="card">

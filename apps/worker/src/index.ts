@@ -40,6 +40,7 @@ import {
   scheduleWeatherSnapshotSweeper,
 } from './processors/weatherSnapshots.js';
 import { startReputationDecaySweep } from './services/reputationSweep.js';
+import { startAlertSweeper } from './services/alertSweeper.js';
 import { startDaydreamSweeper } from './services/daydreamSweeper.js';
 import { reconcileSourceSchedules } from './services/sourceScheduleReconciler.js';
 import { getVapidKeys } from './lib/vapid.js';
@@ -270,6 +271,12 @@ async function bootstrap() {
     // to var/vapid.json so the API can read the public half).
     getVapidKeys();
     startReputationDecaySweep();
+    // Operator alert engine — every 60s, evaluate every enabled
+    // AlertRule against current queue counts + slow-query stats
+    // and fire push notifications for triggered rules past their
+    // cooldown. Lives in bg-mode so we don't multi-fire in split
+    // deploys.
+    startAlertSweeper();
   }
 
   // -----------------------------------------------------------------
