@@ -117,46 +117,19 @@ export default function TagPage() {
         <ChevronLeft className="h-3 w-3" /> Home
       </Link>
 
-      <header className="mb-6 border-b border-ink-200 pb-4 dark:border-ink-800">
-        <div className="flex items-center gap-2 text-xs uppercase tracking-widest text-rose-500">
-          <Hash className="h-3.5 w-3.5" />
-          Tag
-        </div>
-        <div className="mt-1 flex flex-wrap items-center gap-3">
-          <h1 className="text-3xl font-bold tracking-tight">#{data.tag}</h1>
-          {isFeatured ? (
-            <button
-              type="button"
-              onClick={() => unpin.mutate()}
-              disabled={unpin.isPending}
-              className="inline-flex items-center gap-1.5 rounded-full border border-rose-300 bg-rose-50 px-3 py-1 text-xs font-medium text-rose-800 transition-colors hover:bg-rose-100 disabled:opacity-50 dark:border-rose-800 dark:bg-rose-950/30 dark:text-rose-200 dark:hover:bg-rose-950/50"
-              title="Click to unpin from your newsletter"
-            >
-              <Star className="h-3.5 w-3.5" fill="currentColor" />
-              Featured · click to unpin
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={() => pin.mutate()}
-              disabled={pin.isPending}
-              className="inline-flex items-center gap-1.5 rounded-full border border-ink-300 px-3 py-1 text-xs font-medium text-ink-700 transition-colors hover:border-rose-400 hover:bg-rose-50 hover:text-rose-700 disabled:opacity-50 dark:border-ink-700 dark:text-ink-200 dark:hover:border-rose-700 dark:hover:bg-rose-950/30 dark:hover:text-rose-200"
-              title="Pin this tag as a section in your newsletter"
-            >
-              <Star className="h-3.5 w-3.5" />
-              Feature in newsletter
-            </button>
-          )}
-        </div>
-        <p className="mt-1 text-sm text-ink-500">
-          {data.pageCount === 0
-            ? 'No articles yet. As emails matching this tag arrive, they will land here.'
-            : `Articles tagged or extracted with #${data.tag}, aggregated from ${data.totalEmails} source email${data.totalEmails === 1 ? '' : 's'}.`}
-        </p>
-      </header>
-
       {data.pageCount === 0 ? (
-        <div className="card text-center text-ink-500">No pages match this tag.</div>
+        <>
+          <TagNameplate
+            tag={data.tag}
+            description="No articles yet. As emails matching this tag arrive, they will land here."
+            isFeatured={isFeatured}
+            onPin={() => pin.mutate()}
+            onUnpin={() => unpin.mutate()}
+            pinPending={pin.isPending}
+            unpinPending={unpin.isPending}
+          />
+          <div className="card mt-6 text-center text-ink-500">No pages match this tag.</div>
+        </>
       ) : (
         <div className="grid gap-8 lg:grid-cols-[1fr_260px]">
           <div className="min-w-0 space-y-6">
@@ -174,6 +147,15 @@ export default function TagPage() {
           </div>
 
           <aside className="space-y-4">
+            <TagNameplate
+              tag={data.tag}
+              description={`Articles tagged or extracted with #${data.tag}, aggregated from ${data.totalEmails} source email${data.totalEmails === 1 ? '' : 's'}.`}
+              isFeatured={isFeatured}
+              onPin={() => pin.mutate()}
+              onUnpin={() => unpin.mutate()}
+              pinPending={pin.isPending}
+              unpinPending={unpin.isPending}
+            />
             {data.topSenders.length > 0 && (
               <div className="card">
                 <div className="mb-3 flex items-center gap-2 text-xs uppercase tracking-widest text-ink-500">
@@ -241,17 +223,60 @@ export default function TagPage() {
   );
 }
 
-/**
- * Newspaper-style daily section nameplate. Sits at the top of the
- * tag page above the list of contributing articles. Shows the
- * day's section editor's brief from TagDigest — headline, dek, body
- * paragraph — with a "Regenerate today's brief" affordance for
- * pulling a fresh brief on demand.
- *
- * Falls back to a quiet placeholder when no digest exists yet (a
- * fresh user, or a tag the sweeper hasn't reached). Failed digests
- * are filtered out at the API layer so the UI never sees them.
- */
+function TagNameplate({
+  tag,
+  description,
+  isFeatured,
+  onPin,
+  onUnpin,
+  pinPending,
+  unpinPending,
+}: {
+  tag: string;
+  description: string;
+  isFeatured: boolean;
+  onPin: () => void;
+  onUnpin: () => void;
+  pinPending: boolean;
+  unpinPending: boolean;
+}) {
+  return (
+    <div className="card">
+      <div className="flex items-center gap-2 text-xs uppercase tracking-widest text-rose-500">
+        <Hash className="h-3.5 w-3.5" />
+        Tag
+      </div>
+      <h1 className="mt-1 text-2xl font-bold tracking-tight">#{tag}</h1>
+      <div className="mt-2">
+        {isFeatured ? (
+          <button
+            type="button"
+            onClick={onUnpin}
+            disabled={unpinPending}
+            className="inline-flex items-center gap-1.5 rounded-full border border-rose-300 bg-rose-50 px-3 py-1 text-xs font-medium text-rose-800 transition-colors hover:bg-rose-100 disabled:opacity-50 dark:border-rose-800 dark:bg-rose-950/30 dark:text-rose-200 dark:hover:bg-rose-950/50"
+            title="Click to unpin from your newsletter"
+          >
+            <Star className="h-3.5 w-3.5" fill="currentColor" />
+            Featured · click to unpin
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={onPin}
+            disabled={pinPending}
+            className="inline-flex items-center gap-1.5 rounded-full border border-ink-300 px-3 py-1 text-xs font-medium text-ink-700 transition-colors hover:border-rose-400 hover:bg-rose-50 hover:text-rose-700 disabled:opacity-50 dark:border-ink-700 dark:text-ink-200 dark:hover:border-rose-700 dark:hover:bg-rose-950/30 dark:hover:text-rose-200"
+            title="Pin this tag as a section in your newsletter"
+          >
+            <Star className="h-3.5 w-3.5" />
+            Feature in newsletter
+          </button>
+        )}
+      </div>
+      <p className="mt-2 text-sm text-ink-500">{description}</p>
+    </div>
+  );
+}
+
 function DigestNameplate({
   tag,
   digest,
