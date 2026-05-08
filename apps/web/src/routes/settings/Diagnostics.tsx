@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   Activity,
@@ -8,6 +9,7 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import { useApi } from '../../lib/api';
+import { Skeleton, SkeletonCard } from '../../components/Skeleton';
 
 /**
  * Operator-facing dashboard reading /api/diagnostics. Built to
@@ -93,8 +95,32 @@ function fmtMs(ms: number): string {
   return `${(ms / 1000).toFixed(1)}s`;
 }
 
+/** Tick every 5s so the relative-time label stays current between
+ *  /api/diagnostics fetches. Returns a dummy counter; the consumer
+ *  reads `Date.now()` itself in the render path. */
+function useTick(intervalMs: number): number {
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => setTick((x) => x + 1), intervalMs);
+    return () => clearInterval(t);
+  }, [intervalMs]);
+  return tick;
+}
+
+function relTime(iso: string | null | undefined): string {
+  if (!iso) return '';
+  const sec = Math.round((Date.now() - new Date(iso).getTime()) / 1000);
+  if (sec < 5) return 'just now';
+  if (sec < 60) return `${sec}s ago`;
+  if (sec < 3600) return `${Math.round(sec / 60)} min ago`;
+  return `${Math.round(sec / 3600)} h ago`;
+}
+
 export default function DiagnosticsPage() {
   const api = useApi();
+  // Re-render every 5s so the "Last updated 12s ago" label stays
+  // honest between the 10s /api/diagnostics polls.
+  useTick(5_000);
   const { data, refetch, isFetching } = useQuery({
     queryKey: ['diagnostics'],
     queryFn: () => api.get<Diagnostics>('/api/diagnostics'),
@@ -102,9 +128,20 @@ export default function DiagnosticsPage() {
   });
 
   if (!data) {
+    // Skeleton mirrors the populated layout: title + three headline
+    // cards + the Storage / Queues / Workers blocks. Reads as
+    // deliberate loading rather than the previous "Loading…" text.
     return (
-      <div className="text-sm text-ink-500">
-        <span className="animate-pulse">Loading diagnostics…</span>
+      <div className="space-y-6">
+        <Skeleton className="h-5 w-32" />
+        <div className="grid gap-3 sm:grid-cols-3">
+          <SkeletonCard />
+          <SkeletonCard />
+          <SkeletonCard />
+        </div>
+        <SkeletonCard className="h-28" />
+        <SkeletonCard className="h-40" />
+        <SkeletonCard className="h-32" />
       </div>
     );
   }
@@ -118,8 +155,8 @@ export default function DiagnosticsPage() {
       <div className="flex items-baseline justify-between gap-2">
         <h2 className="text-lg font-semibold">Diagnostics</h2>
         <div className="flex items-center gap-2 text-xs text-ink-500">
-          <span>
-            Last updated {new Date(data.generatedAt).toLocaleTimeString()}
+          <span title={new Date(data.generatedAt).toLocaleString()}>
+            Last updated {relTime(data.generatedAt)}
           </span>
           <button
             type="button"

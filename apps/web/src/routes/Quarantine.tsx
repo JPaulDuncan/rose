@@ -49,11 +49,46 @@ export default function QuarantinePage() {
       api.get<QuarantineResp>(`/api/quarantine?kind=${kind}&limit=200`),
   });
 
+  // Undo path for rescue: POST /api/spam/page/:id re-marks the
+  // page as user-marked-spam, the inverse of rescue's DELETE.
+  // Defined before `rescue` so the success toast can reference it.
+  const undoRescue = useMutation({
+    mutationFn: async (id: string) =>
+      api.post<{ ok: true }>(`/api/spam/page/${id}`),
+    onSuccess: () => {
+      toast.success('Re-quarantined');
+      qc.invalidateQueries({ queryKey: ['quarantine'] });
+      qc.invalidateQueries({ queryKey: ['digest'] });
+    },
+    onError: (e: Error) => toast.error(humaniseError(e)),
+  });
+
   const rescue = useMutation({
     mutationFn: async (id: string) =>
       api.del<{ ok: true }>(`/api/spam/page/${id}`),
-    onSuccess: () => {
-      toast.success('Rescued — back in your edition');
+    onSuccess: (_r, id) => {
+      // Custom toast with an undo button. UX-Review-2 §7 — rescue
+      // is constructive but a misclick is still recoverable for ~6s
+      // before the toast dismisses on its own. Mirrors the Gmail-
+      // style "Sent. Undo" affordance.
+      toast.success(
+        (t) => (
+          <span className="flex items-center gap-3">
+            <span>Rescued — back in your edition</span>
+            <button
+              type="button"
+              onClick={() => {
+                toast.dismiss(t.id);
+                undoRescue.mutate(id);
+              }}
+              className="rounded bg-ink-100 px-1.5 py-0.5 text-[11px] font-medium text-ink-700 hover:bg-ink-200 dark:bg-ink-800 dark:text-ink-200 dark:hover:bg-ink-700"
+            >
+              Undo
+            </button>
+          </span>
+        ),
+        { duration: 6_000 },
+      );
       qc.invalidateQueries({ queryKey: ['quarantine'] });
       qc.invalidateQueries({ queryKey: ['digest'] });
     },

@@ -447,10 +447,26 @@ function WatchForm({
         <span>
           <span className="font-medium">Deepen with web research</span>
           <span className="block text-[11px] text-ink-500">
-            After each fire, re-synthesise the same page through the full
-            topic-research pipeline — SearXNG → fetch → bounded recursion
-            → cite. Costs an extra LLM synthesis per run.
+            Re-synthesise the page with full citations after each fire.
           </span>
+          {/* The cost / mechanism details are tucked into a details so
+              the form stays scannable. UX-Review-2 §11. */}
+          <details className="mt-1 text-[11px] text-ink-500">
+            <summary className="cursor-pointer text-rose-600 hover:underline dark:text-rose-400">
+              How it works
+            </summary>
+            <p className="mt-1">
+              After each scheduled fire, Rose runs the full topic-research
+              pipeline against the same page: SearXNG queries → fetch the
+              top results past robots / rate-limit / paywall gates → bounded
+              recursion one level into in-body links → embed + score against
+              the topic centroid → re-synthesise the page from the top
+              relevance-weighted documents with{' '}
+              <code className="text-[10px]">[w?]</code> citations.
+              Costs one extra LLM synthesis per fire on top of the watch's
+              snippet brief.
+            </p>
+          </details>
           {!webResearchEnabled ? (
             // Save-time gate the worker would otherwise enforce silently:
             // without webResearch.enabled the deepResearch step no-ops

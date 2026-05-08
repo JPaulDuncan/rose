@@ -25,6 +25,7 @@ import {
   Package,
   Tag,
   Newspaper,
+  Keyboard,
 } from 'lucide-react';
 import clsx from 'clsx';
 import { useApi } from '../lib/api';
@@ -154,6 +155,19 @@ export function Shell({ children }: { children: ReactNode }) {
               </kbd>
             </button>
             <ActivityIndicator />
+            {/* Keyboard-help discoverability — without this button the
+                `?` chord is undiscoverable until you stumble into it.
+                Same shape as the palette button so users learn the
+                "header chrome triggers" pattern. UX-Review-2 §9. */}
+            <button
+              type="button"
+              className="rounded-lg p-1.5 text-ink-500 hover:bg-ink-100 dark:hover:bg-ink-800"
+              onClick={() => setHelpOpen(true)}
+              aria-label="Keyboard shortcuts"
+              title="Keyboard shortcuts (?)"
+            >
+              <Keyboard className="h-4 w-4" />
+            </button>
             <button
               type="button"
               className="rounded-lg p-1.5 text-ink-500 hover:bg-ink-100 dark:hover:bg-ink-800"

@@ -338,22 +338,35 @@ export default function PageView() {
           {/* Right column (~30%) — reference cards: topics, images, links,
               attachments. Sticky at top so they stay in view when the
               body scrolls past them. */}
+          {/* Right rail (~30%) — reference cards regrouped into three
+              tiers (UX-Review-2 §10): Provenance answers "where did
+              this come from", Extracted surfaces structured data the
+              ingest pipeline pulled out of the body, Links & assets
+              collects the URL / attachment / image surfaces. Section
+              headers give the user a scannable map of what's in the
+              rail without changing per-card semantics. */}
           <aside className="space-y-4 md:sticky md:top-4 md:self-start">
-            <Attribution page={page} />
-            <SourcesSection
-              citations={page.citations ?? {}}
-              sourceEmailIds={page.sourceEmailIds ?? []}
-            />
-            <PageExtrasBlock pageId={page._id} />
-            <PlacesCard places={page.places ?? []} />
-            <MentionsCard entities={page.entities ?? []} />
-            <TopicsBlock topics={page.topics ?? []} />
-            <ImagesBlock
-              images={page.pageImages ?? []}
-              heroUrl={page.heroImageUrl ?? null}
-            />
-            <LinksBlock links={page.pageLinks ?? []} />
-            <AttachmentsBlock attachments={page.pageAttachments ?? []} />
+            <RailGroup label="Provenance">
+              <Attribution page={page} />
+              <SourcesSection
+                citations={page.citations ?? {}}
+                sourceEmailIds={page.sourceEmailIds ?? []}
+              />
+            </RailGroup>
+            <RailGroup label="Extracted">
+              <PageExtrasBlock pageId={page._id} />
+              <PlacesCard places={page.places ?? []} />
+              <MentionsCard entities={page.entities ?? []} />
+              <TopicsBlock topics={page.topics ?? []} />
+            </RailGroup>
+            <RailGroup label="Links & assets">
+              <ImagesBlock
+                images={page.pageImages ?? []}
+                heroUrl={page.heroImageUrl ?? null}
+              />
+              <LinksBlock links={page.pageLinks ?? []} />
+              <AttachmentsBlock attachments={page.pageAttachments ?? []} />
+            </RailGroup>
           </aside>
         </div>
 
@@ -1538,6 +1551,43 @@ function MergeBanner({ page }: { page: PageDoc }) {
 }
 
 /** Header strip that explains why this page exists: senders, threads, mode. */
+/**
+ * Right-rail section grouper. Renders an uppercase eyebrow label
+ * above its children iff at least one child rendered something —
+ * the label hides automatically when every wrapped card returned
+ * null (e.g. an empty article with no places + no mentions + no
+ * topics shouldn't paint an "Extracted" header over nothing). The
+ * detection is structural rather than render-time inspection: we
+ * apply `[&>*:first-child]:before` styling so the label only
+ * paints when there's a non-empty descendant.
+ *
+ * Per-card spacing inherits from the parent `space-y-4`; the group
+ * itself uses `space-y-2` internally so the label sits closer to
+ * its first card than the previous group does.
+ */
+function RailGroup({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  // Filter out nulls / undefineds at the React-children level. If
+  // nothing renders, drop the whole group including its eyebrow.
+  // Mongoose returning [] for tags / topics / places is the common
+  // case on small pages; we don't want a pile of empty headers.
+  const arr = React.Children.toArray(children).filter(Boolean);
+  if (arr.length === 0) return null;
+  return (
+    <section className="space-y-2">
+      <div className="text-[10px] font-semibold uppercase tracking-widest text-ink-400">
+        {label}
+      </div>
+      <div className="space-y-4">{arr}</div>
+    </section>
+  );
+}
+
 function Attribution({ page }: { page: PageDoc }) {
   const senders = page.senderAddresses ?? [];
   const threadCount = page.threadKeys?.length ?? 0;
