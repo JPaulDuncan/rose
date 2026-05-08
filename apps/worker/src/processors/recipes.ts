@@ -355,6 +355,14 @@ SNIPPETS:
 
 const embedPageQueue = new Queue('rose.embed-page', { connection: bullConnection() });
 const postWriteHooksQueue = new Queue('rose.post-write-hooks', { connection: bullConnection() });
+// Topic-research follow-up queue. Used by deepResearchAfter on
+// briefing.generate when the user wants the watch's lightweight
+// snippet-synthesis to be deepened by the full SearXNG → fetch →
+// recursion → synthesise pipeline. Cheap to construct lazily; one
+// instance per worker process.
+const topicResearchQueue = new Queue('rose.topic-research', {
+  connection: bullConnection(),
+});
 
 /**
  * Run a Daydream-powered briefing on a topic and persist it as a Page.
@@ -371,6 +379,11 @@ async function runBriefingGenerate(
     maxResultsPerSource: number;
     targetWords: number;
     includeNewsSearch?: boolean;
+    /** Phase-2 follow-up — when true, enqueue a topicResearch run
+     *  after the briefing's snippet-synthesis lands. Gated by the
+     *  user's master `webResearch.enabled` toggle inside the
+     *  function. */
+    deepResearchAfter?: boolean;
   },
   recipeName: string,
   recipeId: Types.ObjectId | null,
@@ -628,6 +641,59 @@ async function runBriefingGenerate(
     body: `${recipeName} — “${title}”`,
     url: `/p/${slug}`,
   }).catch(() => null);
+
+  // Web-integration Phase 2 follow-up. When the watch opted into
+  // deepResearchAfter (and the user has the master webResearch
+  // toggle on), enqueue a topicResearch run that re-synthesises
+  // the same page through the full SearXNG → fetch → recursion →
+  // synthesise pipeline. The watch's own snippet-based version
+  // remains until the deeper run lands; the user just sees the
+  // page upgrade in place. Skipped silently when off — there's no
+  // failure path to surface.
+  if (config.deepResearchAfter === true) {
+    try {
+      const u = (await User.findById(userId)
+        .select('settings.daydream.webResearch.enabled')
+        .lean()) as
+        | { settings?: { daydream?: { webResearch?: { enabled?: boolean } } } }
+        | null;
+      if (u?.settings?.daydream?.webResearch?.enabled === true) {
+        await Page.updateOne(
+          { _id: pageId, researchState: { $in: ['idle', 'failed', null] } },
+          { $set: { researchState: 'queued', lastResearchError: null } },
+        );
+        await topicResearchQueue.add(
+          'research',
+          {
+            userId: String(userId),
+            pageId: String(pageId),
+            topicLabel: config.topic,
+          },
+          {
+            attempts: 1,
+            removeOnComplete: 100,
+            removeOnFail: 100,
+            // Watch follow-ups are background relative to user-
+            // initiated research from the API.
+            priority: 100,
+          },
+        );
+        logger.info(
+          {
+            pageId: String(pageId),
+            topic: config.topic,
+            recipeId: String(recipeId),
+          },
+          'topic-research: enqueued (watch deepResearchAfter)',
+        );
+      }
+    } catch (err) {
+      logger.warn(
+        { err, pageId: String(pageId) },
+        'topic-research: deepResearchAfter enqueue failed',
+      );
+    }
+  }
 
   return {
     pageSlug: slug,

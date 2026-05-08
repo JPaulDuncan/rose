@@ -74,6 +74,12 @@ const TopicWatchUpsert = z.object({
    *  when the user's global externalSearch toggle is off. Defaults
    *  true since topic watches are usually news-leaning. */
   includeNewsSearch: z.boolean().optional(),
+  /** Web-integration Phase 2 follow-up — when true, every fire of
+   *  this watch enqueues a topicResearch run after the snippet
+   *  synthesis lands. Gated by the user's master webResearch
+   *  toggle inside the worker; the API just passes the flag
+   *  through. */
+  deepResearchAfter: z.boolean().optional(),
 });
 
 type TopicWatchInput = z.infer<typeof TopicWatchUpsert>;
@@ -96,6 +102,7 @@ function recipeFromInput(input: TopicWatchInput, name?: string) {
           targetWords: input.targetWords ?? 400,
           maxResultsPerSource: input.maxResultsPerSource ?? 5,
           includeNewsSearch: input.includeNewsSearch ?? true,
+          deepResearchAfter: input.deepResearchAfter ?? false,
           ...(input.customPrompt ? { promptTemplate: input.customPrompt } : {}),
         },
       },
@@ -137,6 +144,7 @@ topicWatchesRouter.get('/', async (req, res) => {
               promptTemplate?: string;
               maxResultsPerSource?: number;
               includeNewsSearch?: boolean;
+              deepResearchAfter?: boolean;
             };
           }
         | undefined;
@@ -156,6 +164,9 @@ topicWatchesRouter.get('/', async (req, res) => {
         includeNewsSearch:
           (action?.config as { includeNewsSearch?: boolean } | undefined)
             ?.includeNewsSearch ?? true,
+        deepResearchAfter:
+          (action?.config as { deepResearchAfter?: boolean } | undefined)
+            ?.deepResearchAfter ?? false,
         pageSlug: slugByRecipeId.get(String(r._id)) ?? null,
         enabled: r.enabled,
         fireCount: r.fireCount ?? 0,

@@ -268,6 +268,15 @@ const BriefingGenerateAction = z.object({
      *  encyclopedic context. Per-adapter toggles inside
      *  `externalSearch` still apply. */
     includeNewsSearch: z.boolean().default(true),
+    /** Web-integration Phase 2 opt-in. After the watch's own
+     *  daydream-snippet synthesis lands, enqueue a deeper
+     *  topicResearch run that fans out across SearXNG + bounded
+     *  recursion + the WebDocument cache, then re-synthesises the
+     *  same page with full citations. Off by default — costs an
+     *  extra LLM synthesis call per fire. Requires the user's
+     *  `settings.daydream.webResearch.enabled` to also be on; the
+     *  worker no-ops if the user's master toggle is off. */
+    deepResearchAfter: z.boolean().default(false),
   }),
 });
 

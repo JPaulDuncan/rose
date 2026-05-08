@@ -26,6 +26,10 @@ type TopicWatch = {
   customPrompt: string | null;
   maxResultsPerSource: number;
   includeNewsSearch: boolean;
+  /** Web-integration Phase 2 follow-up — when true, every fire
+   *  enqueues a deeper topicResearch run after the snippet
+   *  synthesis. Gated by the user's master webResearch toggle. */
+  deepResearchAfter?: boolean;
   /** Slug of the Page this watch upserts on each run, or null when
    *  the watch hasn't fired successfully yet. */
   pageSlug: string | null;
@@ -296,6 +300,7 @@ type WatchFormValues = {
   customPrompt?: string;
   maxResultsPerSource: number;
   includeNewsSearch: boolean;
+  deepResearchAfter?: boolean;
 };
 
 const PRESET_CADENCES: { id: string; label: string; cron: string; hint: string }[] = [
@@ -343,6 +348,9 @@ function WatchForm({
   );
   const [includeNewsSearch, setIncludeNewsSearch] = useState<boolean>(
     initial?.includeNewsSearch ?? true,
+  );
+  const [deepResearchAfter, setDeepResearchAfter] = useState<boolean>(
+    initial?.deepResearchAfter ?? false,
   );
 
   const cron = useMemo(() => {
@@ -399,6 +407,26 @@ function WatchForm({
             includes current news — not just encyclopedic context. Leave on
             for "what's new with X" topics; turn off for pure background
             briefs.
+          </span>
+        </span>
+      </label>
+
+      <label className="flex items-start gap-2 text-sm">
+        <input
+          type="checkbox"
+          className="mt-1 h-4 w-4 accent-rose-500"
+          checked={deepResearchAfter}
+          onChange={(e) => setDeepResearchAfter(e.target.checked)}
+        />
+        <span>
+          <span className="font-medium">Deepen with web research</span>
+          <span className="block text-[11px] text-ink-500">
+            After each fire, run the full topic-research pipeline against
+            the same page — fetches each top result, recurses one level
+            into in-body links, embeds + scores against the topic, and
+            re-synthesises with full citations. Costs an extra LLM
+            synthesis per run. Requires <em>Topic research</em> to be
+            enabled in Settings → Daydream.
           </span>
         </span>
       </label>
@@ -554,6 +582,7 @@ function WatchForm({
               targetWords,
               maxResultsPerSource,
               includeNewsSearch,
+              deepResearchAfter,
               ...(customPrompt.trim() ? { customPrompt: customPrompt.trim() } : {}),
             })
           }
