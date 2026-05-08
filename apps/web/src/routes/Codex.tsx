@@ -27,6 +27,7 @@ import {
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useApi } from '../lib/api';
+import { useConfirm } from '../components/ConfirmModal';
 import { SynthesizeDrawer } from '../components/SynthesizeDrawer';
 
 type Entry = {
@@ -1509,6 +1510,7 @@ function relTime(iso: string | null): string {
 function WebSourcesTab() {
   const api = useApi();
   const qc = useQueryClient();
+  const confirm = useConfirm();
   const { data, isLoading } = useQuery({
     queryKey: ['web-sources'],
     queryFn: () => api.get<WebSourcesResponse>('/api/web-documents'),
@@ -1660,9 +1662,32 @@ function WebSourcesTab() {
                   </button>
                   <button
                     type="button"
-                    onClick={() =>
-                      forget.mutate({ hostKey: h.hostKey, deleteCached: true })
-                    }
+                    onClick={async () => {
+                      // Destructive — drops every WebDocument we
+                      // have for this host. The cache rebuilds on
+                      // the next run that touches the host (if it's
+                      // not also denied), but the on-the-floor data
+                      // is gone.
+                      const ok = await confirm.confirm({
+                        title: `Forget ${h.hostKey}?`,
+                        body: (
+                          <>
+                            Skips future research runs AND deletes the{' '}
+                            <strong>{h.docCount}</strong> cached page
+                            {h.docCount === 1 ? '' : 's'} from{' '}
+                            <code>{h.hostKey}</code>. Future runs that touch
+                            the host will rebuild the cache from scratch —
+                            unless you also leave it on the deny list, in
+                            which case nothing pulls from this host again.
+                          </>
+                        ),
+                        confirmLabel: 'Skip + delete cached',
+                        destructive: true,
+                      });
+                      if (ok) {
+                        forget.mutate({ hostKey: h.hostKey, deleteCached: true });
+                      }
+                    }}
                     disabled={forget.isPending}
                     className="btn-ghost text-xs text-red-700 dark:text-red-300"
                     title={`Skip future runs AND delete the ${h.docCount} cached page${h.docCount === 1 ? '' : 's'} from this host.`}

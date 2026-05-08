@@ -332,6 +332,21 @@ function WatchForm({
   onSubmit: (v: WatchFormValues) => void;
   submitting: boolean;
 }) {
+  const api = useApi();
+  // Watch builder needs to know whether the user has Topic research
+  // enabled at the master level. Without this lookup the
+  // `deepResearchAfter` checkbox saves successfully but the worker
+  // silently no-ops at run-time, leaving the user wondering why
+  // the page never upgrades. Cached for the lifetime of the form
+  // so opening the modal multiple times doesn't re-fetch.
+  const { data: daydreamSettings } = useQuery({
+    queryKey: ['daydream-settings'],
+    queryFn: () =>
+      api.get<{ webResearch?: { enabled?: boolean } }>('/api/daydream'),
+    staleTime: 60_000,
+  });
+  const webResearchEnabled =
+    daydreamSettings?.webResearch?.enabled === true;
   const [name, setName] = useState(initial?.name ?? '');
   const [topic, setTopic] = useState(initial?.topic ?? '');
   const initialPreset = initial
@@ -411,23 +426,49 @@ function WatchForm({
         </span>
       </label>
 
-      <label className="flex items-start gap-2 text-sm">
+      <label
+        className={
+          'flex items-start gap-2 text-sm ' +
+          (!webResearchEnabled ? 'opacity-60' : '')
+        }
+      >
         <input
           type="checkbox"
-          className="mt-1 h-4 w-4 accent-rose-500"
-          checked={deepResearchAfter}
+          className="mt-1 h-4 w-4 accent-rose-500 disabled:cursor-not-allowed"
+          checked={deepResearchAfter && webResearchEnabled}
+          disabled={!webResearchEnabled}
           onChange={(e) => setDeepResearchAfter(e.target.checked)}
+          title={
+            webResearchEnabled
+              ? undefined
+              : 'Enable Topic research in Settings → Daydream first'
+          }
         />
         <span>
           <span className="font-medium">Deepen with web research</span>
           <span className="block text-[11px] text-ink-500">
-            After each fire, run the full topic-research pipeline against
-            the same page — fetches each top result, recurses one level
-            into in-body links, embeds + scores against the topic, and
-            re-synthesises with full citations. Costs an extra LLM
-            synthesis per run. Requires <em>Topic research</em> to be
-            enabled in Settings → Daydream.
+            After each fire, re-synthesise the same page through the full
+            topic-research pipeline — SearXNG → fetch → bounded recursion
+            → cite. Costs an extra LLM synthesis per run.
           </span>
+          {!webResearchEnabled ? (
+            // Save-time gate the worker would otherwise enforce silently:
+            // without webResearch.enabled the deepResearch step no-ops
+            // and the user never sees the upgrade. Surface it inline
+            // so they don't save a watch that won't behave as expected.
+            <span className="mt-1 block text-[11px]">
+              <span className="rounded bg-amber-100 px-1.5 py-0.5 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
+                Disabled
+              </span>{' '}
+              <a
+                href="/settings/daydream"
+                className="text-rose-600 hover:underline dark:text-rose-400"
+              >
+                Enable Topic research in Settings → Daydream
+              </a>{' '}
+              to use this option.
+            </span>
+          ) : null}
         </span>
       </label>
 
@@ -582,7 +623,11 @@ function WatchForm({
               targetWords,
               maxResultsPerSource,
               includeNewsSearch,
-              deepResearchAfter,
+              // The checkbox forces false when the master toggle is
+              // off, but persist false explicitly to avoid stale `true`
+              // from a prior save when the user has since disabled
+              // webResearch globally.
+              deepResearchAfter: deepResearchAfter && webResearchEnabled,
               ...(customPrompt.trim() ? { customPrompt: customPrompt.trim() } : {}),
             })
           }

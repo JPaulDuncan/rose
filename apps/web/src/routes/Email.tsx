@@ -644,16 +644,7 @@ function EmailActionsBar({
             disabled={busy}
             aria-haspopup="menu"
             aria-expanded={senderMenu}
-            className={
-              'btn-ghost text-xs ' +
-              (isBlocked
-                ? 'text-red-700 dark:text-red-300'
-                : isWhitelisted
-                  ? 'text-emerald-700 dark:text-emerald-300'
-                  : isSpamMarked
-                    ? 'text-amber-700 dark:text-amber-300'
-                    : '')
-            }
+            className="btn-ghost text-xs"
             title={`Sender controls for ${senderAddr}`}
           >
             {isBlocked ? (
@@ -666,9 +657,23 @@ function EmailActionsBar({
               <ShieldCheck className="h-3.5 w-3.5" />
             )}{' '}
             Sender
-            {(isBlocked || isWhitelisted || isSpamMarked) && (
-              <span className="ml-1 text-[10px] opacity-80">
-                ({isBlocked ? 'blocked' : isWhitelisted ? 'trusted' : 'muted'})
+            {/* State badge sits to the right of the chevron as a
+                solid pill rather than parenthetical text, so the
+                "this sender is currently blocked / trusted / muted"
+                signal survives a quick scan. UX-Review-2 §6. */}
+            {isBlocked && (
+              <span className="ml-1 rounded bg-red-600 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-white">
+                Blocked
+              </span>
+            )}
+            {!isBlocked && isWhitelisted && (
+              <span className="ml-1 rounded bg-emerald-600 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-white">
+                Trusted
+              </span>
+            )}
+            {!isBlocked && !isWhitelisted && isSpamMarked && (
+              <span className="ml-1 rounded bg-amber-600 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-white">
+                Muted
               </span>
             )}{' '}
             <ChevronDown className="h-3 w-3" />

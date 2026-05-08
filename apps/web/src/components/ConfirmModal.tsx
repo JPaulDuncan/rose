@@ -148,19 +148,26 @@ function ConfirmDialog({
   }, [request]);
 
   // Keyboard support: Escape cancels, Enter confirms when valid.
+  // Plain Enter submits prompts and non-destructive confirms (the
+  // common "yes, continue" reflex). Destructive confirms require
+  // ⌘/Ctrl+Enter so a stray keystroke can't fire a Block / Delete
+  // button the user hasn't deliberately focused. UX-Review-2 §7.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.preventDefault();
         onClose(request.kind === 'confirm' ? false : null);
-      } else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey || request.kind === 'prompt')) {
-        // Plain Enter inside a prompt input submits; for confirms we
-        // require ⌘/Ctrl+Enter so a stray Enter doesn't fire a
-        // destructive button the user hasn't focused.
-        e.preventDefault();
-        if (request.kind === 'prompt') onClose(promptValue);
-        else if (canSubmit) onClose(true);
+        return;
       }
+      if (e.key !== 'Enter') return;
+      const destructive =
+        request.kind === 'confirm' && request.destructive === true;
+      const requiresModifier = destructive;
+      const hasModifier = e.metaKey || e.ctrlKey;
+      if (requiresModifier && !hasModifier) return;
+      e.preventDefault();
+      if (request.kind === 'prompt') onClose(promptValue);
+      else if (canSubmit) onClose(true);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
