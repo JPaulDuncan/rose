@@ -228,7 +228,6 @@ export default function PageView() {
               )}
             </span>
           </div>
-          <Attribution page={page} />
           <MergeBanner page={page} />
           <PageBanners page={page} />
         </div>
@@ -284,10 +283,6 @@ export default function PageView() {
                 places={page.places ?? []}
               />
             </article>
-            <SourcesSection
-              citations={page.citations ?? {}}
-              sourceEmailIds={page.sourceEmailIds ?? []}
-            />
             {page.externalSources && page.externalSources.length > 0 && (
               <ExternalSourcesSection sources={page.externalSources} />
             )}
@@ -299,6 +294,11 @@ export default function PageView() {
               attachments. Sticky at top so they stay in view when the
               body scrolls past them. */}
           <aside className="space-y-4 lg:sticky lg:top-4 lg:self-start">
+            <Attribution page={page} />
+            <SourcesSection
+              citations={page.citations ?? {}}
+              sourceEmailIds={page.sourceEmailIds ?? []}
+            />
             <PageExtrasBlock pageId={page._id} />
             <PlacesCard places={page.places ?? []} />
             <MentionsCard entities={page.entities ?? []} />
