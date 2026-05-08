@@ -367,6 +367,9 @@ export default function EmailView() {
           column. */}
       <div className="mt-2 grid gap-6 lg:grid-cols-[minmax(0,7fr)_minmax(0,3fr)]">
         <div className="min-w-0 space-y-4">
+          {replyOpen && (
+            <DraftReply email={data} open={replyOpen} onOpenChange={setReplyOpen} />
+          )}
           <BodyTabs view={view} setView={setView} hasHtml={!!data.html} hasRaw={!!data.rawText} />
           <div>
             {view === 'text' && <TextBody text={data.text || data.rawText || ''} />}
@@ -374,9 +377,6 @@ export default function EmailView() {
             {view === 'raw' && <TextBody text={data.rawText || data.text || ''} mono />}
           </div>
 
-          {replyOpen && (
-            <DraftReply email={data} open={replyOpen} onOpenChange={setReplyOpen} />
-          )}
           {recipeSeed && (
             <AddToRecipePanel seed={recipeSeed} onClose={() => setRecipeSeed(null)} />
           )}
