@@ -346,36 +346,69 @@ spamRouter.post('/block', validateBody(BlockSenderRequest), async (req, res) => 
   let pagesDeleted = 0;
   let pagesPruned = 0;
   if (removeExisting) {
+    // Brand-aware match: blocking `notices.medium.com` should
+    // delete every other `*.medium.com` row too. We compute the
+    // candidate brand for the blocked address; if it's a real
+    // brand, every email whose from-address resolves to the same
+    // brand gets purged. Personal-mail providers (gmail.com, …)
+    // return null from senderDomainTag and fall through to the
+    // exact-address path, preserving "block boss@example.com
+    // doesn't kill cousin@example.com" semantics.
+    const brand = senderDomainTag(address)?.toLowerCase() ?? null;
+    const matchedEmails = await Email.find({ userId })
+      .select('from')
+      .lean();
+    const matchedAddresses = new Set<string>();
+    matchedAddresses.add(address);
+    if (brand) {
+      for (const e of matchedEmails) {
+        const from = (e.from as { address?: string } | null)?.address?.toLowerCase();
+        if (!from) continue;
+        if (senderDomainTag(from)?.toLowerCase() === brand) {
+          matchedAddresses.add(from);
+        }
+      }
+    }
+    const addrFilter =
+      matchedAddresses.size === 1
+        ? { 'from.address': address }
+        : { 'from.address': { $in: [...matchedAddresses] } };
     // Train the Bayes classifier first while the spam emails still
     // exist — once we delete them we lose the training corpus.
-    const emails = await Email.find({ userId, 'from.address': address })
+    const emails = await Email.find({ userId, ...addrFilter })
       .sort({ date: -1 })
       .limit(200)
       .select('subject text')
       .lean();
     await trainBayesForEmails(userId, emails, true);
 
-    // Identify pages this sender contributed to. Pages where this
-    // sender is the SOLE contributor get deleted; pages with other
-    // contributors just lose the blocked sender's emails.
-    const affectedPages = await Page.find({ userId, senderAddresses: address })
+    // Identify pages any matching address contributed to. Pages
+    // where the matched set is the SOLE contributor get deleted;
+    // pages with other contributors just lose the blocked addresses.
+    const senderAddrFilter =
+      matchedAddresses.size === 1
+        ? { senderAddresses: address }
+        : { senderAddresses: { $in: [...matchedAddresses] } };
+    const affectedPages = await Page.find({ userId, ...senderAddrFilter })
       .select('_id senderAddresses sourceEmailIds')
       .lean();
     for (const page of affectedPages) {
-      const others = (page.senderAddresses ?? []).filter((a: string) => a !== address);
+      const others = (page.senderAddresses ?? []).filter(
+        (a: string) => !matchedAddresses.has(a),
+      );
       if (others.length === 0) {
         await Page.deleteOne({ _id: page._id, userId });
         pagesDeleted += 1;
       } else {
         await Page.updateOne(
           { _id: page._id, userId },
-          { $pull: { senderAddresses: address } },
+          { $pull: { senderAddresses: { $in: [...matchedAddresses] } } },
         );
         pagesPruned += 1;
       }
     }
 
-    const r = await Email.deleteMany({ userId, 'from.address': address });
+    const r = await Email.deleteMany({ userId, ...addrFilter });
     emailsDeleted = r.deletedCount ?? 0;
   }
 

@@ -2,7 +2,7 @@ import { Worker, type Job, Queue } from 'bullmq';
 import { ImapFlow } from 'imapflow';
 import { Types } from 'mongoose';
 import { Source, Email, User } from '@rose/db';
-import { parseEmail, formatImapError, senderDomainTag } from '@rose/email-parser';
+import { parseEmail, formatImapError, senderDomainTag, compileSenderBlocklist, isSenderBlocked } from '@rose/email-parser';
 import { decryptJson } from '../lib/crypto.js';
 import { redis } from '../lib/redis.js';
 import { logger } from '../lib/logger.js';
@@ -26,12 +26,12 @@ export function startImapSyncWorker() {
 
       const cfg = decryptJson<ImapConfig>(source.encryptedConfig);
       // Snapshot the user's blocklist once per sync run so we don't
-      // round-trip Mongo per message. The list is small.
+      // round-trip Mongo per message. Compile into address + brand
+      // sets so a "notices.medium.com" entry also blocks every
+      // other `*.medium.com` mailer.
       const userPrefs = await User.findById(userId).select('spamPolicy.blockedSenders').lean();
-      const blocked = new Set(
-        ((userPrefs?.spamPolicy?.blockedSenders as string[] | undefined) ?? []).map((a) =>
-          a.toLowerCase(),
-        ),
+      const blocked = compileSenderBlocklist(
+        (userPrefs?.spamPolicy?.blockedSenders as string[] | undefined) ?? [],
       );
       const client = new ImapFlow({
         host: cfg.host,
@@ -90,7 +90,7 @@ export function startImapSyncWorker() {
               // page-generation pass on it. Counts as `skippedDup` so
               // the user's stats keep reading "we ignored this".
               const fromAddr = cleaned.from?.address?.toLowerCase() ?? '';
-              if (fromAddr && blocked.has(fromAddr)) {
+              if (fromAddr && isSenderBlocked(blocked, fromAddr)) {
                 skippedDup += 1;
                 continue;
               }
