@@ -1,9 +1,6 @@
 import { Worker, type Job, Queue } from 'bullmq';
 import { Types } from 'mongoose';
 import { createHash } from 'node:crypto';
-import { Readability } from '@mozilla/readability';
-import { parseHTML } from 'linkedom';
-import TurndownService from 'turndown';
 import { Source, Email } from '@rose/db';
 import { priorityForDate, type WebsiteConfig } from '@rose/shared';
 import { detectPromoCodesForEmail } from '@rose/promo-codes';
@@ -14,19 +11,12 @@ import { emitRecipeEvent } from '../lib/recipeEmit.js';
 import { assertSafeHttpUrl, UnsafeUrlError } from '../lib/safeFetch.js';
 import { redis, bullConnection } from '../lib/redis.js';
 import { logger } from '../lib/logger.js';
+import { extractArticle } from '../services/extractArticle.js';
 
 const QUEUE = 'rose.website-sync';
 const generateQueue = new Queue('rose.generate-page', { connection: bullConnection() });
 
 type WebsiteJobData = { sourceId: string; userId: string };
-
-const turndown = new TurndownService({
-  headingStyle: 'atx',
-  bulletListMarker: '-',
-  codeBlockStyle: 'fenced',
-  emDelimiter: '*',
-});
-turndown.remove(['script', 'style', 'iframe', 'noscript']);
 
 type FetchOutcome =
   | { kind: 'unchanged' }
@@ -107,40 +97,6 @@ async function conditionalFetchHtml(
   throw new Error('Too many redirects');
 }
 
-type DomDocument = {
-  querySelector(
-    selector: string,
-  ): { getAttribute?(name: string): string | null; textContent?: string | null } | null;
-};
-
-function pickMeta(doc: DomDocument): {
-  title: string | null;
-  description: string | null;
-  siteName: string | null;
-  image: string | null;
-  publishedAt: string | null;
-} {
-  const meta = (sel: string) => doc.querySelector(sel)?.getAttribute?.('content') ?? null;
-  const title =
-    meta('meta[property="og:title"]') ??
-    meta('meta[name="twitter:title"]') ??
-    doc.querySelector('title')?.textContent?.trim() ??
-    null;
-  const description =
-    meta('meta[property="og:description"]') ??
-    meta('meta[name="twitter:description"]') ??
-    meta('meta[name="description"]');
-  const siteName =
-    meta('meta[property="og:site_name"]') ?? meta('meta[name="application-name"]');
-  const image =
-    meta('meta[property="og:image"]') ?? meta('meta[name="twitter:image"]');
-  const publishedAt =
-    meta('meta[property="article:published_time"]') ??
-    meta('meta[name="date"]') ??
-    null;
-  return { title, description, siteName, image, publishedAt };
-}
-
 function senderForUrl(url: string, siteName: string | null): { name: string; address: string } {
   let host = url;
   try {
@@ -185,23 +141,17 @@ export function startWebsiteSyncWorker() {
         return;
       }
 
-      const { document } = parseHTML(outcome.bodyHtml);
-      const meta = pickMeta(document);
-      const article = new Readability(document as unknown as never).parse();
-      const articleHtml = article?.content ?? '';
-      const title = (article?.title || meta.title || outcome.finalUrl).trim().slice(0, 200);
-      const md = turndown.turndown(articleHtml).trim();
-      const fallbackText = (article?.textContent ?? '').trim();
-      const text = md || fallbackText;
-      if (!text) {
+      const article = extractArticle(outcome.bodyHtml);
+      if (!article) {
         const msg = 'No readable content extracted from page';
         source.lastError = msg;
         source.status = 'error';
         await source.save();
         throw new Error(msg);
       }
-
-      const contentHash = createHash('sha256').update(text).digest('hex');
+      const title = (article.title || outcome.finalUrl).trim().slice(0, 200);
+      const text = article.contentMd || article.textContent;
+      const contentHash = article.contentHash;
 
       // Cache validators always update (even when content matches), so the
       // next conditional GET still gets to short-circuit at HTTP layer.
@@ -231,12 +181,12 @@ export function startWebsiteSyncWorker() {
         .update(contentHash)
         .digest('hex');
 
-      const sender = senderForUrl(outcome.finalUrl, meta.siteName);
+      const sender = senderForUrl(outcome.finalUrl, article.siteName);
       const brand = senderDomainTag(sender.address);
       const topics: string[] = [];
       if (brand) topics.push(brand.toLowerCase());
 
-      const date = meta.publishedAt ? new Date(meta.publishedAt) : new Date();
+      const date = article.publishedAt ? new Date(article.publishedAt) : new Date();
 
       const dup = await Email.findOne({ userId, $or: [{ messageId }, { rawHash }] })
         .select('_id')
@@ -261,7 +211,7 @@ export function startWebsiteSyncWorker() {
         sourceId: source._id,
         kind: 'url',
         sourceUrl: outcome.finalUrl,
-        siteName: meta.siteName ?? null,
+        siteName: article.siteName ?? null,
         messageId,
         rawHash,
         from: sender,
@@ -271,12 +221,12 @@ export function startWebsiteSyncWorker() {
         date,
         text: text.slice(0, 60_000),
         rawText: text.slice(0, 60_000),
-        html: articleHtml || null,
+        html: null,
         attachments: [],
         priority: 'normal',
         topics,
         links: [],
-        images: meta.image ? [{ url: meta.image, alt: title }] : [],
+        images: article.imageUrl ? [{ url: article.imageUrl, alt: title }] : [],
         spamScore: 0,
         spamSignals: [],
         isMassMailing: false,

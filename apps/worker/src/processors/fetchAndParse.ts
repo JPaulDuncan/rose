@@ -1,15 +1,10 @@
 import { Worker, type Job, Queue } from 'bullmq';
 import { Types } from 'mongoose';
 import { createHash } from 'node:crypto';
-import { Readability } from '@mozilla/readability';
-import { parseHTML } from 'linkedom';
 import TurndownService from 'turndown';
 import { PDFParse } from 'pdf-parse';
 import mammoth from 'mammoth';
 
-type DomDocument = {
-  querySelector(selector: string): { getAttribute?(name: string): string | null; textContent?: string | null } | null;
-};
 import { Email } from '@rose/db';
 import { priorityForDate } from '@rose/shared';
 import { senderDomainTag } from '@rose/email-parser';
@@ -18,6 +13,7 @@ import { detectShipmentsForEmail } from '@rose/shipments';
 import { safeFetch, UnsafeUrlError } from '../lib/safeFetch.js';
 import { redis, bullConnection } from '../lib/redis.js';
 import { logger } from '../lib/logger.js';
+import { extractArticle } from '../services/extractArticle.js';
 
 const QUEUE = 'rose.fetch-and-parse';
 const generateQueue = new Queue('rose.generate-page', { connection: bullConnection() });
@@ -47,36 +43,6 @@ const turndown = new TurndownService({
   emDelimiter: '*',
 });
 turndown.remove(['script', 'style', 'iframe', 'noscript']);
-
-/** Pull OG / Twitter card metadata + canonical URL from a document. */
-function pickMeta(doc: DomDocument): {
-  title: string | null;
-  description: string | null;
-  siteName: string | null;
-  image: string | null;
-  publishedAt: string | null;
-} {
-  const meta = (sel: string) =>
-    doc.querySelector(sel)?.getAttribute?.('content') ?? null;
-  const title =
-    meta('meta[property="og:title"]') ??
-    meta('meta[name="twitter:title"]') ??
-    doc.querySelector('title')?.textContent?.trim() ??
-    null;
-  const description =
-    meta('meta[property="og:description"]') ??
-    meta('meta[name="twitter:description"]') ??
-    meta('meta[name="description"]');
-  const siteName =
-    meta('meta[property="og:site_name"]') ?? meta('meta[name="application-name"]');
-  const image =
-    meta('meta[property="og:image"]') ?? meta('meta[name="twitter:image"]');
-  const publishedAt =
-    meta('meta[property="article:published_time"]') ??
-    meta('meta[name="date"]') ??
-    null;
-  return { title, description, siteName, image, publishedAt };
-}
 
 function senderForUrl(url: string, siteName: string | null): {
   name: string;
@@ -119,18 +85,13 @@ async function ingestUrl(
   }
 
   const html = bytes.toString('utf-8');
-  const { document } = parseHTML(html);
-  const meta = pickMeta(document);
-  const article = new Readability(document as unknown as never).parse();
-  const articleHtml = article?.content ?? '';
-  const title = (article?.title || meta.title || finalUrl).trim().slice(0, 200);
-  const md = turndown.turndown(articleHtml).trim();
-  const fallbackText = (article?.textContent ?? '').trim();
-  const text = md || fallbackText;
-  if (!text) throw new Error('No readable content extracted from page');
-  const date = meta.publishedAt ? new Date(meta.publishedAt) : new Date();
+  const article = extractArticle(html);
+  if (!article) throw new Error('No readable content extracted from page');
+  const title = (article.title || finalUrl).trim().slice(0, 200);
+  const text = article.contentMd || article.textContent;
+  const date = article.publishedAt ? new Date(article.publishedAt) : new Date();
 
-  const sender = senderForUrl(finalUrl, meta.siteName);
+  const sender = senderForUrl(finalUrl, article.siteName);
   const brand = senderDomainTag(sender.address);
   const topics: string[] = [];
   if (brand) topics.push(brand.toLowerCase());
@@ -151,7 +112,7 @@ async function ingestUrl(
     userId,
     kind: 'url',
     sourceUrl: finalUrl,
-    siteName: meta.siteName ?? null,
+    siteName: article.siteName ?? null,
     messageId: `url:${finalUrl}`,
     rawHash,
     from: sender,
@@ -161,12 +122,12 @@ async function ingestUrl(
     date,
     text: text.slice(0, 60_000),
     rawText: text.slice(0, 60_000),
-    html: articleHtml || null,
+    html: null,
     attachments: [],
     priority: 'normal',
     topics,
     links: [],
-    images: meta.image ? [{ url: meta.image, alt: title }] : [],
+    images: article.imageUrl ? [{ url: article.imageUrl, alt: title }] : [],
     spamScore: 0,
     spamSignals: [],
     isMassMailing: false,
@@ -242,11 +203,12 @@ async function ingestDocument(
   } else if (contentType.startsWith('text/plain') || /\.txt$/i.test(filename)) {
     text = buffer.toString('utf-8');
   } else if (contentType.includes('text/html') || /\.html?$/i.test(filename)) {
-    const { document } = parseHTML(buffer.toString('utf-8'));
-    const article = new Readability(document as unknown as never).parse();
-    html = article?.content ?? null;
-    text = (turndown.turndown(article?.content ?? '') || article?.textContent || '').trim();
-    if (article?.title) title = article.title.slice(0, 200);
+    const article = extractArticle(buffer.toString('utf-8'));
+    if (article) {
+      html = null;
+      text = article.contentMd || article.textContent;
+      if (article.title) title = article.title.slice(0, 200);
+    }
   } else {
     throw new Error(`Unsupported document type: ${contentType}`);
   }
