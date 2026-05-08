@@ -97,7 +97,10 @@ const RECURSE_SCORE_THRESHOLD = 0.4;
  * topical relevance, but we should never crash a research run on a
  * malformed date string from a CMS.
  */
-function parsePublishedAt(
+// Helpers below are exported solely for unit tests in
+// __tests__/topicResearch.test.ts. Outside of that suite they're
+// implementation detail of startTopicResearchWorker.
+export function parsePublishedAt(
   primary: string | Date | null | undefined,
   fallback: Date | null | undefined,
 ): Date | null {
@@ -120,7 +123,7 @@ function parsePublishedAt(
  * year-old = 0.6. Continuous and monotone; clamps at 0.6 so
  * historical context isn't deweighted into uselessness.
  */
-function recencyFactor(publishedAt: Date | null): number {
+export function recencyFactor(publishedAt: Date | null): number {
   if (!publishedAt) return 0.85;
   const ageDays = (Date.now() - publishedAt.getTime()) / 86_400_000;
   if (ageDays <= 1) return 1.0;
@@ -185,7 +188,7 @@ const TRUSTED_RECURSION_HOSTS = new Set([
  *
  * Returns 0–1. The threshold is `RECURSE_SCORE_THRESHOLD`.
  */
-function scoreLink(
+export function scoreLink(
   href: string,
   anchorText: string,
   topicTokens: Set<string>,
@@ -245,7 +248,7 @@ function scoreLink(
  * the worst it can do is drop a link, which the next research run
  * will probably surface via SearXNG anyway.
  */
-function harvestLinks(
+export function harvestLinks(
   bodyHtml: string,
   parentUrl: string,
   topicLabel: string,
@@ -321,7 +324,7 @@ async function searchUrls(query: string, signal?: AbortSignal): Promise<
 
 /** Phase 1 query plan — three predictable templates per topic.
  *  Future commits can replace this with an LLM-generated plan. */
-function buildQueries(topicLabel: string): string[] {
+export function buildQueries(topicLabel: string): string[] {
   const t = topicLabel.trim();
   if (!t) return [];
   return [
