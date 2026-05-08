@@ -85,45 +85,50 @@ export function startGmailSyncWorker() {
         const fromAddr = cleaned.from?.address?.toLowerCase() ?? '';
         const isWhitelisted = isSenderWhitelisted(whitelisted, fromAddr);
         if (fromAddr && !isWhitelisted && isSenderBlocked(blocked, fromAddr)) continue;
-        // Cover-query dedup check — `exists` is much cheaper than
-        // hydrating a full Email doc just to discover we'd skip it.
-        if (await Email.exists({ userId, rawHash: cleaned.rawHash })) continue;
-        const created = await Email.create({
-          userId,
-          sourceId: source._id,
-          messageId: cleaned.messageId,
-          threadKey: cleaned.threadKey,
-          subjectTemplate: cleaned.subjectTemplate,
-          rawHash: cleaned.rawHash,
-          from: cleaned.from,
-          to: cleaned.to,
-          cc: cleaned.cc,
-          subject: cleaned.subject,
-          date: cleaned.date,
-          text: cleaned.text,
-          rawText: cleaned.rawText,
-          html: cleaned.html,
-          attachments: cleaned.attachments.map((a) => ({
-            filename: a.filename,
-            contentType: a.contentType,
-            size: a.size,
-            contentId: a.contentId,
-          })),
-          priority: cleaned.metadata.priority,
-          topics: cleaned.metadata.topics,
-          links: cleaned.metadata.links,
-          images: cleaned.metadata.images,
-          spamScore: cleaned.metadata.spamScore,
-          spamSignals: cleaned.metadata.spamSignals,
-          isMassMailing: cleaned.metadata.isMassMailing,
-          promotionalScore: cleaned.metadata.promotionalScore,
-          isPromotional: cleaned.metadata.isPromotional,
-          promotionalSignals: cleaned.metadata.promotionalSignals,
-          authResults: cleaned.metadata.authResults,
-          logoCandidate: cleaned.metadata.logoCandidate ?? undefined,
-          unsubscribeUrls: cleaned.metadata.unsubscribeUrls,
-          ingestStatus: 'parsed',
-        });
+        // Atomic dedup-or-insert via the unique (userId, rawHash)
+        // index. One round-trip; E11000 means already-ingested.
+        let created;
+        try {
+          created = await Email.create({
+            userId,
+            sourceId: source._id,
+            messageId: cleaned.messageId,
+            threadKey: cleaned.threadKey,
+            subjectTemplate: cleaned.subjectTemplate,
+            rawHash: cleaned.rawHash,
+            from: cleaned.from,
+            to: cleaned.to,
+            cc: cleaned.cc,
+            subject: cleaned.subject,
+            date: cleaned.date,
+            text: cleaned.text,
+            rawText: cleaned.rawText,
+            html: cleaned.html,
+            attachments: cleaned.attachments.map((a) => ({
+              filename: a.filename,
+              contentType: a.contentType,
+              size: a.size,
+              contentId: a.contentId,
+            })),
+            priority: cleaned.metadata.priority,
+            topics: cleaned.metadata.topics,
+            links: cleaned.metadata.links,
+            images: cleaned.metadata.images,
+            spamScore: cleaned.metadata.spamScore,
+            spamSignals: cleaned.metadata.spamSignals,
+            isMassMailing: cleaned.metadata.isMassMailing,
+            promotionalScore: cleaned.metadata.promotionalScore,
+            isPromotional: cleaned.metadata.isPromotional,
+            promotionalSignals: cleaned.metadata.promotionalSignals,
+            authResults: cleaned.metadata.authResults,
+            logoCandidate: cleaned.metadata.logoCandidate ?? undefined,
+            unsubscribeUrls: cleaned.metadata.unsubscribeUrls,
+            ingestStatus: 'parsed',
+          });
+        } catch (insertErr) {
+          if ((insertErr as { code?: number })?.code === 11000) continue;
+          throw insertErr;
+        }
         await generateQueue.add(
           'generate',
           { emailId: created._id.toString(), userId: userId.toString() },

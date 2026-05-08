@@ -114,49 +114,61 @@ export function startImapSyncWorker() {
                 skippedDup += 1;
                 continue;
               }
-              // Cover-query existence check — Mongo returns `{_id}` or
-              // null without hydrating the doc, much cheaper than the
-              // previous `findOne` for what's just a duplicate gate.
-              if (await Email.exists({ userId, rawHash: cleaned.rawHash })) {
-                skippedDup += 1;
-                continue;
+              // Atomic dedup-or-insert. The unique index on
+              // (userId, rawHash) is the source of truth; we attempt
+              // insertOne and treat duplicate-key errors (E11000) as
+              // a known dup. This collapses the previous two
+              // round-trips (exists + insert) into one and removes
+              // the race where a concurrent IMAP run could have
+              // inserted between the `exists` check and our `create`.
+              let created;
+              try {
+                created = await Email.create({
+                  userId,
+                  sourceId: source._id,
+                  messageId: cleaned.messageId,
+                  threadKey: cleaned.threadKey,
+                  subjectTemplate: cleaned.subjectTemplate,
+                  rawHash: cleaned.rawHash,
+                  from: cleaned.from,
+                  to: cleaned.to,
+                  cc: cleaned.cc,
+                  subject: cleaned.subject,
+                  date: cleaned.date,
+                  text: cleaned.text,
+                  rawText: cleaned.rawText,
+                  html: cleaned.html,
+                  attachments: cleaned.attachments.map((a) => ({
+                    filename: a.filename,
+                    contentType: a.contentType,
+                    size: a.size,
+                    contentId: a.contentId,
+                  })),
+                  priority: cleaned.metadata.priority,
+                  topics: cleaned.metadata.topics,
+                  links: cleaned.metadata.links,
+                  images: cleaned.metadata.images,
+                  spamScore: cleaned.metadata.spamScore,
+                  spamSignals: cleaned.metadata.spamSignals,
+                  isMassMailing: cleaned.metadata.isMassMailing,
+                  promotionalScore: cleaned.metadata.promotionalScore,
+                  isPromotional: cleaned.metadata.isPromotional,
+                  promotionalSignals: cleaned.metadata.promotionalSignals,
+                  authResults: cleaned.metadata.authResults,
+                  logoCandidate: cleaned.metadata.logoCandidate ?? undefined,
+                  unsubscribeUrls: cleaned.metadata.unsubscribeUrls,
+                  ingestStatus: 'parsed',
+                });
+              } catch (insertErr) {
+                if ((insertErr as { code?: number })?.code === 11000) {
+                  // Unique-index collision on (userId, rawHash) or
+                  // (userId, messageId) — already ingested. Same
+                  // observable behaviour as the old `exists` path.
+                  skippedDup += 1;
+                  continue;
+                }
+                throw insertErr;
               }
-              const created = await Email.create({
-                userId,
-                sourceId: source._id,
-                messageId: cleaned.messageId,
-                threadKey: cleaned.threadKey,
-                subjectTemplate: cleaned.subjectTemplate,
-                rawHash: cleaned.rawHash,
-                from: cleaned.from,
-                to: cleaned.to,
-                cc: cleaned.cc,
-                subject: cleaned.subject,
-                date: cleaned.date,
-                text: cleaned.text,
-                rawText: cleaned.rawText,
-                html: cleaned.html,
-                attachments: cleaned.attachments.map((a) => ({
-                  filename: a.filename,
-                  contentType: a.contentType,
-                  size: a.size,
-                  contentId: a.contentId,
-                })),
-                priority: cleaned.metadata.priority,
-                topics: cleaned.metadata.topics,
-                links: cleaned.metadata.links,
-                images: cleaned.metadata.images,
-                spamScore: cleaned.metadata.spamScore,
-                spamSignals: cleaned.metadata.spamSignals,
-                isMassMailing: cleaned.metadata.isMassMailing,
-                promotionalScore: cleaned.metadata.promotionalScore,
-                isPromotional: cleaned.metadata.isPromotional,
-                promotionalSignals: cleaned.metadata.promotionalSignals,
-                authResults: cleaned.metadata.authResults,
-                logoCandidate: cleaned.metadata.logoCandidate ?? undefined,
-                unsubscribeUrls: cleaned.metadata.unsubscribeUrls,
-                ingestStatus: 'parsed',
-              });
               await generateQueue.add(
                 'generate',
                 { emailId: created._id.toString(), userId: userId.toString() },
