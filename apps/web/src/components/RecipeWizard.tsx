@@ -110,7 +110,7 @@ const ACTIONS: {
   },
   {
     kind: 'email.markSpam',
-    label: 'Mark the sender as spam',
+    label: 'Mute the sender',
     defaultConfig: {},
     requires: 'email',
   },
@@ -627,11 +627,22 @@ function ActionsStep({
               value={a.kind}
               onChange={(e) => setKind(i, e.target.value)}
             >
-              {ACTIONS.map((opt) => (
-                <option key={opt.kind} value={opt.kind}>
-                  {opt.label}
-                </option>
-              ))}
+              {/* Actions that need an email object to act on (archive,
+                  draft reply) only fire when the trigger is
+                  email.ingested. Disable the incompatible options
+                  in-line so the user can't compose an invalid recipe
+                  in the first place. */}
+              {ACTIONS.map((opt) => {
+                const incompatible =
+                  opt.requires === 'email' &&
+                  values.trigger.kind !== 'email.ingested';
+                return (
+                  <option key={opt.kind} value={opt.kind} disabled={incompatible}>
+                    {opt.label}
+                    {incompatible ? ' — needs an email trigger' : ''}
+                  </option>
+                );
+              })}
             </select>
             <button
               type="button"

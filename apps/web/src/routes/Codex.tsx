@@ -119,6 +119,9 @@ export default function CodexPage() {
     const q = new URLSearchParams(params);
     q.set('tab', next);
     setParams(q, { replace: true });
+    // Each tab has independent content height; without this the user
+    // lands mid-page on the second tab and has to scroll back up.
+    window.scrollTo({ top: 0, behavior: 'auto' });
   }
 
   return (

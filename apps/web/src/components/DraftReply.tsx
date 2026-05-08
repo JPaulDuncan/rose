@@ -2,8 +2,9 @@ import { useEffect, useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Sparkles, Send, Copy, X, RefreshCw, Trash2, Mail } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { useApi } from '../lib/api';
+import { useApi, humaniseError } from '../lib/api';
 import { useAuth } from '../lib/auth';
+import { useConfirm } from './ConfirmModal';
 
 type Email = {
   _id: string;
@@ -42,6 +43,7 @@ export function DraftReply({
   onOpenChange?: (next: boolean) => void;
 }) {
   const api = useApi();
+  const confirm = useConfirm();
   const qc = useQueryClient();
   const { token } = useAuth();
   const [internalOpen, setInternalOpen] = useState(false);
@@ -120,7 +122,7 @@ export function DraftReply({
       dirty.current = false;
       qc.invalidateQueries({ queryKey: ['email', email._id] });
     } catch (err) {
-      toast.error((err as Error).message);
+      toast.error(humaniseError(err));
     } finally {
       setStreaming(false);
     }
@@ -168,7 +170,7 @@ export function DraftReply({
       dirty.current = false;
       qc.invalidateQueries({ queryKey: ['outbound', email._id] });
     },
-    onError: (e: Error) => toast.error(e.message),
+    onError: (e: Error) => toast.error(humaniseError(e)),
   });
 
   if (!open) {
@@ -268,8 +270,14 @@ export function DraftReply({
         <button
           type="button"
           className="btn-ghost text-xs text-red-600"
-          onClick={() => {
-            if (confirm('Clear this draft?')) clearDraft.mutate();
+          onClick={async () => {
+            const ok = await confirm.confirm({
+              title: 'Clear this draft?',
+              body: 'The cited-quote context goes with it. You can re-draft from scratch afterward.',
+              confirmLabel: 'Clear',
+              destructive: true,
+            });
+            if (ok) clearDraft.mutate();
           }}
           disabled={!draft.trim()}
         >
@@ -278,14 +286,15 @@ export function DraftReply({
         <button
           type="button"
           className="btn-primary text-xs"
-          onClick={() => {
+          onClick={async () => {
             if (!replyTo) return;
-            if (
-              confirm(
-                `Send to ${replyTo}?\n\nThis fires immediately through your configured outbound source.`,
-              )
-            )
-              send.mutate();
+            const ok = await confirm.confirm({
+              title: `Send to ${replyTo}?`,
+              body: 'This fires immediately through your configured outbound source. Once queued, it can’t be unsent from Rose.',
+              confirmLabel: 'Send',
+              destructive: true,
+            });
+            if (ok) send.mutate();
           }}
           disabled={!draft.trim() || send.isPending || !replyTo}
         >

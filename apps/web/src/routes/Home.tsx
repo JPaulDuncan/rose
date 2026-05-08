@@ -19,8 +19,9 @@ import {
   Flag,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { useApi } from '../lib/api';
+import { useApi, humaniseError } from '../lib/api';
 import { MapInset, type MapPin } from '../components/MapInset';
+import { Skeleton, SkeletonCard } from '../components/Skeleton';
 
 type DigestPage = {
   _id: string;
@@ -111,7 +112,26 @@ export default function HomePage() {
   });
 
   if (isLoading) {
-    return <div className="px-6 py-10 text-ink-500">Loading edition…</div>;
+    // Skeleton matching the actual page shape — masthead bar at the
+    // top, lede + body cards below, sidebar rail. Reads as deliberate
+    // loading rather than a blank screen.
+    return (
+      <div className="mx-auto w-full max-w-6xl px-6 py-10">
+        <Skeleton className="h-6 w-1/3" />
+        <Skeleton className="mt-2 h-4 w-1/4" />
+        <div className="mt-6 grid gap-6 md:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+          <div className="space-y-4">
+            <SkeletonCard />
+            <SkeletonCard />
+            <SkeletonCard />
+          </div>
+          <div className="space-y-4">
+            <SkeletonCard />
+            <SkeletonCard />
+          </div>
+        </div>
+      </div>
+    );
   }
   if (!data || data.stats.totalPages === 0) {
     return (
@@ -834,7 +854,7 @@ function Sidebar({
       void qc.invalidateQueries({ queryKey: ['digest'] });
       void qc.invalidateQueries({ queryKey: ['me'] });
     },
-    onError: (e: Error) => toast.error(e.message),
+    onError: (e: Error) => toast.error(humaniseError(e)),
   });
 
   return (

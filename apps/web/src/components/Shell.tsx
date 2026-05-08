@@ -31,6 +31,7 @@ import { useApi } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { useTheme } from '../lib/theme';
 import { CommandPalette } from './CommandPalette';
+import { KeyboardHelp } from './KeyboardHelp';
 import { useHotkeys } from '../hooks/useHotkeys';
 
 type NavItem = {
@@ -68,12 +69,19 @@ export function Shell({ children }: { children: ReactNode }) {
   const { user, logout } = useAuth();
   const { theme, setTheme } = useTheme();
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const navigate = useNavigate();
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   useHotkeys({
     'mod+k': () => setPaletteOpen(true),
+    '?': (e) => {
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      e.preventDefault();
+      setHelpOpen(true);
+    },
     '/': (e) => {
       const tag = (e.target as HTMLElement)?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA') return;
@@ -218,6 +226,7 @@ export function Shell({ children }: { children: ReactNode }) {
       <main className="flex-1 overflow-y-auto">{children}</main>
 
       <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
+      <KeyboardHelp open={helpOpen} onClose={() => setHelpOpen(false)} />
     </div>
   );
 }
@@ -227,6 +236,12 @@ function TopNavLink({ item }: { item: NavItem }) {
     <NavLink
       to={item.to}
       end={item.to === '/'}
+      // `aria-current="page"` is the screen-reader signal for "this
+      // is the current location"; NavLink toggles it on/off based
+      // on isActive automatically when set explicitly. Without it
+      // (or some screen readers ignoring the v6 default), keyboard /
+      // SR users have no audible cue which tab is active.
+      aria-current="page"
       className={({ isActive }) =>
         clsx(
           'flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm font-medium transition-colors',
@@ -236,9 +251,13 @@ function TopNavLink({ item }: { item: NavItem }) {
         )
       }
       title={`${item.label} (${item.key})`}
+      aria-label={item.label}
     >
       <item.icon className="h-4 w-4" />
-      <span className="hidden lg:inline">{item.label}</span>
+      {/* Tablets (md, 768–1024px) get labels alongside icons so the
+          nav is identifiable without a tooltip; only phones (< md)
+          fall back to the hamburger menu. */}
+      <span className="hidden md:inline">{item.label}</span>
     </NavLink>
   );
 }

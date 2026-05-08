@@ -43,9 +43,9 @@ export default function HiddenPage() {
         'border-rose-200 bg-rose-50 dark:border-rose-900/40 dark:bg-rose-950/20',
     },
     {
-      title: 'Marked spam',
+      title: 'Muted',
       detail:
-        "Pages you've explicitly marked as spam (or pages with senders / tags on your spam policy lists).",
+        "Pages from senders you've muted, plus anything matching your tag mute list. They're filed but kept out of the main feed.",
       icon: Ban,
       to: '/settings/spam',
       count: data?.spam ?? null,

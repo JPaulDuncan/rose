@@ -4,7 +4,9 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Bookmark, BookOpen, ExternalLink, Search as SearchIcon, X } from 'lucide-react';
 import toast from 'react-hot-toast';
 import type { SearchResponse } from '@rose/shared';
-import { useApi } from '../lib/api';
+import { useApi, humaniseError } from '../lib/api';
+import { useConfirm } from '../components/ConfirmModal';
+import { SkeletonCard } from '../components/Skeleton';
 
 type LibraryHit = {
   _id: string;
@@ -54,6 +56,7 @@ function parseSearchParams(sp: URLSearchParams): {
 export default function SearchPage() {
   const api = useApi();
   const qc = useQueryClient();
+  const confirm = useConfirm();
   const [searchParams, setSearchParams] = useSearchParams();
   const initial = parseSearchParams(searchParams);
   const [q, setQ] = useState(initial.q);
@@ -82,8 +85,14 @@ export default function SearchPage() {
 
   const saveSearch = useMutation({
     mutationFn: async () => {
-      const name = window.prompt('Save this search as:', debounced.slice(0, 40)) ?? '';
-      if (!name.trim()) throw new Error('canceled');
+      const name = await confirm.prompt({
+        title: 'Save this search',
+        body: 'It pins to your sidebar so you can rerun it in one click.',
+        defaultValue: debounced.slice(0, 40),
+        placeholder: 'e.g. "Newsletters mentioning crypto"',
+        confirmLabel: 'Save',
+      });
+      if (!name || !name.trim()) throw new Error('canceled');
       return api.post<{ id: string; name: string }>('/api/me/saved-searches', {
         name: name.trim(),
         query: debounced,
@@ -98,7 +107,7 @@ export default function SearchPage() {
       qc.invalidateQueries({ queryKey: ['saved-searches'] });
     },
     onError: (e: Error) => {
-      if (e.message !== 'canceled') toast.error(e.message);
+      if (e.message !== 'canceled') toast.error(humaniseError(e));
     },
   });
 
@@ -259,7 +268,13 @@ export default function SearchPage() {
       )}
 
       {!debounced && <div className="text-ink-500">Type at least 2 characters.</div>}
-      {isFetching && <div className="text-ink-500">Searching…</div>}
+      {isFetching && (
+        <div className="space-y-3">
+          <SkeletonCard />
+          <SkeletonCard />
+          <SkeletonCard />
+        </div>
+      )}
       {data && (
         <ul className="space-y-3">
           {data.hits.map((h) => (

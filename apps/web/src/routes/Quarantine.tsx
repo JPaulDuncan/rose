@@ -9,7 +9,8 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { useApi } from '../lib/api';
+import { useApi, humaniseError } from '../lib/api';
+import { SkeletonCard } from '../components/Skeleton';
 
 type QuarantinePage = {
   _id: string;
@@ -56,7 +57,7 @@ export default function QuarantinePage() {
       qc.invalidateQueries({ queryKey: ['quarantine'] });
       qc.invalidateQueries({ queryKey: ['digest'] });
     },
-    onError: (e: Error) => toast.error(e.message),
+    onError: (e: Error) => toast.error(humaniseError(e)),
   });
 
   const trustSender = useMutation({
@@ -70,7 +71,7 @@ export default function QuarantinePage() {
       qc.invalidateQueries({ queryKey: ['digest'] });
       qc.invalidateQueries({ queryKey: ['senders'] });
     },
-    onError: (e: Error) => toast.error(e.message),
+    onError: (e: Error) => toast.error(humaniseError(e)),
   });
 
   const counts = data?.counts ?? { user: 0, auto: 0, heuristic: 0 };
@@ -120,7 +121,11 @@ export default function QuarantinePage() {
       </div>
 
       {isLoading ? (
-        <div className="text-sm text-ink-500">Loading…</div>
+        <div className="space-y-3">
+          <SkeletonCard />
+          <SkeletonCard />
+          <SkeletonCard />
+        </div>
       ) : (data?.pages.length ?? 0) === 0 ? (
         <div className="card flex flex-col items-center gap-3 py-12 text-center">
           <ShieldCheck className="h-10 w-10 text-emerald-500" />
@@ -151,8 +156,8 @@ export default function QuarantinePage() {
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap gap-1.5 text-[10px] font-semibold uppercase tracking-widest">
                   {p.flags.userMarkedSpam && (
-                    <span className="rounded bg-red-100 px-1.5 py-0.5 text-red-700 dark:bg-red-950/40 dark:text-red-200">
-                      Marked spam
+                    <span className="rounded bg-amber-100 px-1.5 py-0.5 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
+                      Muted
                     </span>
                   )}
                   {p.flags.autoQuarantined && (

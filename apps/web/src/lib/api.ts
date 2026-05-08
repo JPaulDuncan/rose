@@ -8,6 +8,35 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * Map an arbitrary thrown error into a user-presentable string.
+ * `toast.error(humaniseError(e))` is the standard call site so the
+ * UI never shows "TypeError: Failed to fetch" or a bare "503 Service
+ * Unavailable" — both of which were widespread before this audit.
+ *
+ * Server-side errors that ship a `message` in the JSON body are
+ * already friendly (the API curates them); fall through to those.
+ * Network / 5xx / 401 get mapped to messages with concrete recovery
+ * hints. Everything else falls back to `e.message`.
+ */
+export function humaniseError(err: unknown): string {
+  if (err instanceof ApiError) {
+    if (err.status === 401) return 'Your session expired. Please sign in again.';
+    if (err.status === 403) return "You don't have permission to do that.";
+    if (err.status === 404) return "We couldn't find that.";
+    if (err.status === 409) return err.message || 'That conflicts with the current state.';
+    if (err.status === 413) return 'That payload is too large to upload.';
+    if (err.status === 429) return 'Too many requests — give it a moment and try again.';
+    if (err.status >= 500) return 'The server is having trouble. Try again in a moment.';
+    return err.message || `Request failed (${err.status}).`;
+  }
+  if (err instanceof TypeError && /fetch/i.test(err.message)) {
+    return "We couldn't reach the server. Check your connection and try again.";
+  }
+  if (err instanceof Error) return err.message;
+  return 'Something went wrong.';
+}
+
 async function request<T>(
   path: string,
   opts: RequestInit & { token?: string | null } = {},

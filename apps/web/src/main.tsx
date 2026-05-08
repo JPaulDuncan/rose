@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Toaster } from 'react-hot-toast';
 import App from './App';
 import { ThemeProvider } from './lib/theme';
+import { ConfirmProvider } from './components/ConfirmModal';
 import './styles/index.css';
 
 const queryClient = new QueryClient({
@@ -31,14 +32,16 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
         <BrowserRouter>
-          <App />
-          <Toaster
-            position="bottom-right"
-            toastOptions={{
-              className:
-                'rounded-lg border border-ink-200 bg-white text-ink-900 dark:border-ink-700 dark:bg-ink-900 dark:text-ink-50',
-            }}
-          />
+          <ConfirmProvider>
+            <App />
+            <Toaster
+              position="bottom-right"
+              toastOptions={{
+                className:
+                  'rounded-lg border border-ink-200 bg-white text-ink-900 dark:border-ink-700 dark:bg-ink-900 dark:text-ink-50',
+              }}
+            />
+          </ConfirmProvider>
         </BrowserRouter>
       </ThemeProvider>
     </QueryClientProvider>

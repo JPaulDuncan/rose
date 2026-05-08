@@ -38,7 +38,9 @@ import {
 import toast from 'react-hot-toast';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { useApi } from '../lib/api';
+import { useApi, humaniseError } from '../lib/api';
+import { useConfirm } from '../components/ConfirmModal';
+import { Skeleton, SkeletonCard, SkeletonLines } from '../components/Skeleton';
 import { adapterLabel } from '../lib/sourceLabel';
 import { ShareButton } from '../components/ShareButton';
 import { FavoriteButton } from '../components/FavoriteButton';
@@ -166,6 +168,7 @@ type Revision = {
 export default function PageView() {
   const { slug } = useParams<{ slug: string }>();
   const api = useApi();
+  const confirm = useConfirm();
   const qc = useQueryClient();
   const [showRevisions, setShowRevisions] = useState(false);
 
@@ -199,7 +202,31 @@ export default function PageView() {
   });
 
   if (isLoading || !page) {
-    return <div className="px-6 py-10 text-ink-500">Loading…</div>;
+    // Article shape: title bar, metadata strip, body card, right rail.
+    return (
+      <div className="mx-auto w-full max-w-6xl px-6 py-10">
+        <Skeleton className="h-7 w-3/4" />
+        <Skeleton className="mt-2 h-4 w-1/2" />
+        <div className="mt-2 flex gap-2">
+          <Skeleton className="h-5 w-12" />
+          <Skeleton className="h-5 w-16" />
+          <Skeleton className="h-5 w-20" />
+        </div>
+        <div className="mt-6 grid gap-6 md:grid-cols-[minmax(0,7fr)_minmax(0,3fr)]">
+          <div className="card space-y-3">
+            <Skeleton className="h-5 w-3/4" />
+            <SkeletonLines count={6} />
+            <Skeleton className="h-5 w-2/3" />
+            <SkeletonLines count={4} />
+          </div>
+          <div className="space-y-4">
+            <SkeletonCard />
+            <SkeletonCard />
+            <SkeletonCard />
+          </div>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -249,8 +276,24 @@ export default function PageView() {
           <SpamMenu page={page} />
           <button
             className="btn-ghost text-red-600"
-            onClick={() => {
-              if (confirm('Delete this page?')) del.mutate();
+            onClick={async () => {
+              // Pages are LLM-narratives stitched from many emails;
+              // unrecoverable from the UI once gone. Use a typed
+              // confirmation so a misclick can't nuke an article.
+              const ok = await confirm.confirm({
+                title: 'Delete this page?',
+                body: (
+                  <>
+                    The article and its revisions are removed for good. The
+                    source emails stay in your inbox and could regenerate a
+                    new page later, but this version is gone.
+                  </>
+                ),
+                confirmLabel: 'Delete page',
+                destructive: true,
+                typeToConfirm: 'delete',
+              });
+              if (ok) del.mutate();
             }}
             aria-label="Delete"
           >
@@ -263,7 +306,7 @@ export default function PageView() {
           `fr` resolves to `minmax(auto, 1fr)` which lets a long
           unbreakable token (a tracking URL, an image filename) in
           the rail override the ratio and squeeze the article column. */}
-      <div className="mt-2 grid gap-6 lg:grid-cols-[minmax(0,7fr)_minmax(0,3fr)]">
+      <div className="mt-2 grid gap-6 md:grid-cols-[minmax(0,7fr)_minmax(0,3fr)]">
           {/* Left column (~70%) — hero, body, sources, background, provenance.
               The hero floats inside the article so text wraps newspaper-
               style around its native dimensions. */}
@@ -293,7 +336,7 @@ export default function PageView() {
           {/* Right column (~30%) — reference cards: topics, images, links,
               attachments. Sticky at top so they stay in view when the
               body scrolls past them. */}
-          <aside className="space-y-4 lg:sticky lg:top-4 lg:self-start">
+          <aside className="space-y-4 md:sticky md:top-4 md:self-start">
             <Attribution page={page} />
             <SourcesSection
               citations={page.citations ?? {}}
@@ -1116,6 +1159,7 @@ function DaydreamNoteCard({
   note: DaydreamNoteView;
   onForget: () => void;
 }) {
+  const confirm = useConfirm();
   const conf = note.confidence;
   const confCls =
     conf === 'high'
@@ -1137,9 +1181,13 @@ function DaydreamNoteCard({
         )}
         <button
           type="button"
-          onClick={() => {
-            if (confirm(`Forget background note for "${note.displayName || note.subjectKey}"?`))
-              onForget();
+          onClick={async () => {
+            const ok = await confirm.confirm({
+              title: `Forget background note?`,
+              body: `"${note.displayName || note.subjectKey}" — daydream may re-research it later if it stays relevant.`,
+              confirmLabel: 'Forget',
+            });
+            if (ok) onForget();
           }}
           className="ml-auto text-xs text-ink-400 hover:text-red-600"
           title="Forget — daydream may re-research it later"
@@ -1365,6 +1413,7 @@ function displayTag(canonical: string, map?: Record<string, string>): string {
 function MergeBanner({ page }: { page: PageDoc }) {
   const api = useApi();
   const qc = useQueryClient();
+  const confirm = useConfirm();
   const suggestions = page.mergeSuggestions ?? [];
   const merge = useMutation({
     mutationFn: async (intoPageId: string) =>
@@ -1430,14 +1479,21 @@ function MergeBanner({ page }: { page: PageDoc }) {
               <button
                 type="button"
                 className="rounded bg-amber-200 px-1.5 py-0.5 font-medium text-amber-900 hover:bg-amber-300 disabled:opacity-50 dark:bg-amber-900/60 dark:text-amber-100 dark:hover:bg-amber-900"
-                onClick={() => {
-                  if (
-                    confirm(
-                      `Merge "${page.title}" into "${s.title}"?\n\nThis page's source emails roll into "${s.title}" and the target is regenerated to fold them in. This page is then deleted. The action cannot be undone.`,
-                    )
-                  ) {
-                    merge.mutate(s.pageId);
-                  }
+                onClick={async () => {
+                  const ok = await confirm.confirm({
+                    title: `Merge into "${s.title}"?`,
+                    body: (
+                      <>
+                        This page's source emails roll into{' '}
+                        <strong>"{s.title}"</strong> and the target is
+                        regenerated to fold them in. This page is then deleted.
+                        The action cannot be undone.
+                      </>
+                    ),
+                    confirmLabel: 'Merge',
+                    destructive: true,
+                  });
+                  if (ok) merge.mutate(s.pageId);
                 }}
                 disabled={merge.isPending}
                 title="Merge this page into the candidate"

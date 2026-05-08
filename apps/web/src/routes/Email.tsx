@@ -23,7 +23,9 @@ import {
   X as XIcon,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { useApi } from '../lib/api';
+import { useApi, humaniseError } from '../lib/api';
+import { useConfirm } from '../components/ConfirmModal';
+import { Skeleton, SkeletonCard } from '../components/Skeleton';
 import { DraftReply } from '../components/DraftReply';
 import { RecipeWizard, type RecipeFormValues } from '../components/RecipeWizard';
 import { LinksCard, CountedSection } from '../components/LinksCard';
@@ -73,6 +75,7 @@ export default function EmailView() {
   const api = useApi();
   const qc = useQueryClient();
   const navigate = useNavigate();
+  const confirm = useConfirm();
   const [replyOpen, setReplyOpen] = useState(false);
   const [recipeSeed, setRecipeSeed] = useState<RecipeFormValues | null>(null);
   const { data, isLoading, error } = useQuery({
@@ -106,7 +109,7 @@ export default function EmailView() {
       qc.invalidateQueries({ queryKey: ['emails'] });
       navigate(pageInfo ? `/p/${pageInfo.slug}` : '/settings/ingest');
     },
-    onError: (e: Error) => toast.error(e.message),
+    onError: (e: Error) => toast.error(humaniseError(e)),
   });
   const deleteOnSource = useMutation({
     mutationFn: async () =>
@@ -122,7 +125,7 @@ export default function EmailView() {
       qc.invalidateQueries({ queryKey: ['emails'] });
       navigate(pageInfo ? `/p/${pageInfo.slug}` : '/settings/ingest');
     },
-    onError: (e: Error) => toast.error(e.message),
+    onError: (e: Error) => toast.error(humaniseError(e)),
   });
   const markSpam = useMutation({
     mutationFn: async () =>
@@ -131,11 +134,11 @@ export default function EmailView() {
       }),
     onSuccess: (r) => {
       toast.success(
-        `Marked ${senderAddr} as spam${r.pagesAffected ? ` · ${r.pagesAffected} page(s) hidden` : ''}`,
+        `Muted ${senderAddr}${r.pagesAffected ? ` · ${r.pagesAffected} page(s) hidden` : ''}`,
       );
       qc.invalidateQueries({ queryKey: ['spam-policy'] });
     },
-    onError: (e: Error) => toast.error(e.message),
+    onError: (e: Error) => toast.error(humaniseError(e)),
   });
   const unmarkSpam = useMutation({
     mutationFn: async () =>
@@ -144,7 +147,7 @@ export default function EmailView() {
       toast.success('Unmarked');
       qc.invalidateQueries({ queryKey: ['spam-policy'] });
     },
-    onError: (e: Error) => toast.error(e.message),
+    onError: (e: Error) => toast.error(humaniseError(e)),
   });
   const blockSender = useMutation({
     mutationFn: async () =>
@@ -162,7 +165,7 @@ export default function EmailView() {
       qc.invalidateQueries({ queryKey: ['emails'] });
       navigate('/settings/ingest');
     },
-    onError: (e: Error) => toast.error(e.message),
+    onError: (e: Error) => toast.error(humaniseError(e)),
   });
   const unblockSender = useMutation({
     mutationFn: async () =>
@@ -171,7 +174,7 @@ export default function EmailView() {
       toast.success('Unblocked — future mail from this sender will ingest normally');
       qc.invalidateQueries({ queryKey: ['spam-policy'] });
     },
-    onError: (e: Error) => toast.error(e.message),
+    onError: (e: Error) => toast.error(humaniseError(e)),
   });
   const whitelistSender = useMutation({
     mutationFn: async () =>
@@ -180,7 +183,7 @@ export default function EmailView() {
       toast.success('Trusted — bypasses blocklist + classifier');
       qc.invalidateQueries({ queryKey: ['spam-policy'] });
     },
-    onError: (e: Error) => toast.error(e.message),
+    onError: (e: Error) => toast.error(humaniseError(e)),
   });
   const unwhitelistSender = useMutation({
     mutationFn: async () =>
@@ -189,7 +192,7 @@ export default function EmailView() {
       toast.success('Removed from trusted senders');
       qc.invalidateQueries({ queryKey: ['spam-policy'] });
     },
-    onError: (e: Error) => toast.error(e.message),
+    onError: (e: Error) => toast.error(humaniseError(e)),
   });
 
   // We render the HTML body when present (it's almost always the
@@ -202,11 +205,25 @@ export default function EmailView() {
     if (error) {
       return (
         <div className="mx-auto max-w-6xl px-6 py-10 text-sm text-red-600">
-          Couldn't load email: {(error as Error).message}
+          Couldn't load email: {humaniseError(error)}
         </div>
       );
     }
-    return <div className="px-6 py-10 text-ink-500">Loading email…</div>;
+    return (
+      <div className="mx-auto w-full max-w-6xl px-6 py-10">
+        <Skeleton className="h-3 w-24" />
+        <Skeleton className="mt-3 h-7 w-2/3" />
+        <Skeleton className="mt-2 h-3 w-1/3" />
+        <Skeleton className="mt-4 h-9 w-full" />
+        <div className="mt-2 grid gap-6 md:grid-cols-[minmax(0,7fr)_minmax(0,3fr)]">
+          <SkeletonCard className="h-72" />
+          <div className="space-y-4">
+            <SkeletonCard />
+            <SkeletonCard />
+          </div>
+        </div>
+      </div>
+    );
   }
 
   const fromLabel = data.from?.name
@@ -314,30 +331,48 @@ export default function EmailView() {
         onReply={() => setReplyOpen(true)}
         onWhitelist={() => whitelistSender.mutate()}
         onUnwhitelist={() => unwhitelistSender.mutate()}
-        onDeleteLocal={() => {
-          if (confirm('Remove this email from your inbox? It stays on the source mailbox.')) {
-            deleteLocal.mutate();
-          }
+        onDeleteLocal={async () => {
+          const ok = await confirm.confirm({
+            title: 'Remove from your inbox?',
+            body: 'The message stays on the source mailbox; you can re-ingest it later if you change your mind.',
+            confirmLabel: 'Remove',
+          });
+          if (ok) deleteLocal.mutate();
         }}
-        onDeleteOnSource={() => {
-          if (
-            confirm(
-              'Delete this message from the source mailbox (e.g. Gmail / IMAP)? This is moved to the source\'s Trash where possible — recoverable from the mail provider, not from Rose.',
-            )
-          ) {
-            deleteOnSource.mutate();
-          }
+        onDeleteOnSource={async () => {
+          const ok = await confirm.confirm({
+            title: 'Delete on source?',
+            body: (
+              <>
+                This moves the message to your source's Trash (Gmail / IMAP)
+                where possible — recoverable from the mail provider, not from
+                Rose.
+              </>
+            ),
+            confirmLabel: 'Delete on source',
+            destructive: true,
+          });
+          if (ok) deleteOnSource.mutate();
         }}
         onMarkSpam={() => markSpam.mutate()}
         onUnmarkSpam={() => unmarkSpam.mutate()}
-        onBlock={() => {
-          if (
-            confirm(
-              `Block ${senderAddr}?\n\n• Future mail from this sender is dropped during ingest (no Email row, no article).\n• Existing emails from this sender are deleted; articles where they were the only contributor are deleted too.\n• Reversible — unblock from Settings → Spam.`,
-            )
-          ) {
-            blockSender.mutate();
-          }
+        onBlock={async () => {
+          const ok = await confirm.confirm({
+            title: `Block ${senderAddr}?`,
+            body: (
+              <ul className="list-disc space-y-1 pl-4">
+                <li>Future mail from this sender is dropped during ingest.</li>
+                <li>
+                  Existing emails are deleted; articles where they were the
+                  only contributor are deleted too.
+                </li>
+                <li>Reversible — unblock from Settings → Spam.</li>
+              </ul>
+            ),
+            confirmLabel: 'Block sender',
+            destructive: true,
+          });
+          if (ok) blockSender.mutate();
         }}
         onUnblock={() => unblockSender.mutate()}
         busy={
@@ -357,7 +392,7 @@ export default function EmailView() {
           the right. `minmax(0, …fr)` rather than bare `fr` so a
           long unbreakable token in the rail can't squeeze the body
           column. */}
-      <div className="mt-2 grid gap-6 lg:grid-cols-[minmax(0,7fr)_minmax(0,3fr)]">
+      <div className="mt-2 grid gap-6 md:grid-cols-[minmax(0,7fr)_minmax(0,3fr)]">
         <div className="min-w-0 space-y-4">
           {replyOpen && (
             <DraftReply email={data} open={replyOpen} onOpenChange={setReplyOpen} />
@@ -393,7 +428,7 @@ export default function EmailView() {
           )}
         </div>
 
-        <aside className="space-y-4 lg:sticky lg:top-4 lg:self-start">
+        <aside className="space-y-4 md:sticky md:top-4 md:self-start">
           {data.topics && data.topics.length > 0 && (
             <CountedSection
               icon={<TagIcon className="h-4 w-4 text-rose-500" />}
@@ -506,19 +541,22 @@ function EmailActionsBar({
   busy: boolean;
 }) {
   const [deleteMenu, setDeleteMenu] = useState(false);
+  const [senderMenu, setSenderMenu] = useState(false);
   const [moreMenu, setMoreMenu] = useState(false);
   const deleteRef = useRef<HTMLDivElement>(null);
+  const senderRef = useRef<HTMLDivElement>(null);
   const moreRef = useRef<HTMLDivElement>(null);
   // Close popovers on outside click.
   useEffect(() => {
-    if (!deleteMenu && !moreMenu) return;
+    if (!deleteMenu && !senderMenu && !moreMenu) return;
     const onDoc = (e: MouseEvent) => {
       if (deleteMenu && !deleteRef.current?.contains(e.target as Node)) setDeleteMenu(false);
+      if (senderMenu && !senderRef.current?.contains(e.target as Node)) setSenderMenu(false);
       if (moreMenu && !moreRef.current?.contains(e.target as Node)) setMoreMenu(false);
     };
     document.addEventListener('mousedown', onDoc);
     return () => document.removeEventListener('mousedown', onDoc);
-  }, [deleteMenu, moreMenu]);
+  }, [deleteMenu, senderMenu, moreMenu]);
 
   return (
     <div className="mb-4 flex flex-wrap items-center gap-2 rounded-lg border border-ink-200 bg-ink-50 p-2 dark:border-ink-800 dark:bg-ink-900/50">
@@ -593,81 +631,96 @@ function EmailActionsBar({
         )}
       </div>
 
-      {/* Mark / unmark sender as spam. Toggle. */}
+      {/* All sender-state controls collapse into a single dropdown so
+          the toolbar stays a single row on phones. The current state
+          surfaces as a status label on the button itself, so the
+          user knows whether the sender is currently muted / blocked /
+          trusted without opening the menu. */}
       {senderAddr && (
-        isSpamMarked ? (
+        <div ref={senderRef} className="relative">
           <button
             type="button"
-            className="btn-ghost text-xs"
-            onClick={onUnmarkSpam}
+            onClick={() => setSenderMenu((v) => !v)}
             disabled={busy}
-            title={`Unmark ${senderAddr} as spam`}
+            aria-haspopup="menu"
+            aria-expanded={senderMenu}
+            className={
+              'btn-ghost text-xs ' +
+              (isBlocked
+                ? 'text-red-700 dark:text-red-300'
+                : isWhitelisted
+                  ? 'text-emerald-700 dark:text-emerald-300'
+                  : isSpamMarked
+                    ? 'text-amber-700 dark:text-amber-300'
+                    : '')
+            }
+            title={`Sender controls for ${senderAddr}`}
           >
-            <ShieldCheck className="h-3.5 w-3.5" /> Unmark spam
+            {isBlocked ? (
+              <Ban className="h-3.5 w-3.5" />
+            ) : isWhitelisted ? (
+              <ShieldCheck className="h-3.5 w-3.5" />
+            ) : isSpamMarked ? (
+              <ShieldAlert className="h-3.5 w-3.5" />
+            ) : (
+              <ShieldCheck className="h-3.5 w-3.5" />
+            )}{' '}
+            Sender
+            {(isBlocked || isWhitelisted || isSpamMarked) && (
+              <span className="ml-1 text-[10px] opacity-80">
+                ({isBlocked ? 'blocked' : isWhitelisted ? 'trusted' : 'muted'})
+              </span>
+            )}{' '}
+            <ChevronDown className="h-3 w-3" />
           </button>
-        ) : (
-          <button
-            type="button"
-            className="btn-ghost text-xs"
-            onClick={onMarkSpam}
-            disabled={busy}
-            title={`Mark ${senderAddr} as spam — hides existing pages from this sender and biases the spam classifier.`}
-          >
-            <ShieldAlert className="h-3.5 w-3.5" /> Mark sender spam
-          </button>
-        )
-      )}
-
-      {/* Block / unblock sender. Stronger than spam. */}
-      {senderAddr && (
-        isBlocked ? (
-          <button
-            type="button"
-            className="btn-ghost text-xs text-emerald-700 dark:text-emerald-300"
-            onClick={onUnblock}
-            disabled={busy}
-            title={`Unblock ${senderAddr}`}
-          >
-            <ShieldOff className="h-3.5 w-3.5" /> Unblock
-          </button>
-        ) : (
-          <button
-            type="button"
-            className="btn-ghost text-xs text-red-700 dark:text-red-300"
-            onClick={onBlock}
-            disabled={busy}
-            title={`Block ${senderAddr} — drops future messages at ingest and removes existing ones.`}
-          >
-            <Ban className="h-3.5 w-3.5" /> Block sender
-          </button>
-        )
-      )}
-
-      {/* Whitelist / un-whitelist sender. Counterpart to Block: forces
-          this sender past the spam classifier even if the heuristics
-          would otherwise flag them. */}
-      {senderAddr && (
-        isWhitelisted ? (
-          <button
-            type="button"
-            className="btn-ghost text-xs text-ink-600 dark:text-ink-300"
-            onClick={onUnwhitelist}
-            disabled={busy}
-            title={`Remove ${senderAddr} from your trusted-senders list.`}
-          >
-            <ShieldOff className="h-3.5 w-3.5" /> Untrust
-          </button>
-        ) : (
-          <button
-            type="button"
-            className="btn-ghost text-xs text-emerald-700 dark:text-emerald-300"
-            onClick={onWhitelist}
-            disabled={busy}
-            title={`Whitelist ${senderAddr} — always accept their mail past the spam filter.`}
-          >
-            <ShieldCheck className="h-3.5 w-3.5" /> Trust sender
-          </button>
-        )
+          {senderMenu && (
+            <div
+              role="menu"
+              className="absolute left-0 top-full z-30 mt-1 min-w-[260px] rounded-lg border border-ink-200 bg-white p-1 text-xs shadow-lg dark:border-ink-800 dark:bg-ink-950"
+            >
+              <SenderMenuItem
+                onClick={() => {
+                  setSenderMenu(false);
+                  isWhitelisted ? onUnwhitelist() : onWhitelist();
+                }}
+                icon={<ShieldCheck className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-600" />}
+                title={isWhitelisted ? 'Untrust sender' : 'Trust sender'}
+                desc={
+                  isWhitelisted
+                    ? `Remove ${senderAddr} from the trusted list.`
+                    : 'Always accept their mail past the spam filter.'
+                }
+              />
+              <SenderMenuItem
+                onClick={() => {
+                  setSenderMenu(false);
+                  isSpamMarked ? onUnmarkSpam() : onMarkSpam();
+                }}
+                icon={<ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600" />}
+                title={isSpamMarked ? 'Unmute sender' : 'Mute sender'}
+                desc={
+                  isSpamMarked
+                    ? 'Stop hiding this sender from your feed.'
+                    : 'Hide existing pages from this sender and bias the classifier.'
+                }
+              />
+              <SenderMenuItem
+                onClick={() => {
+                  setSenderMenu(false);
+                  isBlocked ? onUnblock() : onBlock();
+                }}
+                icon={<Ban className="mt-0.5 h-3.5 w-3.5 shrink-0 text-red-600" />}
+                title={isBlocked ? 'Unblock sender' : 'Block sender'}
+                desc={
+                  isBlocked
+                    ? `Lift the block on ${senderAddr}.`
+                    : "Drop future messages at ingest and remove existing ones — strongest action."
+                }
+                danger={!isBlocked}
+              />
+            </div>
+          )}
+        </div>
       )}
 
       {/* Bonus actions tucked into a "More" popover so the bar stays
@@ -763,6 +816,42 @@ function EmailActionsBar({
         )}
       </div>
     </div>
+  );
+}
+
+function SenderMenuItem({
+  onClick,
+  icon,
+  title,
+  desc,
+  danger,
+}: {
+  onClick: () => void;
+  icon: React.ReactNode;
+  title: string;
+  desc: string;
+  danger?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      role="menuitem"
+      onClick={onClick}
+      className={
+        'flex w-full items-start gap-2 rounded px-2 py-1.5 text-left ' +
+        (danger
+          ? 'hover:bg-red-50 dark:hover:bg-red-950/30'
+          : 'hover:bg-ink-100 dark:hover:bg-ink-800')
+      }
+    >
+      {icon}
+      <span>
+        <span className={'font-medium ' + (danger ? 'text-red-700 dark:text-red-300' : '')}>
+          {title}
+        </span>
+        <span className="block text-[11px] text-ink-500">{desc}</span>
+      </span>
+    </button>
   );
 }
 
@@ -982,7 +1071,7 @@ function AddToRecipePanel({
       void qc.invalidateQueries({ queryKey: ['recipes'] });
       onClose();
     },
-    onError: (e: Error) => toast.error(e.message),
+    onError: (e: Error) => toast.error(humaniseError(e)),
   });
 
   return (
