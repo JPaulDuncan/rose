@@ -592,10 +592,12 @@ export function startGeneratePageWorker() {
         { jobId: String(job.id), emailId: job.data.emailId, userId: job.data.userId },
         'generate-page: start',
       );
+      // Trigger email is the seed for the LLM prompt + embedding
+      // path; opt in to the body fields the schema marks select:false.
       const triggerEmail = await Email.findOne({
         _id: job.data.emailId,
         userId,
-      }).select('+embedding');
+      }).select('+embedding +html +rawText');
       if (!triggerEmail) {
         logger.warn(
           { jobId: String(job.id), emailId: job.data.emailId },
@@ -661,18 +663,23 @@ export function startGeneratePageWorker() {
 
       // Build the full email list for whichever page we're targeting.
       let pageEmails: EmailDoc[];
+      // Both branches feed renderLabeledThreads which reads e.text /
+      // e.rawText to assemble the LLM prompt — opt the body fields
+      // back in (they're select:false on the schema by default).
       if (assignment.page) {
         const ids = new Set<string>(
           (assignment.page.sourceEmailIds as Types.ObjectId[]).map((x) => String(x)),
         );
         ids.add(String(triggerEmail._id));
         pageEmails = (await Email.find({ _id: { $in: [...ids] }, userId })
+          .select('+rawText +html')
           .sort({ date: 1, createdAt: 1 })
           .exec()) as unknown as EmailDoc[];
       } else if (triggerEmail.threadKey) {
         // No existing page yet but there are sibling messages in the same
         // thread already ingested — pull them in for the first generation.
         pageEmails = (await Email.find({ userId, threadKey: triggerEmail.threadKey })
+          .select('+rawText +html')
           .sort({ date: 1, createdAt: 1 })
           .exec()) as unknown as EmailDoc[];
       } else {
@@ -1494,7 +1501,10 @@ export function startGeneratePageWorker() {
       // an LLM JSON call per email — ignored on failure.
       const pageWasNew = !assignment.page;
       try {
-        const refreshed = (await Email.find({ _id: { $in: sourceEmailIds } })) as unknown as EmailDoc[];
+        // extractEventsForPage reads e.text / e.rawText; opt the
+        // body fields back in.
+        const refreshed = (await Email.find({ _id: { $in: sourceEmailIds } })
+          .select('+rawText +html')) as unknown as EmailDoc[];
         const pageObj = (assignment.page ?? (await Page.findById(pageId))) as PageDoc | null;
         if (pageObj) {
           await extractEventsForPage(pageObj, refreshed);

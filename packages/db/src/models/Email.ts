@@ -59,9 +59,26 @@ const emailSchema = new Schema(
     cc: { type: [addressSchema], default: [] },
     subject: { type: String, default: '' },
     date: { type: Date, default: null },
+    /**
+     * Cleaned plain-text body (signature + quoted-reply stripped).
+     * Default-selected because most ingest + display call sites
+     * read it. Cap at the parser's slice length so we don't carry
+     * a 10MB email body in the working set.
+     */
     text: { type: String, default: '' },
-    rawText: { type: String, default: '' },
-    html: { type: String, default: null },
+    /**
+     * Raw text (no signature / quote stripping) and full HTML body.
+     * `select: false` so list / search / dedup queries don't ship
+     * the heaviest fields over the wire and through Mongoose
+     * hydration. Sites that genuinely need them — the email view
+     * route, the page-generation prompt corpus, the LLM-driven
+     * reply path — use `.select('+html +rawText')` to opt in.
+     * For a heavy mailbox this is the single largest working-set
+     * win; an `Email.find({userId})` with no projection used to
+     * pull tens of MB of body markup over the wire.
+     */
+    rawText: { type: String, default: '', select: false },
+    html: { type: String, default: null, select: false },
     attachments: { type: [attachmentSchema], default: [] },
     ingestStatus: {
       type: String,

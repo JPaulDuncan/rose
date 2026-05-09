@@ -75,7 +75,13 @@ emailsRouter.get('/:id', async (req, res) => {
     res.status(400).json({ error: 'invalid_request', message: 'Invalid id' });
     return;
   }
-  const email = await Email.findOne({ _id: req.params.id, userId }).lean();
+  // Email detail explicitly opts in to the heavy body fields so the
+  // browser's email view can render the HTML iframe + show the raw
+  // text fallback. Email schema marks `html` + `rawText` select:false
+  // so list / search queries don't drag them along.
+  const email = await Email.findOne({ _id: req.params.id, userId })
+    .select('+html +rawText')
+    .lean();
   if (!email) {
     res.status(404).json({ error: 'not_found', message: 'Email not found' });
     return;
@@ -106,7 +112,12 @@ emailsRouter.post('/:id/delete-on-source', async (req, res, next) => {
       res.status(400).json({ error: 'invalid_request', message: 'Invalid id' });
       return;
     }
-    const email = await Email.findOne({ _id: req.params.id, userId }).lean();
+    // No body needed for delete-on-source; just sourceId + messageId
+    // for the IMAP/Gmail path. Project explicitly so the route stays
+    // unaffected by future schema additions.
+    const email = await Email.findOne({ _id: req.params.id, userId })
+      .select('sourceId messageId')
+      .lean();
     if (!email) {
       res.status(404).json({ error: 'not_found', message: 'Email not found' });
       return;
