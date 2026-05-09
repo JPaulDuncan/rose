@@ -2,6 +2,7 @@ import express, { type Express } from 'express';
 import mongoose from 'mongoose';
 import helmet from 'helmet';
 import cors from 'cors';
+import compression from 'compression';
 import { pinoHttp } from 'pino-http';
 import { OllamaClient } from '@rose/llm';
 import { env } from './lib/env.js';
@@ -71,6 +72,15 @@ export async function createServer(): Promise<Express> {
   app.set('trust proxy', 1);
   app.use(helmet());
   app.use(cors({ origin: env.WEB_ORIGIN, credentials: true }));
+  // Gzip / deflate / brotli (when the proxy negotiates it) on every
+  // outbound response. Roughly 60–70% off the wire for the JSON
+  // payloads the SPA polls — diagnostics, web-documents, page
+  // listings — at a few-microsecond CPU cost per response. Default
+  // threshold is 1KB so tiny acks stay uncompressed. SSE streams
+  // (jobsStreamRouter, ingestion drawer) skip compression
+  // automatically because compression checks the Content-Type and
+  // text/event-stream is excluded by default.
+  app.use(compression());
   app.use(pinoHttp({ logger }));
 
   // Webhook expects raw body, register before json parser.
