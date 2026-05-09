@@ -66,6 +66,36 @@ const brandSchema = new Schema(
     forgottenBriefBy: { type: [Schema.Types.ObjectId], default: [], index: true },
     /** Audit-only: first user whose mail surfaced this brand. */
     firstSeenBy: { type: Schema.Types.ObjectId, ref: 'User', default: null },
+
+    // ── Global spam blacklist (cross-user) ──────────────────────
+    //
+    // The user-facing rule is "once any user marks an item as spam,
+    // it's marked as spam for ALL users; users can opt-in to receive
+    // it anyway." Implemented at the brand level — that's the only
+    // unit that translates across users (per-page marks don't, since
+    // pages are per-user).
+    //
+    // `spamMarkedBy` / `rescuedBy` are user-id sets so a single user
+    // can't run up the count by repeatedly marking the same brand.
+    // `globalSpam` is denormalised from `spamMarkedBy.length >
+    // rescuedBy.length` so the worker can filter on it cheaply.
+    /** Users who explicitly marked any of this brand's mail spam. */
+    spamMarkedBy: {
+      type: [Schema.Types.ObjectId],
+      ref: 'User',
+      default: [],
+      index: true,
+    },
+    /** Users who explicitly rescued / trusted the brand. Cancels a
+     *  spam mark from the global tally. */
+    rescuedBy: { type: [Schema.Types.ObjectId], ref: 'User', default: [] },
+    /** Denormalised flag: any net spam marks → globally flagged.
+     *  Indexed so generatePage can fetch every flagged brand in
+     *  one query. */
+    globalSpam: { type: Boolean, default: false, index: true },
+    /** When the brand first crossed the threshold. Used by the UI
+     *  to sort "newly flagged" brands and by future audit reports. */
+    firstFlaggedAt: { type: Date, default: null },
   },
   { timestamps: true },
 );

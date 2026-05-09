@@ -377,6 +377,14 @@ const userSchema = new Schema(
        *  regardless of this list — see `isSenderWhitelisted` in
        *  @rose/email-parser. UI surfaces this list as "Trust." */
       whitelistedSenders: { type: [String], default: [], index: true },
+      /** Per-user opt-in for brands the global blacklist has flagged
+       *  as spam. Stored as kebab brandKeys (e.g. 'medium', 'axios')
+       *  matching `SenderBrand.brandKey`. When a brand is in this
+       *  list the worker bypasses the global-spam auto-quarantine
+       *  for THIS user only — other users still see the brand
+       *  flagged. UI surfaces this as "Receive these anyway" on the
+       *  global blacklist panel. */
+      optInGlobalSpamBrands: { type: [String], default: [], index: true },
     },
     /**
      * Tags the user wants foregrounded in the newsletter — each becomes

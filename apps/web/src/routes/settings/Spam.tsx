@@ -105,6 +105,7 @@ export default function SpamSettings() {
 
       <PromotionsToggle />
       <ReputationCard />
+      <GlobalBlacklistCard />
 
       <div className="card">
         <div className="mb-3 flex items-center gap-2">
@@ -361,6 +362,136 @@ function PromotionsToggle() {
         />
         <span>Hide promotional content from the home digest</span>
       </label>
+    </div>
+  );
+}
+
+type GlobalBlacklistEntry = {
+  brandKey: string;
+  domain: string | null;
+  name: string;
+  logoUrl: string | null;
+  markedCount: number;
+  rescuedCount: number;
+  netReports: number;
+  rank: 'high' | 'medium' | 'low';
+  firstFlaggedAt: string | null;
+  optedIn: boolean;
+};
+
+function GlobalBlacklistCard() {
+  const api = useApi();
+  const qc = useQueryClient();
+  const { data, isLoading } = useQuery({
+    queryKey: ['spam', 'global'],
+    queryFn: () =>
+      api.get<{ blacklist: GlobalBlacklistEntry[] }>('/api/spam/global'),
+    refetchOnWindowFocus: false,
+  });
+  const optIn = useMutation({
+    mutationFn: async (brandKey: string) =>
+      api.post<{ ok: true }>(`/api/spam/optin/${encodeURIComponent(brandKey)}`, {}),
+    onSuccess: () => {
+      toast.success('Receiving this brand again.');
+      qc.invalidateQueries({ queryKey: ['spam', 'global'] });
+      qc.invalidateQueries({ queryKey: ['digest'] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+  const optOut = useMutation({
+    mutationFn: async (brandKey: string) =>
+      api.del<{ ok: true }>(`/api/spam/optin/${encodeURIComponent(brandKey)}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['spam', 'global'] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+  const entries = data?.blacklist ?? [];
+  const rankClass: Record<GlobalBlacklistEntry['rank'], string> = {
+    high: 'bg-red-100 text-red-800 dark:bg-red-950/40 dark:text-red-200',
+    medium: 'bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200',
+    low: 'bg-ink-100 text-ink-700 dark:bg-ink-800 dark:text-ink-200',
+  };
+  return (
+    <div className="card">
+      <div className="mb-2 flex items-center gap-2">
+        <Ban className="h-4 w-4 text-red-500" />
+        <h3 className="font-semibold">Global blacklist</h3>
+        <span className="ml-auto text-xs text-ink-500">{entries.length}</span>
+      </div>
+      <p className="mb-3 text-xs text-ink-500">
+        Once any user marks a brand as spam, it's flagged for everyone — pages
+        from these brands auto-quarantine on arrival. The reputational rank
+        reflects how many users have reported the brand. Click{' '}
+        <strong>Receive anyway</strong> to opt yourself in to a brand's mail
+        despite the global flag.
+      </p>
+      {isLoading ? (
+        <div className="text-xs text-ink-500">Loading…</div>
+      ) : entries.length === 0 ? (
+        <div className="text-xs text-ink-500">
+          No globally-flagged brands yet.
+        </div>
+      ) : (
+        <ul className="space-y-1 text-sm">
+          {entries.map((e) => (
+            <li
+              key={e.brandKey}
+              className="flex items-center gap-3 rounded-lg border border-ink-200 px-3 py-1.5 dark:border-ink-800"
+            >
+              {e.logoUrl ? (
+                <img
+                  src={e.logoUrl}
+                  alt=""
+                  className="h-6 w-6 shrink-0 rounded object-contain"
+                  referrerPolicy="no-referrer"
+                  onError={(ev) => {
+                    (ev.currentTarget as HTMLImageElement).style.display = 'none';
+                  }}
+                />
+              ) : null}
+              <div className="min-w-0 flex-1">
+                <div className="flex items-baseline gap-2">
+                  <span className="truncate font-medium">{e.name}</span>
+                  <span
+                    className={`rounded-full px-1.5 py-0.5 text-[10px] uppercase tracking-widest ${rankClass[e.rank]}`}
+                    title={`${e.markedCount} reports · ${e.rescuedCount} rescues`}
+                  >
+                    {e.rank} · {e.netReports} report{e.netReports === 1 ? '' : 's'}
+                  </span>
+                  {e.optedIn && (
+                    <span className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] uppercase tracking-widest text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-200">
+                      receiving
+                    </span>
+                  )}
+                </div>
+                {e.domain && (
+                  <code className="text-[11px] text-ink-500">{e.domain}</code>
+                )}
+              </div>
+              {e.optedIn ? (
+                <button
+                  className="btn-ghost text-xs"
+                  onClick={() => optOut.mutate(e.brandKey)}
+                  disabled={optOut.isPending}
+                  title="Re-honor the global flag"
+                >
+                  Stop
+                </button>
+              ) : (
+                <button
+                  className="btn-secondary text-xs"
+                  onClick={() => optIn.mutate(e.brandKey)}
+                  disabled={optIn.isPending}
+                  title="Bypass the global flag for your inbox"
+                >
+                  Receive anyway
+                </button>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

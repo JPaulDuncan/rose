@@ -27,6 +27,7 @@ import {
   filterNominalTags,
   compileSenderBlocklist,
   isSenderWhitelisted,
+  senderDomainTag,
 } from '@rose/email-parser';
 import { redis, bullConnection } from '../lib/redis.js';
 import { logger } from '../lib/logger.js';
@@ -1224,11 +1225,15 @@ export function startGeneratePageWorker() {
               senders?: string[];
               tags?: string[];
               whitelistedSenders?: string[];
+              optInGlobalSpamBrands?: string[];
             };
           }
         | null;
       const policySenders = new Set(userPolicy?.spamPolicy?.senders ?? []);
       const policyTags = new Set(userPolicy?.spamPolicy?.tags ?? []);
+      const optInGlobalSpamBrands = new Set(
+        userPolicy?.spamPolicy?.optInGlobalSpamBrands ?? [],
+      );
       // Whitelist check: any contributing sender whose address is
       // whitelisted (or sits under a default-trusted TLD) immunises
       // the whole page from spam-mark + auto-quarantine. The user
@@ -1267,7 +1272,32 @@ export function startGeneratePageWorker() {
               .select('_id')
               .lean()
           : [];
-      const autoQuarantined = !pageIsWhitelisted && quarantinedSenders.length > 0;
+      // Global blacklist gate. Once any user marks a brand as spam,
+      // SenderBrand.globalSpam flips on; THIS user's pages from that
+      // brand auto-quarantine unless they explicitly opted in via
+      // /api/spam/optin. Whitelisted senders bypass this just like
+      // they bypass the per-user threshold.
+      const contributingBrands = pageIsWhitelisted
+        ? []
+        : [
+            ...new Set(
+              contributingAddrs
+                .map((a) => senderDomainTag(a)?.toLowerCase() ?? null)
+                .filter((b): b is string => !!b)
+                .filter((b) => !optInGlobalSpamBrands.has(b)),
+            ),
+          ];
+      const globallyFlaggedBrands = contributingBrands.length
+        ? await SenderBrand.find({
+            brandKey: { $in: contributingBrands },
+            globalSpam: true,
+          })
+            .select('_id')
+            .lean()
+        : [];
+      const autoQuarantined =
+        !pageIsWhitelisted &&
+        (quarantinedSenders.length > 0 || globallyFlaggedBrands.length > 0);
 
       // Bayesian classifier — score the trigger email against the
       // user's per-user profile. Falls through to null on cold-start

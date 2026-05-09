@@ -119,11 +119,82 @@ export function decayedSpamMarks(s: {
 }
 
 /**
+ * Apply this user's spam / rescue verdict to the GLOBAL SenderBrand
+ * row for the given brandKey. Idempotent — re-marking is a no-op
+ * (the user is already in the set). Flips `globalSpam` whenever the
+ * net set tips: marked > rescued ⇒ flagged for everyone.
+ *
+ * The directive: "once an item has been marked spam by ANY user,
+ * it's marked as spam for ALL users." The threshold is therefore 1
+ * net spam-mark, not the higher per-user `QUARANTINE_THRESHOLD`.
+ * The opt-in list (`spamPolicy.optInGlobalSpamBrands`) is each
+ * user's escape hatch.
+ */
+async function recordGlobalSpamVerdict(
+  brandKey: string,
+  userId: Types.ObjectId,
+  verdict: 'spam' | 'rescued',
+): Promise<void> {
+  if (!brandKey) return;
+  // First add/remove the user from the appropriate set in one
+  // round-trip; then re-fetch to compute `globalSpam` and bump
+  // `firstFlaggedAt` if we just crossed the threshold.
+  const ops: Record<string, unknown> =
+    verdict === 'spam'
+      ? {
+          $addToSet: { spamMarkedBy: userId },
+          $pull: { rescuedBy: userId },
+        }
+      : {
+          $addToSet: { rescuedBy: userId },
+          $pull: { spamMarkedBy: userId },
+        };
+  // Ensure the row exists — some brands first appear via this path
+  // (a user marks an address whose Sender row exists but whose
+  // SenderBrand row hasn't been created yet because they haven't
+  // received mail in this session).
+  await SenderBrand.updateOne(
+    { brandKey },
+    {
+      ...ops,
+      $setOnInsert: {
+        brandKey,
+        firstSeenBy: userId,
+      },
+    },
+    { upsert: true },
+  );
+  const after = await SenderBrand.findOne({ brandKey })
+    .select('spamMarkedBy rescuedBy globalSpam firstFlaggedAt')
+    .lean();
+  if (!after) return;
+  const marked = (after.spamMarkedBy as Types.ObjectId[] | undefined)?.length ?? 0;
+  const rescued = (after.rescuedBy as Types.ObjectId[] | undefined)?.length ?? 0;
+  const shouldFlag = marked > rescued;
+  if (shouldFlag !== !!after.globalSpam) {
+    await SenderBrand.updateOne(
+      { brandKey },
+      {
+        $set: {
+          globalSpam: shouldFlag,
+          ...(shouldFlag && !after.firstFlaggedAt
+            ? { firstFlaggedAt: new Date() }
+            : {}),
+        },
+      },
+    );
+  }
+}
+
+/**
  * Feedback-loop bookkeeping: every spam-mark increments the matching
  * Sender's spamMarkedCount, every rescue increments rescuedCount.
  * `autoQuarantine` flips on once *decayed* net marks ≥ threshold, so
  * old marks gradually lose weight and a one-off mismark from months
  * ago can't keep blocking a brand.
+ *
+ * Also dual-writes the verdict to the GLOBAL SenderBrand row so the
+ * cross-user blacklist picks it up.
  */
 async function bumpSenderReputation(
   userId: Types.ObjectId,
@@ -150,6 +221,13 @@ async function bumpSenderReputation(
     const { effective } = decayedSpamMarks(sender);
     sender.autoQuarantine = effective >= QUARANTINE_THRESHOLD;
     await sender.save();
+    // Cross-user blacklist. ANY user's mark flips the global flag;
+    // any user's rescue can pull them off it. Per-brand, idempotent.
+    if ((delta.spam ?? 0) > 0) {
+      await recordGlobalSpamVerdict(info.brandKey, userId, 'spam');
+    } else if ((delta.rescued ?? 0) > 0) {
+      await recordGlobalSpamVerdict(info.brandKey, userId, 'rescued');
+    }
   }
 }
 
@@ -340,18 +418,29 @@ spamRouter.delete('/page/:id', async (req, res) => {
 
 /** Trust a sender outright — clears the auto-quarantine flag and
  *  resets their reputation counters so future pages from them surface
- *  normally again. */
+ *  normally again. Also records a global rescue and adds the brand
+ *  to this user's opt-in list so a cross-user spam flag won't
+ *  re-quarantine them. */
 spamRouter.post('/sender/:address/trust', async (req, res) => {
   const userId = new Types.ObjectId(userIdOf(req));
   const address = normSender(decodeURIComponent(req.params.address ?? ''));
-  await User.updateOne(
-    { _id: userId },
-    { $pull: { 'spamPolicy.senders': address } },
-  );
+  const info = brandKeyFor(address);
+  const updates: Record<string, unknown> = {
+    $pull: { 'spamPolicy.senders': address },
+  };
+  if (info?.brandKey) {
+    updates.$addToSet = {
+      'spamPolicy.optInGlobalSpamBrands': info.brandKey,
+    };
+  }
+  await User.updateOne({ _id: userId }, updates);
   // Brand-wide cleanup: clears Sender.autoQuarantine and lifts the
   // userMarkedSpam / autoQuarantined flags off every page in the
   // same registrable-domain family.
   await liftQuarantineForBrand(userId, address);
+  if (info?.brandKey) {
+    await recordGlobalSpamVerdict(info.brandKey, userId, 'rescued');
+  }
   // Train the Bayes classifier on this brand's recent mail as ham —
   // explicit trust is just as strong a signal as a rescue.
   const emails = await Email.find({ userId, 'from.address': address })
@@ -503,16 +592,28 @@ spamRouter.post(
       res.status(400).json({ error: 'invalid_request', message: 'address required' });
       return;
     }
+    const info = brandKeyFor(address);
     await User.updateOne(
       { _id: userId },
       {
-        $addToSet: { 'spamPolicy.whitelistedSenders': address },
+        $addToSet: {
+          'spamPolicy.whitelistedSenders': address,
+          // Whitelist is also a global-blacklist opt-in: the user
+          // has explicitly said "I want this brand's mail" — honor
+          // that even if other users have flagged the brand.
+          ...(info?.brandKey
+            ? { 'spamPolicy.optInGlobalSpamBrands': info.brandKey }
+            : {}),
+        },
         // A whitelisted sender shouldn't simultaneously be on the
         // spam-mark list. Pull it from there if it was added in the
         // past so the two lists don't contradict each other.
         $pull: { 'spamPolicy.senders': address },
       },
     );
+    if (info?.brandKey) {
+      await recordGlobalSpamVerdict(info.brandKey, userId, 'rescued');
+    }
     // Without this, whitelisting only affects future ingest — pages
     // already sitting in Quarantine for this brand stay there until
     // a new email regenerates them. Treat the whitelist add as an
@@ -532,4 +633,113 @@ spamRouter.delete('/whitelist/:address', async (req, res) => {
     { $pull: { 'spamPolicy.whitelistedSenders': address } },
   );
   res.json({ ok: true, address });
+});
+
+// ── Global blacklist (cross-user spam) ─────────────────────────
+//
+// One mark from any user flips a brand to globally-flagged. Other
+// users can opt-in to receive its mail anyway — the opt-in list is
+// per-user, the blacklist itself is shared. Reputational rankings
+// surface "flagged by N users" as a sort key + a decision aid.
+
+/**
+ * List every brand currently on the global blacklist alongside the
+ * current user's opt-in state. Sorted by net spam marks descending
+ * so the most-reported brands surface first.
+ */
+spamRouter.get('/global', async (req, res) => {
+  const userId = new Types.ObjectId(userIdOf(req));
+  const user = await User.findById(userId)
+    .select('spamPolicy.optInGlobalSpamBrands')
+    .lean();
+  const optIns = new Set<string>(
+    ((user?.spamPolicy as { optInGlobalSpamBrands?: string[] } | undefined)
+      ?.optInGlobalSpamBrands ?? []) as string[],
+  );
+  // Pull only flagged rows; the index on `globalSpam` keeps this
+  // cheap as the blacklist grows.
+  const rows = await SenderBrand.find({ globalSpam: true })
+    .select(
+      'brandKey domain name spamMarkedBy rescuedBy firstFlaggedAt logoUrl',
+    )
+    .lean();
+  const blacklist = rows
+    .map((r) => {
+      const marked = ((r.spamMarkedBy as Types.ObjectId[] | undefined) ?? []).length;
+      const rescued = ((r.rescuedBy as Types.ObjectId[] | undefined) ?? []).length;
+      const net = marked - rescued;
+      // Coarse rank label so the UI can colour the chip without
+      // re-deriving thresholds. Tweakable; the worker only cares
+      // about the boolean `globalSpam` flag.
+      const rank: 'high' | 'medium' | 'low' =
+        net >= 5 ? 'high' : net >= 2 ? 'medium' : 'low';
+      return {
+        brandKey: r.brandKey as string,
+        domain: (r.domain as string | null) ?? null,
+        name: (r.name as string | undefined) ?? r.brandKey,
+        logoUrl: (r.logoUrl as string | null) ?? null,
+        markedCount: marked,
+        rescuedCount: rescued,
+        netReports: net,
+        rank,
+        firstFlaggedAt: r.firstFlaggedAt
+          ? new Date(r.firstFlaggedAt as Date).toISOString()
+          : null,
+        optedIn: optIns.has(r.brandKey as string),
+      };
+    })
+    .sort((a, b) => b.netReports - a.netReports || a.brandKey.localeCompare(b.brandKey));
+  res.json({ blacklist });
+});
+
+/** Opt this user IN to receive a globally-blacklisted brand. */
+spamRouter.post('/optin/:brandKey', async (req, res) => {
+  const userId = new Types.ObjectId(userIdOf(req));
+  const brandKey = (req.params.brandKey ?? '').toLowerCase().trim();
+  if (!brandKey) {
+    res.status(400).json({ error: 'invalid_request', message: 'brandKey required' });
+    return;
+  }
+  await User.updateOne(
+    { _id: userId },
+    { $addToSet: { 'spamPolicy.optInGlobalSpamBrands': brandKey } },
+  );
+  // Lift the user's locally-recorded auto-quarantine for this brand
+  // so previously-quarantined pages reappear right away. We don't
+  // touch the global flag — other users may still want it filtered.
+  // Pull addresses off the brand row so we can rescue pages whose
+  // contributing-sender list overlaps with the brand's address set
+  // (`api.axios.com`, `news@axios.com`, etc.).
+  await Sender.updateMany(
+    { userId, brandKey },
+    { $set: { autoQuarantine: false, spamMarkedCount: 0, rescuedCount: 0 } },
+  );
+  const brand = await SenderBrand.findOne({ brandKey })
+    .select('addresses')
+    .lean();
+  const addresses = ((brand?.addresses as string[] | undefined) ?? []).map((a) =>
+    a.toLowerCase(),
+  );
+  if (addresses.length > 0) {
+    await Page.updateMany(
+      { userId, senderAddresses: { $in: addresses } },
+      { $set: { 'flags.userMarkedSpam': false, 'flags.autoQuarantined': false } },
+    );
+  }
+  res.json({ ok: true, brandKey });
+});
+
+/** Re-honor the global blacklist for this brand. */
+spamRouter.delete('/optin/:brandKey', async (req, res) => {
+  const userId = new Types.ObjectId(userIdOf(req));
+  const brandKey = (req.params.brandKey ?? '').toLowerCase().trim();
+  if (!brandKey) {
+    res.status(400).json({ error: 'invalid_request', message: 'brandKey required' });
+    return;
+  }
+  await User.updateOne(
+    { _id: userId },
+    { $pull: { 'spamPolicy.optInGlobalSpamBrands': brandKey } },
+  );
+  res.json({ ok: true, brandKey });
 });
