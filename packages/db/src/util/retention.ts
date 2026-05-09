@@ -8,8 +8,6 @@ import { RecipeAudit } from '../models/RecipeAudit.js';
 import { Conversation } from '../models/Conversation.js';
 import { Message } from '../models/Message.js';
 import { TagDigest } from '../models/TagDigest.js';
-import { WeatherSnapshot } from '../models/WeatherSnapshot.js';
-
 /**
  * Per-collection cleanup driven by `User.retention.*`. Lives in @rose/db
  * because both the nightly worker sweep and the on-demand API endpoint
@@ -198,14 +196,13 @@ export async function applyRetentionForUser(
     sum.tagDigests = r.deletedCount ?? 0;
   }
 
-  const weatherCutoff = cutoffFor(retention.weatherSnapshots ?? 0);
-  if (weatherCutoff) {
-    const r = await WeatherSnapshot.deleteMany({
-      userId,
-      createdAt: { $lt: weatherCutoff },
-    });
-    sum.weatherSnapshots = r.deletedCount ?? 0;
-  }
+  // Plan 17 — weather snapshots are global; the per-user retention
+  // knob is a no-op. Snapshot retention is the 365-day TTL on
+  // `WeatherSnapshot.fetchedAt`; per-user cleanup would silently
+  // delete other users' history at the same coord. Leave the
+  // setting in the schema for backwards-compat with old SPA
+  // versions; the value just doesn't drive anything anymore.
+  void retention.weatherSnapshots;
 
   return sum;
 }

@@ -86,7 +86,26 @@ retentionRouter.get('/', async (req, res, next) => {
           Message.countDocuments({ conversationId: { $in: cs.map((c) => c._id) } }),
         ),
       TagDigest.countDocuments({ userId }),
-      WeatherSnapshot.countDocuments({ userId }),
+      // Weather is global — count distinct points the user has saved
+      // rather than rows in the shared collection (which has no
+      // userId; the legacy `{ userId }` filter always returned 0).
+      User.findById(userId)
+        .select('weatherLocations')
+        .lean()
+        .then((u) => {
+          const locs = (u?.weatherLocations as { lat?: number; lon?: number }[] | undefined) ?? [];
+          if (locs.length === 0) return 0;
+          const coords = locs
+            .filter((l) => l.lat != null && l.lon != null)
+            .map((l) => [
+              Math.round((l.lat as number) * 1000) / 1000,
+              Math.round((l.lon as number) * 1000) / 1000,
+            ]);
+          if (coords.length === 0) return 0;
+          return WeatherSnapshot.countDocuments({
+            $or: coords.map(([lat, lon]) => ({ lat, lon })),
+          });
+        }),
       Shipment.countDocuments({ userId }),
       PromoCode.countDocuments({ userId }),
       // Library is global; per-user count comes from refs.

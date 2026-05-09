@@ -45,7 +45,13 @@ type WeatherCacheEntry = {
 };
 
 const WEATHER_TTL_MS = 30 * 60 * 1000; // 30 minutes
-const briefCache = new Map<string, WeatherCacheEntry>(); // key = `${userId}:${lat},${lon}`
+// Globally-keyed brief cache. Weather data doesn't vary per user
+// — same coord, same NOAA forecast — so two users at the same
+// (lat,lon) share one cache slot and one upstream fetch. The
+// label that the user assigned to their saved location stays out
+// of the cached brief (buildDeterministicBrief ignores it) so
+// reusing across users with different labels is safe.
+const briefCache = new Map<string, WeatherCacheEntry>(); // key = `${lat},${lon}`
 
 const SetByQuery = z.object({
   query: z.string().min(2).max(120),
@@ -248,10 +254,17 @@ function pickLocation(
   return locations.find((l) => l.primary) ?? locations[0] ?? null;
 }
 
-function bustCache(userId: Types.ObjectId) {
-  for (const k of [...briefCache.keys()]) {
-    if (k.startsWith(`${userId.toString()}:`)) briefCache.delete(k);
-  }
+/**
+ * Cache-bust on a user's location-list change. The cache is now
+ * globally keyed by `${lat},${lon}` (Plan 17 — weather is shared
+ * across users). A user adding / removing / renaming a saved
+ * location shouldn't evict every other user's cached briefs at
+ * the same coord, so this is a no-op; the 30-minute TTL handles
+ * staleness. Kept on the surface so future per-user cache layers
+ * have an obvious hook.
+ */
+function bustCache(_userId: Types.ObjectId) {
+  void _userId;
 }
 
 weatherRouter.get('/locations', async (req, res) => {
@@ -374,7 +387,11 @@ weatherRouter.get('/', async (req, res, next) => {
       res.json({ configured: false });
       return;
     }
-    const cacheKey = `${userId.toString()}:${loc.lat},${loc.lon}`;
+    // Globally-keyed cache. Plan 17 — weather is shared across
+    // users; two users at the same (lat,lon) hit the same slot.
+    const lat3 = roundCoord(loc.lat);
+    const lon3 = roundCoord(loc.lon);
+    const cacheKey = `${lat3},${lon3}`;
     const cached = briefCache.get(cacheKey);
     if (cached && Date.now() - cached.fetchedAt < WEATHER_TTL_MS) {
       res.json({
@@ -385,6 +402,63 @@ weatherRouter.get('/', async (req, res, next) => {
         periods: cached.periods.slice(0, 4),
         brief: cached.brief,
         fetchedAt: new Date(cached.fetchedAt).toISOString(),
+        cached: true,
+      });
+      return;
+    }
+
+    // Cross-user reuse: even on a process-cache miss, another
+    // user may have written a fresh snapshot for this exact coord
+    // within the TTL window. Surface that without round-tripping
+    // to NOAA again — same data, every user pays the network cost
+    // once. We only need the current period for the brief; trend
+    // history lives on the dedicated /history endpoint.
+    const recentSnapshot = await WeatherSnapshot.findOne({
+      lat: lat3,
+      lon: lon3,
+      fetchedAt: { $gte: new Date(Date.now() - WEATHER_TTL_MS) },
+    })
+      .sort({ fetchedAt: -1 })
+      .lean();
+    if (recentSnapshot) {
+      const reusedCurrent: ForecastPeriod = {
+        number: 0,
+        name: 'Now',
+        startTime: recentSnapshot.startTime
+          ? new Date(recentSnapshot.startTime as Date).toISOString()
+          : new Date(recentSnapshot.fetchedAt).toISOString(),
+        endTime: recentSnapshot.endTime
+          ? new Date(recentSnapshot.endTime as Date).toISOString()
+          : new Date(recentSnapshot.fetchedAt).toISOString(),
+        isDaytime: !!recentSnapshot.isDaytime,
+        temperature: recentSnapshot.temperature,
+        temperatureUnit: recentSnapshot.temperatureUnit ?? 'F',
+        windSpeed: recentSnapshot.windSpeed ?? '',
+        windDirection: recentSnapshot.windDirection ?? '',
+        icon: recentSnapshot.icon ?? undefined,
+        shortForecast: recentSnapshot.shortForecast ?? '',
+        detailedForecast: recentSnapshot.shortForecast ?? '',
+      };
+      const reusedPeriods = [reusedCurrent];
+      const reusedBrief = buildDeterministicBrief(
+        { lat: loc.lat, lon: loc.lon, label: loc.label },
+        reusedPeriods,
+      );
+      const reusedFetchedAt = new Date(recentSnapshot.fetchedAt).getTime();
+      briefCache.set(cacheKey, {
+        fetchedAt: reusedFetchedAt,
+        current: reusedCurrent,
+        periods: reusedPeriods,
+        brief: reusedBrief,
+      });
+      res.json({
+        configured: true,
+        location: shape(loc),
+        locations: locations.map(shape),
+        current: reusedCurrent,
+        periods: reusedPeriods,
+        brief: reusedBrief,
+        fetchedAt: new Date(reusedFetchedAt).toISOString(),
         cached: true,
       });
       return;
@@ -414,8 +488,6 @@ weatherRouter.get('/', async (req, res, next) => {
     // point) and fire-and-forget so a transient Mongo blip doesn't
     // sink the response.
     if (current) {
-      const lat3 = roundCoord(loc.lat);
-      const lon3 = roundCoord(loc.lon);
       void WeatherSnapshot.updateOne(
         { lat: lat3, lon: lon3, fetchedAt: new Date(fetchedAtTs) },
         {
