@@ -1,13 +1,21 @@
 import { Worker, type Job } from 'bullmq';
 import { Types } from 'mongoose';
-import { LibraryDocument } from '@rose/db';
+import { LibraryDocument, LibraryDocumentRef } from '@rose/db';
 import { redis, bullConnection } from '../lib/redis.js';
 import { logger } from '../lib/logger.js';
 import { resolveProviderForUser } from '../lib/providers.js';
 
 const QUEUE = 'rose.library-embed';
 
-export type LibraryEmbedJobData = { documentId: string; userId: string };
+/**
+ * Embedding job. The library is global so the embedding is computed
+ * once per document — but the embedder lives behind a per-user
+ * provider config (the user's own Ollama / OpenAI). We therefore
+ * pick the first user who has a ref to this doc and use their
+ * provider. `userId` is optional in the payload to remain
+ * backwards-compatible with previously-enqueued jobs.
+ */
+export type LibraryEmbedJobData = { documentId: string; userId?: string };
 
 /** Compose the embedding input string. Title carries strong signal so
  *  we repeat it, then summary, then a slice of body text. Bound at
@@ -28,12 +36,26 @@ export function startLibraryEmbedWorker(): void {
   const worker = new Worker<LibraryEmbedJobData>(
     QUEUE,
     async (job: Job<LibraryEmbedJobData>) => {
-      const userId = new Types.ObjectId(job.data.userId);
-      const doc = await LibraryDocument.findOne({ _id: job.data.documentId, userId });
+      const doc = await LibraryDocument.findOne({ _id: job.data.documentId });
       if (!doc) return { skipped: 'doc-not-found' };
+      if (doc.embedding) return { skipped: 'already-embedded' };
       const input = embeddingInput(doc);
       if (!input) return { skipped: 'empty-input' };
-      const r = await resolveProviderForUser(userId, 'embedding');
+      // Pick the embedding provider belonging to the user who
+      // requested the embed (if known) or fall back to any user
+      // who has a ref to this doc. Library is global; the
+      // provider context isn't.
+      let providerUser: Types.ObjectId | null = null;
+      if (job.data.userId && Types.ObjectId.isValid(job.data.userId)) {
+        providerUser = new Types.ObjectId(job.data.userId);
+      } else {
+        const ref = await LibraryDocumentRef.findOne({ documentId: doc._id })
+          .select('userId')
+          .lean();
+        providerUser = (ref?.userId as Types.ObjectId | undefined) ?? null;
+      }
+      if (!providerUser) return { skipped: 'no-provider-user' };
+      const r = await resolveProviderForUser(providerUser, 'embedding');
       if (!r.provider.supportsEmbeddings) {
         return { skipped: 'embedder-not-supported' };
       }

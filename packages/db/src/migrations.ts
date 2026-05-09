@@ -139,6 +139,133 @@ const MIGRATIONS: Migration[] = [
       }
     },
   },
+  {
+    // Convert per-user LibraryDocument rows into the new
+    // global-doc + per-user-ref split. For every legacy row:
+    //   1. upsert one global LibraryDocument keyed on urlHash
+    //      ($setOnInsert keeps the first user's body wins),
+    //   2. create the per-user LibraryDocumentRef that points
+    //      at the resulting global doc and remembers the user's
+    //      sourceId,
+    //   3. delete the legacy row.
+    // Idempotent: Refs use (userId, documentId) unique upsert,
+    // and the legacy delete is a no-op once the row is gone. Safe
+    // to re-run if interrupted.
+    name: '2026-05-09-globalise-library-documents',
+    async run(conn) {
+      const docs = conn.collection('librarydocuments');
+      const refs = conn.collection('librarydocumentrefs');
+      // Pre-create the global unique index — the legacy collection
+      // had a (userId, urlHash) compound unique that would block
+      // writes if two rows for the same URL exist across users.
+      // Drop the old index by name if present; ignore errors when
+      // the index doesn't exist (fresh DBs, re-runs).
+      try {
+        await docs.dropIndex('userId_1_urlHash_1');
+      } catch {
+        // not present — fine.
+      }
+
+      const cursor = docs.find(
+        { userId: { $exists: true } },
+        {
+          projection: {
+            _id: 1,
+            userId: 1,
+            sourceId: 1,
+            url: 1,
+            urlHash: 1,
+            title: 1,
+            author: 1,
+            publishedAt: 1,
+            summary: 1,
+            bodyText: 1,
+            tags: 1,
+            topics: 1,
+            embedding: 1,
+            embeddingModel: 1,
+            crawledAt: 1,
+            staleAfter: 1,
+            createdAt: 1,
+          },
+        },
+      );
+      while (await cursor.hasNext()) {
+        const row = await cursor.next();
+        if (!row) continue;
+        const urlHash = String(row.urlHash ?? '');
+        if (!urlHash) {
+          // Old test/garbage row — skip.
+          continue;
+        }
+        // Upsert the canonical global doc. setOnInsert wins for
+        // first-discovered fields; later runs add to tags via
+        // $addToSet so we don't lose category data from a
+        // duplicate user's row.
+        const update: Record<string, unknown> = {
+          $setOnInsert: {
+            urlHash,
+            url: row.url ?? '',
+            title: row.title ?? '',
+            author: row.author ?? '',
+            publishedAt: row.publishedAt ?? null,
+            summary: row.summary ?? '',
+            bodyText: row.bodyText ?? '',
+            topics: Array.isArray(row.topics) ? row.topics : [],
+            embedding: Array.isArray(row.embedding) ? row.embedding : null,
+            embeddingModel: row.embeddingModel ?? null,
+            crawledAt: row.crawledAt ?? new Date(),
+            staleAfter: row.staleAfter ?? null,
+            firstSeenBy: row.userId ?? null,
+            firstSourceId: row.sourceId ?? null,
+            createdAt: row.createdAt ?? new Date(),
+          },
+          $set: { updatedAt: new Date() },
+        };
+        if (Array.isArray(row.tags) && row.tags.length > 0) {
+          update.$addToSet = { tags: { $each: row.tags } };
+        }
+        const upserted = await docs.findOneAndUpdate(
+          { urlHash },
+          update,
+          { upsert: true, returnDocument: 'after' },
+        );
+        const globalDocId = upserted?._id ?? row._id;
+
+        // Per-user ref: idempotent upsert on (userId, documentId).
+        await refs.updateOne(
+          { userId: row.userId, documentId: globalDocId },
+          {
+            $setOnInsert: {
+              userId: row.userId,
+              documentId: globalDocId,
+              sourceId: row.sourceId ?? null,
+              addedAt: row.crawledAt ?? new Date(),
+              archivedAt: null,
+              readAt: null,
+              userTags: [],
+              userNote: '',
+              createdAt: new Date(),
+              updatedAt: new Date(),
+            },
+          },
+          { upsert: true },
+        );
+
+        // Legacy row absorbed; delete it unless it IS the canonical
+        // upserted row (in which case findOneAndUpdate kept the same
+        // _id and we just need to strip the userId/sourceId fields).
+        if (String(row._id) !== String(globalDocId)) {
+          await docs.deleteOne({ _id: row._id });
+        } else {
+          await docs.updateOne(
+            { _id: row._id },
+            { $unset: { userId: '', sourceId: '' } },
+          );
+        }
+      }
+    },
+  },
 ];
 
 export async function runMigrations(

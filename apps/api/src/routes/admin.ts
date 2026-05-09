@@ -12,6 +12,7 @@ import {
   Email,
   Entity,
   LibraryDocument,
+  LibraryDocumentRef,
   LibrarySource,
   Message,
   NotificationRule,
@@ -146,8 +147,12 @@ const SCOPES: Scope[] = [
     group: 'content',
     label: 'Library documents',
     description:
-      'Personal document store contents. The library sources stay; documents get re-ingested on next sync.',
-    run: () => deleteAllAndReport(LibraryDocument),
+      'Global library docs + every user\'s refs. Library sources stay; docs get re-fetched on next sync.',
+    run: async () => {
+      const r1 = await LibraryDocumentRef.deleteMany({});
+      const r2 = await LibraryDocument.deleteMany({});
+      return { deleted: (r1.deletedCount ?? 0) + (r2.deletedCount ?? 0) };
+    },
   },
   {
     id: 'outbound',

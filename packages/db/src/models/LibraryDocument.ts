@@ -1,10 +1,16 @@
 import { Schema, model, type InferSchemaType, type HydratedDocument, Types } from 'mongoose';
 
 /**
- * One crawled item from a LibrarySource. Stored per-user so search +
- * embeddings stay scoped; the same RSS post crawled by two users
- * produces two documents (with two embeddings — see plan 10's
- * "shared library" out-of-scope note).
+ * One crawled item — stored GLOBALLY, deduplicated by URL hash.
+ * Whoever first crawls the URL persists the row; subsequent users
+ * whose sources surface the same URL don't re-fetch or re-embed.
+ * They get visibility through a per-user `LibraryDocumentRef` row
+ * that points at this global document.
+ *
+ * Mirrors the SenderBrand / Sender split: facts that don't change
+ * per user (URL, title, body, topics, embedding) live here; per-user
+ * state (which source surfaced it, archived/read flags, private
+ * tags) lives on `LibraryDocumentRef`.
  *
  * Body text is capped at 50KB; summary at 280 chars; embedding
  * lives in the same vector space as Page.embedding so a future
@@ -13,16 +19,21 @@ import { Schema, model, type InferSchemaType, type HydratedDocument, Types } fro
  */
 const docSchema = new Schema(
   {
-    userId: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
-    sourceId: {
+    /** Audit-only — first user whose source surfaced this URL.
+     *  Kept so we can attribute the canonical name on the brand
+     *  chip later. Not used for access control; per-user visibility
+     *  comes from LibraryDocumentRef. */
+    firstSeenBy: { type: Schema.Types.ObjectId, ref: 'User', default: null },
+    /** Source that originally created the row. Refs carry the
+     *  source per-user separately, so this is just for audit. */
+    firstSourceId: {
       type: Schema.Types.ObjectId,
       ref: 'LibrarySource',
-      required: true,
-      index: true,
+      default: null,
     },
     url: { type: String, required: true },
-    /** SHA-256(url), unique per user, dedup-on-crawl. */
-    urlHash: { type: String, required: true },
+    /** SHA-256(url). Globally unique — the dedup key. */
+    urlHash: { type: String, required: true, unique: true, index: true },
     title: { type: String, default: '' },
     author: { type: String, default: '' },
     publishedAt: { type: Date, default: null, index: true },
@@ -31,10 +42,11 @@ const docSchema = new Schema(
     bodyText: { type: String, default: '' },
     /** LLM-extracted topics (defer until library-extract job runs). */
     topics: { type: [String], default: [] },
-    /** Inherited from the source + LLM augmentation. */
+    /** Inherited from the source + LLM augmentation. Global tags;
+     *  per-user tags live on the Ref. */
     tags: { type: [String], default: [], index: true },
     /** Same vector space as Page.embedding. select: false to keep
-     *  document-list responses small. */
+     *  document-list responses small. Computed once globally. */
     embedding: { type: [Number], default: null, select: false },
     embeddingModel: { type: String, default: null },
     crawledAt: { type: Date, default: () => new Date() },
@@ -45,8 +57,8 @@ const docSchema = new Schema(
   { timestamps: true },
 );
 
-docSchema.index({ userId: 1, urlHash: 1 }, { unique: true });
-docSchema.index({ userId: 1, sourceId: 1, publishedAt: -1 });
+// publishedAt is the typical sort key for the recent-feed view.
+docSchema.index({ publishedAt: -1 });
 docSchema.index(
   { title: 'text', summary: 'text', bodyText: 'text', topics: 'text', tags: 'text' },
   { weights: { title: 10, summary: 5, topics: 3, tags: 3, bodyText: 1 }, name: 'LibraryDocText' },

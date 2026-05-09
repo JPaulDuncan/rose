@@ -1,5 +1,5 @@
 import { Types } from 'mongoose';
-import { LibraryDocument } from '@rose/db';
+import { LibraryDocument, LibraryDocumentRef } from '@rose/db';
 import type { AdapterContext, DaydreamAdapter, DaydreamSnippet } from '@rose/llm';
 import { resolveProviderForUser } from '../providers.js';
 import { logger } from '../logger.js';
@@ -69,9 +69,22 @@ export class LibraryAdapter implements DaydreamAdapter {
 
   async fetch(query: string, ctx: AdapterContext): Promise<DaydreamSnippet[]> {
     void ctx;
+    // Library is global; this adapter must only surface docs the
+    // user has a Ref for. Fetch the user's visible doc IDs once
+    // and gate both branches on that set.
+    const refs = await LibraryDocumentRef.find({
+      userId: this.userId,
+      archivedAt: null,
+    })
+      .select('documentId')
+      .limit(5_000)
+      .lean();
+    const visibleIds = refs.map((r) => r.documentId as Types.ObjectId);
+    if (visibleIds.length === 0) return [];
+
     // Text branch.
     const textHits = await LibraryDocument.find({
-      userId: this.userId,
+      _id: { $in: visibleIds },
       $text: { $search: query },
     })
       .sort({ score: { $meta: 'textScore' } })
@@ -88,7 +101,7 @@ export class LibraryAdapter implements DaydreamAdapter {
       if (r.provider.supportsEmbeddings) {
         const qVec = await r.provider.embed(r.model, query);
         const candidates = await LibraryDocument.find({
-          userId: this.userId,
+          _id: { $in: visibleIds },
           embedding: { $ne: null },
         })
           .select('+embedding _id title summary bodyText url tags topics publishedAt')

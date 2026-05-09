@@ -60,6 +60,8 @@ export { LibrarySource } from './models/LibrarySource.js';
 export type { LibrarySourceDoc } from './models/LibrarySource.js';
 export { LibraryDocument } from './models/LibraryDocument.js';
 export type { LibraryDocumentDoc } from './models/LibraryDocument.js';
+export { LibraryDocumentRef } from './models/LibraryDocumentRef.js';
+export type { LibraryDocumentRefDoc } from './models/LibraryDocumentRef.js';
 export { WebDocument } from './models/WebDocument.js';
 export type { WebDocumentDoc } from './models/WebDocument.js';
 export { TagDigest } from './models/TagDigest.js';

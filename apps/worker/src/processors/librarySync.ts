@@ -5,6 +5,7 @@ import Parser from 'rss-parser';
 import {
   LibrarySource,
   LibraryDocument,
+  LibraryDocumentRef,
   User,
   type LibrarySourceDoc,
 } from '@rose/db';
@@ -96,8 +97,20 @@ function capBody(s: string): string {
 }
 
 /**
- * Persist or upsert a library document. Returns true when a new doc
- * was created (so the caller can decide whether to enqueue an embed).
+ * Persist (globally) and reference (per-user) a library item.
+ *
+ * The global LibraryDocument is keyed on urlHash so the second
+ * user's source to surface the same URL never re-fetches or
+ * re-stores. The per-user LibraryDocumentRef ties the doc to the
+ * user's source and carries their per-user state.
+ *
+ * Returns:
+ *   • `globallyCreated: true`  — the global row was created by
+ *     this call. Caller should enqueue an embed.
+ *   • `globallyCreated: false` — global row already existed
+ *     (another user, or this user previously). No embed needed.
+ *   • `refCreated`             — true if THIS user just got their
+ *     first ref to this doc (drives "new for you" flagging).
  */
 async function upsertDocument(
   userId: Types.ObjectId,
@@ -111,48 +124,87 @@ async function upsertDocument(
     bodyText?: string;
     tags?: string[];
   },
-): Promise<{ docId: Types.ObjectId; created: boolean } | null> {
+): Promise<{
+  docId: Types.ObjectId;
+  globallyCreated: boolean;
+  refCreated: boolean;
+} | null> {
   const urlHash = urlHashOf(data.url);
-  const existing = await LibraryDocument.findOne({ userId, urlHash })
+  const existing = await LibraryDocument.findOne({ urlHash })
     .select('_id')
     .lean();
+  let docId: Types.ObjectId;
+  let globallyCreated = false;
   if (existing) {
-    // Update body/title in place — the source might have edited the
-    // post — but don't touch crawledAt so the staleAfter window is
-    // preserved.
-    await LibraryDocument.updateOne(
-      { _id: existing._id },
-      {
-        $set: {
-          title: data.title ?? '',
-          author: data.author ?? '',
-          publishedAt: data.publishedAt ?? null,
-          summary: (data.summary ?? '').slice(0, 280),
-          bodyText: capBody(data.bodyText ?? ''),
+    docId = existing._id;
+    // Refresh-in-place is gated to the originating context — when
+    // ANY user's source surfaces fresh content for the URL we
+    // accept body/title updates, but only when the new payload
+    // actually has content. (Skips clobbering a rich body with an
+    // empty preview from a different user's RSS feed item.)
+    const newBody = capBody(data.bodyText ?? '');
+    if (newBody.length > 0 || (data.title ?? '').length > 0) {
+      await LibraryDocument.updateOne(
+        { _id: existing._id },
+        {
+          $set: {
+            ...(data.title ? { title: data.title } : {}),
+            ...(data.author ? { author: data.author } : {}),
+            ...(data.publishedAt !== undefined
+              ? { publishedAt: data.publishedAt ?? null }
+              : {}),
+            ...(data.summary
+              ? { summary: data.summary.slice(0, 280) }
+              : {}),
+            ...(newBody ? { bodyText: newBody } : {}),
+          },
+          $addToSet: {
+            tags: { $each: [...(source.tags ?? []), ...(data.tags ?? [])] },
+          },
         },
-      },
-    );
-    return { docId: existing._id, created: false };
+      );
+    }
+  } else {
+    const created = await LibraryDocument.create({
+      firstSeenBy: userId,
+      firstSourceId: source._id,
+      url: data.url,
+      urlHash,
+      title: data.title ?? '',
+      author: data.author ?? '',
+      publishedAt: data.publishedAt ?? null,
+      summary: (data.summary ?? '').slice(0, 280),
+      bodyText: capBody(data.bodyText ?? ''),
+      tags: [...new Set([...(source.tags ?? []), ...(data.tags ?? [])])],
+      crawledAt: new Date(),
+      // 30-day default re-crawl window for URL-kind docs; RSS feed
+      // items don't get re-crawled (the next feed pull either re-
+      // includes them or doesn't).
+      staleAfter:
+        source.kind === 'url' ? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) : null,
+    });
+    docId = created._id;
+    globallyCreated = true;
   }
-  const created = await LibraryDocument.create({
-    userId,
-    sourceId: source._id,
-    url: data.url,
-    urlHash,
-    title: data.title ?? '',
-    author: data.author ?? '',
-    publishedAt: data.publishedAt ?? null,
-    summary: (data.summary ?? '').slice(0, 280),
-    bodyText: capBody(data.bodyText ?? ''),
-    tags: [...new Set([...(source.tags ?? []), ...(data.tags ?? [])])],
-    crawledAt: new Date(),
-    // 30-day default re-crawl window for URL-kind docs; RSS feed
-    // items don't get re-crawled (the next feed pull either re-
-    // includes them or doesn't).
-    staleAfter:
-      source.kind === 'url' ? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) : null,
-  });
-  return { docId: created._id, created: true };
+
+  // Per-user ref. setOnInsert preserves the user's first-add
+  // timestamp on later re-encounters; the upsert is idempotent so
+  // a sweep that re-finds the URL doesn't bump anything.
+  const refResult = await LibraryDocumentRef.updateOne(
+    { userId, documentId: docId },
+    {
+      $setOnInsert: {
+        userId,
+        documentId: docId,
+        sourceId: source._id,
+        addedAt: new Date(),
+      },
+    },
+    { upsert: true },
+  );
+  const refCreated = (refResult.upsertedCount ?? 0) > 0;
+
+  return { docId, globallyCreated, refCreated };
 }
 
 async function syncRss(
@@ -200,11 +252,14 @@ async function syncRss(
       bodyText,
       tags: ((item.categories ?? []) as string[]).filter(Boolean),
     });
-    if (r?.created) {
-      created += 1;
+    if (r?.refCreated) created += 1;
+    // Embed only when the GLOBAL doc was just created — every
+    // user's adapter shares the embedding so a re-encounter from
+    // another user is a no-op.
+    if (r?.globallyCreated) {
       await embedQueue.add(
         'embed',
-        { documentId: String(r.docId), userId: String(userId) },
+        { documentId: String(r.docId) },
         { attempts: 3, removeOnComplete: 500, removeOnFail: 500, priority: 5 },
       );
     }
@@ -218,6 +273,27 @@ async function syncUrl(
   cap: number,
 ): Promise<{ found: number; new: number }> {
   if (!source.url) return { found: 0, new: 0 };
+  // Cache hit short-circuit: if the URL is already in the global
+  // library, attach a per-user ref without re-fetching.
+  const cachedHash = urlHashOf(source.url);
+  const cached = await LibraryDocument.findOne({ urlHash: cachedHash })
+    .select('_id')
+    .lean();
+  if (cached) {
+    const ref = await LibraryDocumentRef.updateOne(
+      { userId, documentId: cached._id },
+      {
+        $setOnInsert: {
+          userId,
+          documentId: cached._id,
+          sourceId: source._id,
+          addedAt: new Date(),
+        },
+      },
+      { upsert: true },
+    );
+    return { found: 1, new: (ref.upsertedCount ?? 0) > 0 ? 1 : 0 };
+  }
   if (!bumpAndCheckCrawlCap(String(userId), cap)) {
     return { found: 0, new: 0 };
   }
@@ -239,15 +315,14 @@ async function syncUrl(
     summary,
     bodyText,
   });
-  if (result?.created) {
+  if (result?.globallyCreated) {
     await embedQueue.add(
       'embed',
-      { documentId: String(result.docId), userId: String(userId) },
+      { documentId: String(result.docId) },
       { attempts: 3, removeOnComplete: 500, removeOnFail: 500, priority: 5 },
     );
-    return { found: 1, new: 1 };
   }
-  return { found: 1, new: 0 };
+  return { found: 1, new: result?.refCreated ? 1 : 0 };
 }
 
 async function syncUrlList(
@@ -258,11 +333,31 @@ async function syncUrlList(
   let created = 0;
   let found = 0;
   for (const url of source.urls ?? []) {
+    found += 1;
+    // Cache hit: skip the network entirely and just attach a ref.
+    const cached = await LibraryDocument.findOne({ urlHash: urlHashOf(url) })
+      .select('_id')
+      .lean();
+    if (cached) {
+      const ref = await LibraryDocumentRef.updateOne(
+        { userId, documentId: cached._id },
+        {
+          $setOnInsert: {
+            userId,
+            documentId: cached._id,
+            sourceId: source._id,
+            addedAt: new Date(),
+          },
+        },
+        { upsert: true },
+      );
+      if ((ref.upsertedCount ?? 0) > 0) created += 1;
+      continue;
+    }
     if (!bumpAndCheckCrawlCap(String(userId), cap)) {
       logger.info({ userId: String(userId), cap }, 'library: daily cap hit; partial urlList sweep');
       break;
     }
-    found += 1;
     try {
       const r = await webFetch(url, {
         timeoutMs: 12_000,
@@ -280,11 +375,11 @@ async function syncUrlList(
         summary,
         bodyText,
       });
-      if (result?.created) {
-        created += 1;
+      if (result?.refCreated) created += 1;
+      if (result?.globallyCreated) {
         await embedQueue.add(
           'embed',
-          { documentId: String(result.docId), userId: String(userId) },
+          { documentId: String(result.docId) },
           { attempts: 3, removeOnComplete: 500, removeOnFail: 500, priority: 5 },
         );
       }

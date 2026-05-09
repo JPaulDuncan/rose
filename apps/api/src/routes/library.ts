@@ -4,6 +4,7 @@ import { z } from 'zod';
 import {
   LibrarySource,
   LibraryDocument,
+  LibraryDocumentRef,
   User,
 } from '@rose/db';
 import {
@@ -50,8 +51,9 @@ libraryRouter.get('/sources', async (req, res) => {
     .sort({ createdAt: -1 })
     .lean();
   // Attach a doc-count per source so the UI can render usage at a
-  // glance without a follow-up call.
-  const counts = await LibraryDocument.aggregate<{ _id: Types.ObjectId; count: number }>([
+  // glance without a follow-up call. Library is global; the
+  // per-user count comes from LibraryDocumentRef.
+  const counts = await LibraryDocumentRef.aggregate<{ _id: Types.ObjectId; count: number }>([
     { $match: { userId } },
     { $group: { _id: '$sourceId', count: { $sum: 1 } } },
   ]);
@@ -117,8 +119,11 @@ libraryRouter.delete('/sources/:id', async (req, res) => {
   }
   const sourceId = new Types.ObjectId(req.params.id);
   await LibrarySource.deleteOne({ _id: sourceId, userId });
-  // Cascade documents — they're not useful without their source.
-  const r = await LibraryDocument.deleteMany({ sourceId, userId });
+  // Library is global — cascade only this user's refs. The shared
+  // LibraryDocument rows stay so other users who reference the
+  // same URLs (now or later) still benefit. A separate sweeper
+  // can GC global rows that nobody refs anymore.
+  const r = await LibraryDocumentRef.deleteMany({ sourceId, userId });
   res.json({ ok: true, documentsDeleted: r.deletedCount ?? 0 });
 });
 
@@ -149,30 +154,67 @@ const SearchQuery = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(25),
 });
 
+/**
+ * Build the per-user visibility set: which global LibraryDocument
+ * IDs can the current user see, narrowed by an optional source.
+ * Library is global; user visibility is gated by Refs.
+ */
+async function visibleDocIdsFor(
+  userId: Types.ObjectId,
+  filters: { sourceId?: Types.ObjectId | null } = {},
+  cap = 5_000,
+): Promise<Types.ObjectId[]> {
+  const refFilter: Record<string, unknown> = { userId, archivedAt: null };
+  if (filters.sourceId) refFilter.sourceId = filters.sourceId;
+  const refs = await LibraryDocumentRef.find(refFilter)
+    .select('documentId')
+    .limit(cap)
+    .lean();
+  return refs.map((r) => r.documentId as Types.ObjectId);
+}
+
 libraryRouter.get('/', async (req, res) => {
   const userId = new Types.ObjectId(userIdOf(req));
   const parsed = SearchQuery.safeParse(req.query);
   if (!parsed.success) {
-    // No query = recent-feed view.
+    // No query = recent-feed view. Pull the user's refs first
+    // (cheap, indexed) then hydrate the underlying global docs.
     const limit = Math.min(Number(req.query.limit ?? 50), 200);
     const tag = (req.query.tag as string | undefined) ?? null;
-    const filter: Record<string, unknown> = { userId };
-    if (tag) filter.tags = tag;
-    const docs = await LibraryDocument.find(filter)
+    const refFilter: Record<string, unknown> = { userId, archivedAt: null };
+    const refs = await LibraryDocumentRef.find(refFilter)
+      .sort({ addedAt: -1 })
+      .limit(limit * 2)
+      .select('documentId addedAt')
+      .lean();
+    const docIds = refs.map((r) => r.documentId as Types.ObjectId);
+    if (docIds.length === 0) {
+      res.json({ mode: 'recent', documents: [] });
+      return;
+    }
+    const docFilter: Record<string, unknown> = { _id: { $in: docIds } };
+    if (tag) docFilter.tags = tag;
+    const docs = await LibraryDocument.find(docFilter)
       .sort({ publishedAt: -1, crawledAt: -1 })
       .limit(limit)
       .select('-bodyText -embedding')
       .lean();
-    res.json({
-      mode: 'recent',
-      documents: docs.map(shapeDoc),
-    });
+    res.json({ mode: 'recent', documents: docs.map(shapeDoc) });
     return;
   }
   const { q, tag, sourceId, since, limit } = parsed.data;
-  const filter: Record<string, unknown> = { userId, $text: { $search: q } };
+  const visibleIds = await visibleDocIdsFor(userId, {
+    sourceId: sourceId ? new Types.ObjectId(sourceId) : null,
+  });
+  if (visibleIds.length === 0) {
+    res.json({ mode: 'search', query: q, documents: [] });
+    return;
+  }
+  const filter: Record<string, unknown> = {
+    _id: { $in: visibleIds },
+    $text: { $search: q },
+  };
   if (tag) filter.tags = tag;
-  if (sourceId) filter.sourceId = new Types.ObjectId(sourceId);
   if (since) filter.publishedAt = { $gte: new Date(since) };
   const docs = await LibraryDocument.find(filter, {
     score: { $meta: 'textScore' },
@@ -194,19 +236,38 @@ libraryRouter.get('/:id', async (req, res) => {
     res.status(400).json({ error: 'invalid_request', message: 'invalid id' });
     return;
   }
-  const doc = await LibraryDocument.findOne({ _id: req.params.id, userId }).lean();
+  // Visibility check via the user's Ref. Without a ref the user
+  // cannot read the doc even though it lives in the global pool.
+  const ref = await LibraryDocumentRef.findOne({
+    userId,
+    documentId: req.params.id,
+  }).lean();
+  if (!ref) {
+    res.status(404).json({ error: 'not_found', message: 'document not found' });
+    return;
+  }
+  const doc = await LibraryDocument.findById(req.params.id).lean();
   if (!doc) {
     res.status(404).json({ error: 'not_found', message: 'document not found' });
     return;
   }
-  // Strip embedding before sending.
+  // Mark read so the unread badge clears. Idempotent enough.
+  if (!ref.readAt) {
+    await LibraryDocumentRef.updateOne(
+      { _id: ref._id },
+      { $set: { readAt: new Date() } },
+    );
+  }
   const { embedding: _e, ...rest } = doc as typeof doc & { embedding?: number[] };
   res.json({ document: shapeDoc(rest) });
 });
 
 libraryRouter.delete('/:id', async (req, res) => {
   const userId = new Types.ObjectId(userIdOf(req));
-  await LibraryDocument.deleteOne({ _id: req.params.id, userId });
+  // Per-user delete = drop the ref. The global document remains
+  // (other users may still reference it); a separate sweeper can
+  // GC orphaned global rows.
+  await LibraryDocumentRef.deleteOne({ userId, documentId: req.params.id });
   res.json({ ok: true });
 });
 

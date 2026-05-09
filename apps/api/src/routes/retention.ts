@@ -14,7 +14,7 @@ import {
   WeatherSnapshot,
   Shipment,
   PromoCode,
-  LibraryDocument,
+  LibraryDocumentRef,
   runRetentionCleanup,
 } from '@rose/db';
 import { userIdOf } from '../middleware/auth.js';
@@ -89,7 +89,8 @@ retentionRouter.get('/', async (req, res, next) => {
       WeatherSnapshot.countDocuments({ userId }),
       Shipment.countDocuments({ userId }),
       PromoCode.countDocuments({ userId }),
-      LibraryDocument.countDocuments({ userId }).catch(() => 0),
+      // Library is global; per-user count comes from refs.
+      LibraryDocumentRef.countDocuments({ userId }).catch(() => 0),
     ]);
 
     res.json({
