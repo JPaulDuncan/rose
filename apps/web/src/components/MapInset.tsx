@@ -1,5 +1,5 @@
-import { useEffect, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useEffect, useRef, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 
@@ -12,6 +12,18 @@ export type MapPin = {
 };
 
 /**
+ * Parse the `height` prop into integer pixels for the static
+ * snapshot URL. Strings like "180px" or "12rem" are coerced; the
+ * latter falls back to 200px since the static endpoint needs an
+ * integer pixel count.
+ */
+function parseHeightPx(h: string): number {
+  const m = /^(\d+)px$/.exec(h.trim());
+  if (m) return Math.max(48, Math.min(1024, Number(m[1])));
+  return 200;
+}
+
+/**
  * Read-only Leaflet inset. Plan 11.
  *
  * - Tiles: CARTO Voyager raster (free, no key, OSM-attributed).
@@ -20,8 +32,13 @@ export type MapPin = {
  * - Auto-fits bounds to all pins. Single pin → reasonable fixed
  *   zoom (z=12). Empty pin list renders nothing.
  *
- * Mounts the Leaflet map in an effect, tears it down on unmount,
- * and rebuilds when the pin set changes (cheap — no global state).
+ * Plan 18 — single-pin views now render a static PNG snapshot
+ * served by `/api/maps/static` instead of mounting Leaflet on every
+ * page navigation. The snapshot is cached in Redis (long TTL —
+ * places don't move) AND in the browser's HTTP cache (immutable),
+ * so a page that's been viewed once renders its map with zero
+ * tile loads from then on. Multi-pin views still use the live
+ * Leaflet map; static-image multi-pin overlays could come later.
  */
 export function MapInset({
   pins,
@@ -34,8 +51,17 @@ export function MapInset({
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const navigate = useNavigate();
+  // Track image-load failure so we can transparently fall back to
+  // the live Leaflet map when the static endpoint is disabled
+  // (Settings → Maps off) or the upstream is unreachable.
+  const [staticFailed, setStaticFailed] = useState(false);
+
+  // Single-pin static snapshot path. Skips the Leaflet effect
+  // entirely so the page doesn't pay the bundle/tile-load cost.
+  const useStatic = pins.length === 1 && !staticFailed;
 
   useEffect(() => {
+    if (useStatic) return;
     const el = containerRef.current;
     if (!el || pins.length === 0) return;
 
@@ -99,9 +125,48 @@ export function MapInset({
     return () => {
       map.remove();
     };
-  }, [pins, navigate]);
+  }, [pins, navigate, useStatic]);
 
   if (pins.length === 0) return null;
+
+  if (useStatic) {
+    const pin = pins[0]!;
+    const heightPx = parseHeightPx(height);
+    // Width is unknown without a layout pass; we ask the API for a
+    // generous 800px wide image and let CSS scale it down. Cached
+    // upstream so the size choice is paid for once.
+    const src = `/api/maps/static?lat=${encodeURIComponent(
+      pin.lat,
+    )}&lon=${encodeURIComponent(pin.lon)}&zoom=12&w=800&h=${heightPx}`;
+    const img = (
+      <img
+        src={src}
+        alt={pin.label || 'Map'}
+        loading="lazy"
+        className="block h-full w-full object-cover"
+        // Egress disabled or upstream down → fall through to Leaflet
+        // on the next render. Avoids an infinite img-error loop by
+        // setting state once.
+        onError={() => setStaticFailed(true)}
+      />
+    );
+    return (
+      <div
+        className={className}
+        style={{ height }}
+        role="region"
+        aria-label="Map"
+      >
+        {pin.href ? (
+          <Link to={pin.href} title={pin.label} className="block h-full w-full">
+            {img}
+          </Link>
+        ) : (
+          img
+        )}
+      </div>
+    );
+  }
 
   return (
     <div
