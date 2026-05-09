@@ -145,6 +145,23 @@ const ACTIONS: {
     label: 'POST to a webhook URL',
     defaultConfig: { url: '' },
   },
+  {
+    kind: 'archive.ask',
+    label: 'Ask the archive',
+    defaultConfig: {
+      prompt: '',
+      output: 'page',
+      topK: 8,
+    },
+  },
+  {
+    kind: 'email.sendToSelf',
+    label: 'Email me',
+    defaultConfig: {
+      subject: '',
+      body: '',
+    },
+  },
 ];
 
 export function RecipeWizard({
@@ -850,6 +867,126 @@ function ActionConfig({
             />
           </Field>
         </div>
+      </div>
+    );
+  }
+  if (kind === 'archive.ask') {
+    return (
+      <div className="space-y-3">
+        <Field
+          label="Question"
+          hint='Mustache vars rendered before retrieval: {{topic}}, {{title}}, {{tag}}, {{date}}.'
+        >
+          <textarea
+            className="input min-h-[80px] font-mono text-xs"
+            placeholder="What's new about Project X this week, across my archive?"
+            value={(config.prompt as string) ?? ''}
+            onChange={(e) => setCfg('prompt', e.target.value)}
+            maxLength={4000}
+          />
+        </Field>
+        <div className="grid gap-3 sm:grid-cols-3">
+          <Field
+            label="Output"
+            hint="Where the answer lands. Page = newsletter / wiki entry."
+          >
+            <select
+              className="input"
+              value={(config.output as string) ?? 'page'}
+              onChange={(e) => setCfg('output', e.target.value)}
+            >
+              <option value="page">File as a page</option>
+              <option value="email">Email it to me</option>
+              <option value="push">Push notification</option>
+              <option value="audit-only">Audit log only</option>
+            </select>
+          </Field>
+          <Field label="Page title" hint="Used when output = page.">
+            <input
+              className="input"
+              value={(config.pageTitle as string) ?? ''}
+              onChange={(e) => setCfg('pageTitle', e.target.value)}
+              maxLength={200}
+            />
+          </Field>
+          <Field label="Top-K context" hint="Pages of context to retrieve (1–20).">
+            <input
+              className="input"
+              type="number"
+              min={1}
+              max={20}
+              value={(config.topK as number) ?? 8}
+              onChange={(e) => setCfg('topK', Number(e.target.value))}
+            />
+          </Field>
+        </div>
+        {(config.output ?? 'page') === 'email' && (
+          <Field
+            label="Email subject"
+            hint="Defaults to the question, truncated."
+          >
+            <input
+              className="input"
+              value={(config.emailSubject as string) ?? ''}
+              onChange={(e) => setCfg('emailSubject', e.target.value)}
+              maxLength={200}
+            />
+          </Field>
+        )}
+        <Field
+          label="System prompt (optional)"
+          hint="Tone or persona; falls back to a neutral research-assistant prompt that requires citations."
+        >
+          <input
+            className="input"
+            value={(config.system as string) ?? ''}
+            onChange={(e) => setCfg('system', e.target.value)}
+            maxLength={2000}
+          />
+        </Field>
+      </div>
+    );
+  }
+  if (kind === 'email.sendToSelf') {
+    return (
+      <div className="space-y-3">
+        <p className="text-xs text-ink-500">
+          Sends through your existing Gmail or IMAP source — no extra
+          SMTP config needed. Recipient defaults to the address on
+          your account.
+        </p>
+        <Field
+          label="Subject"
+          hint='Mustache vars: {{from}}, {{subject}}, {{body}} for email triggers; {{title}}, {{summary}}, {{tag}} for page triggers.'
+        >
+          <input
+            className="input"
+            placeholder="[Rose] {{title}}"
+            value={(config.subject as string) ?? ''}
+            onChange={(e) => setCfg('subject', e.target.value)}
+            maxLength={200}
+          />
+        </Field>
+        <Field label="Body" hint="Markdown. The same template vars as Subject apply.">
+          <textarea
+            className="input min-h-[120px] font-mono text-xs"
+            placeholder={'New page: **{{title}}**\n\n{{summary}}'}
+            value={(config.body as string) ?? ''}
+            onChange={(e) => setCfg('body', e.target.value)}
+            maxLength={20000}
+          />
+        </Field>
+        <Field
+          label="Recipient (optional)"
+          hint="Override; defaults to your account email."
+        >
+          <input
+            className="input"
+            value={(config.to as string) ?? ''}
+            onChange={(e) => setCfg('to', e.target.value)}
+            maxLength={320}
+          />
+        </Field>
       </div>
     );
   }

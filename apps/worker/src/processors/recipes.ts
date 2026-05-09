@@ -8,10 +8,13 @@ import {
   Email,
   User,
   Category,
+  OutboundMessage,
+  Source,
   uniqueSlug,
   normalizeCategoryName,
   normalizeTagKey,
   type RecipeDoc,
+  type PageDoc,
 } from '@rose/db';
 import {
   type RecipeEvent,
@@ -764,6 +767,403 @@ async function runLlmAction(
   return { reply };
 }
 
+/* ─── Archive retrieval (worker-side mirror of /api/chat) ────────── */
+
+const RAG_STOP = new Set([
+  'the', 'and', 'for', 'are', 'but', 'you', 'with', 'this', 'that',
+  'how', 'what', 'when', 'where',
+]);
+
+function ragQueryTokens(q: string): string[] {
+  return [
+    ...new Set(
+      q
+        .toLowerCase()
+        .split(/[^a-z0-9]+/)
+        .filter((t) => t.length >= 3 && !RAG_STOP.has(t)),
+    ),
+  ];
+}
+
+function bestWindow(content: string, tokens: string[], targetLen = 1500): string {
+  if (!content) return '';
+  if (content.length <= targetLen) return content;
+  // Score each ~targetLen window by query-token hit count; take the
+  // best one. Cheap; same heuristic as /api/chat.
+  let bestStart = 0;
+  let bestScore = -1;
+  for (let start = 0; start < content.length; start += Math.floor(targetLen / 2)) {
+    const slice = content.slice(start, start + targetLen).toLowerCase();
+    let score = 0;
+    for (const t of tokens) if (slice.includes(t)) score += 1;
+    if (score > bestScore) {
+      bestScore = score;
+      bestStart = start;
+    }
+  }
+  return content.slice(bestStart, bestStart + targetLen);
+}
+
+function cosineRag(a: number[], b: number[]): number {
+  if (!a.length || a.length !== b.length) return 0;
+  let dot = 0;
+  let na = 0;
+  let nb = 0;
+  for (let i = 0; i < a.length; i += 1) {
+    dot += (a[i] ?? 0) * (b[i] ?? 0);
+    na += (a[i] ?? 0) * (a[i] ?? 0);
+    nb += (b[i] ?? 0) * (b[i] ?? 0);
+  }
+  return na && nb ? dot / (Math.sqrt(na) * Math.sqrt(nb)) : 0;
+}
+
+type ArchiveHit = {
+  page: PageDoc;
+  score: number;
+  matchedBy: ('text' | 'semantic')[];
+};
+
+async function retrieveArchive(
+  userId: Types.ObjectId,
+  query: string,
+  topK: number,
+): Promise<ArchiveHit[]> {
+  const filter: Record<string, unknown> = {
+    userId,
+    'flags.userMarkedSpam': { $ne: true },
+    'flags.autoQuarantined': { $ne: true },
+  };
+  const textHits = (await Page.find({ ...filter, $text: { $search: query } })
+    .select('+contentMd')
+    .limit(40)
+    .lean()) as unknown as PageDoc[];
+
+  let semHits: { doc: PageDoc; score: number }[] = [];
+  try {
+    const r = await resolveProviderForUser(userId, 'embedding');
+    if (r.provider.supportsEmbeddings) {
+      const tag = `${r.providerId}:${r.model}`;
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 4000);
+      let qVec: number[];
+      try {
+        qVec = await r.provider.embed(r.model, query, ctrl.signal);
+      } finally {
+        clearTimeout(timer);
+      }
+      const candidates = (await Page.find({
+        ...filter,
+        embedding: { $ne: null },
+        embeddingModel: tag,
+      })
+        .select('+embedding +contentMd')
+        .lean()) as unknown as (PageDoc & { embedding: number[] })[];
+      semHits = candidates
+        .map((doc) => ({ doc, score: cosineRag(qVec, doc.embedding as number[]) }))
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 40);
+    }
+  } catch (err) {
+    logger.debug({ err }, 'archive.ask: embedding leg failed; text-only fallback');
+  }
+
+  // Reciprocal-rank fusion. Same constants as /api/chat.
+  const k = 60;
+  const fused = new Map<string, ArchiveHit>();
+  textHits.forEach((doc, i) => {
+    fused.set(String(doc._id), {
+      page: doc,
+      score: 1 / (k + (i + 1)),
+      matchedBy: ['text'],
+    });
+  });
+  semHits.forEach(({ doc }, i) => {
+    const id = String(doc._id);
+    const prev = fused.get(id);
+    const rrf = 1 / (k + (i + 1));
+    if (prev) {
+      prev.score += rrf;
+      prev.matchedBy.push('semantic');
+    } else {
+      fused.set(id, { page: doc, score: rrf, matchedBy: ['semantic'] });
+    }
+  });
+  return [...fused.values()]
+    .sort((a, b) => b.score - a.score)
+    .slice(0, topK);
+}
+
+function renderRagContext(
+  hits: ArchiveHit[],
+  query: string,
+): { text: string; citations: { label: string; pageId: string; slug: string; title: string }[] } {
+  const tokens = ragQueryTokens(query);
+  const lines: string[] = [];
+  const citations: { label: string; pageId: string; slug: string; title: string }[] = [];
+  hits.forEach((h, i) => {
+    const label = `p${i + 1}`;
+    const window = bestWindow((h.page.contentMd as string) ?? '', tokens, 1200);
+    lines.push(`[${label}] ${h.page.title}\n${window}\n`);
+    citations.push({
+      label,
+      pageId: String(h.page._id),
+      slug: h.page.slug,
+      title: h.page.title,
+    });
+  });
+  return { text: lines.join('\n'), citations };
+}
+
+const ARCHIVE_ASK_SYSTEM_PROMPT =
+  `You are a research assistant answering questions about the user's
+own personal archive. You will receive a QUESTION plus a list of
+CONTEXT excerpts pulled from their pages. Answer the question using
+ONLY those excerpts. Reference sources inline as [p1], [p2] … to
+match the labels. Use clean markdown with headings, lists, and
+inline links where appropriate. Lead with the most useful answer;
+do not pad. Do not invent facts that aren't in the excerpts.`;
+
+/**
+ * Send a plain transactional email to the user from a recipe.
+ * Re-uses the digest-mail outbound infrastructure: the user's
+ * existing IMAP/Gmail Source provides the SMTP transport;
+ * OutboundMessage is queued for the send-outbound worker.
+ */
+async function runEmailSendToSelf(
+  userId: Types.ObjectId,
+  config: { subject: string; body: string; to?: string },
+  event: RecipeEvent,
+  recipeName: string,
+): Promise<{ outboundId: string }> {
+  const ctx = await buildLlmContext(userId, event);
+  const subject = renderTemplate(config.subject, ctx).slice(0, 200) || recipeName;
+  const body = renderTemplate(config.body, ctx);
+  const user = await User.findById(userId).select('email');
+  if (!user?.email) {
+    throw new Error('user has no email on file');
+  }
+  const transport =
+    (await Source.findOne({ userId, type: 'gmail', status: 'active' })) ??
+    (await Source.findOne({ userId, type: 'imap', status: 'active' }));
+  if (!transport) {
+    throw new Error('no active outbound source — connect Gmail or IMAP in Settings → Sources');
+  }
+  const out = await OutboundMessage.create({
+    userId,
+    inReplyToEmailId: null,
+    sourceId: transport._id,
+    transport: transport.type === 'gmail' ? 'gmail' : 'smtp',
+    to: [{ address: config.to ?? user.email }],
+    cc: [],
+    bcc: [],
+    subject,
+    bodyMd: body,
+    bodyHtml: mdToHtmlSimple(body),
+    status: 'queued',
+  });
+  await sendOutboundQueue.add(
+    'send',
+    { outboundId: String(out._id), userId: String(userId) },
+    { attempts: 1, removeOnComplete: 100, removeOnFail: 100 },
+  );
+  return { outboundId: String(out._id) };
+}
+
+/**
+ * Tiny markdown-to-HTML pass for transactional mail. Not pretty;
+ * mirrors the lightweight conversion the digest mail uses for
+ * synthesised summaries — paragraphs, **bold**, *italic*, links.
+ * Recipe authors who want richer formatting can pass HTML straight
+ * in via a future field; this is the "good enough" path.
+ */
+function mdToHtmlSimple(md: string): string {
+  const escaped = md
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+  const linked = escaped.replace(
+    /\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g,
+    '<a href="$2">$1</a>',
+  );
+  const bolded = linked
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*([^*]+)\*/g, '<em>$1</em>');
+  const paragraphs = bolded
+    .split(/\n{2,}/)
+    .map((p) => `<p>${p.replace(/\n/g, '<br/>')}</p>`)
+    .join('\n');
+  return `<!doctype html><html><body>${paragraphs}</body></html>`;
+}
+
+const sendOutboundQueue = new Queue('rose.send-outbound', {
+  connection: bullConnection(),
+});
+
+/**
+ * "Ask the archive" recipe action — runs a user-supplied question
+ * against the user's pages via RAG, then files / mails / pushes
+ * the answer based on the configured output mode.
+ */
+async function runArchiveAsk(
+  userId: Types.ObjectId,
+  config: {
+    prompt: string;
+    system?: string;
+    output: 'page' | 'email' | 'push' | 'audit-only';
+    pageTitle?: string;
+    emailSubject?: string;
+    pushTitle?: string;
+    topK: number;
+    temperature?: number;
+    maxTokens?: number;
+  },
+  event: RecipeEvent,
+  recipeName: string,
+  recipeId: Types.ObjectId,
+): Promise<{ reply: string; pageSlug?: string; outboundId?: string }> {
+  // Render template variables first so {{topic}}/{{title}}/{{tag}}
+  // pull from the trigger event before retrieval scores against
+  // the resolved query.
+  const ctx = await buildLlmContext(userId, event);
+  const renderedPrompt = renderTemplate(config.prompt, ctx);
+
+  const hits = await retrieveArchive(userId, renderedPrompt, config.topK);
+  const { text: contextBlock, citations } = renderRagContext(
+    hits,
+    renderedPrompt,
+  );
+
+  const promptBody =
+    `Question: ${renderedPrompt}\n\n` +
+    `Context (cite as [p1], [p2], …):\n\n` +
+    (contextBlock || '(no relevant pages found)') +
+    `\n\nAnswer:`;
+
+  const resolved = await resolveProviderForUser(userId, 'generation');
+  const reply = (
+    await resolved.provider.generate({
+      model: resolved.model,
+      prompt: promptBody,
+      system: config.system
+        ? renderTemplate(config.system, ctx)
+        : ARCHIVE_ASK_SYSTEM_PROMPT,
+      temperature: config.temperature ?? 0.3,
+      maxTokens: config.maxTokens ?? 1200,
+    })
+  ).trim();
+
+  if (!reply) return { reply: '' };
+
+  // Rewrite [pN] markers to clickable internal links so the same
+  // citations the chat UI shows work in the rendered output.
+  const slugByLabel = new Map(citations.map((c) => [c.label, c.slug]));
+  const linkified = reply.replace(/\[(p\d{1,2})\](?!\()/g, (m, label: string) => {
+    const slug = slugByLabel.get(label);
+    return slug ? `[\\[${label}\\]](/p/${slug})` : m;
+  });
+
+  // Output dispatch.
+  if (config.output === 'audit-only') {
+    return { reply: linkified };
+  }
+  if (config.output === 'push') {
+    await pushToUser(userId, {
+      title: config.pushTitle ?? recipeName,
+      body: linkified.slice(0, 280),
+    });
+    return { reply: linkified };
+  }
+  if (config.output === 'email') {
+    const subject =
+      (config.emailSubject ?? renderedPrompt).slice(0, 200) || recipeName;
+    const r = await runEmailSendToSelf(
+      userId,
+      { subject, body: linkified },
+      event,
+      recipeName,
+    );
+    return { reply: linkified, outboundId: r.outboundId };
+  }
+
+  // Default: file as a Page. One page per recipeId — later runs
+  // update in place (matches briefing.generate semantics).
+  const title =
+    (config.pageTitle && config.pageTitle.trim()) ||
+    renderedPrompt.slice(0, 80) ||
+    recipeName;
+  const summary =
+    linkified
+      .replace(/^#+\s+.*$/gm, '')
+      .split(/(?<=[.!?])\s+/)
+      .map((s) => s.trim())
+      .find((s) => s.length > 0)
+      ?.slice(0, 280) ?? title;
+
+  const existing = await Page.findOne({ userId, recipeId })
+    .select('_id slug version')
+    .lean();
+  let pageId: Types.ObjectId;
+  let slug: string;
+  let nextVersion: number;
+
+  if (existing) {
+    pageId = existing._id as Types.ObjectId;
+    slug = existing.slug;
+    nextVersion = (existing.version ?? 1) + 1;
+    await Page.updateOne(
+      { _id: pageId, userId },
+      {
+        $set: {
+          title,
+          summary,
+          contentMd: linkified,
+          tags: ['archive-ask', normalizeTagKey(recipeName)].filter(Boolean),
+          version: nextVersion,
+          generationModel: `${resolved.providerId}:${resolved.model}`,
+          generatedAt: new Date(),
+          generatedBy: 'archive-ask',
+          recipeId,
+        },
+      },
+    );
+  } else {
+    slug = await uniqueSlug(userId, title);
+    const created = await Page.create({
+      userId,
+      slug,
+      title,
+      summary,
+      contentMd: linkified,
+      tags: ['archive-ask', normalizeTagKey(recipeName)].filter(Boolean),
+      sourceEmailIds: [],
+      threadKeys: [],
+      citations: {},
+      version: 1,
+      generationModel: `${resolved.providerId}:${resolved.model}`,
+      generatedAt: new Date(),
+      generatedBy: 'archive-ask',
+      recipeId,
+    });
+    pageId = created._id as Types.ObjectId;
+    nextVersion = 1;
+  }
+  await PageRevision.create({
+    pageId,
+    version: nextVersion,
+    title,
+    summary,
+    contentMd: linkified,
+    editor: 'llm',
+    model: `${resolved.providerId}:${resolved.model}`,
+  });
+  await pushToUser(userId, {
+    title: existing ? 'Archive answer updated' : 'New archive answer',
+    body: `${recipeName} — “${title}”`,
+    url: `/p/${slug}`,
+  }).catch(() => null);
+  return { reply: linkified, pageSlug: slug };
+}
+
 async function runWebhookPost(
   config: { url: string; headers?: Record<string, string> },
   event: RecipeEvent,
@@ -846,6 +1246,26 @@ async function runAction(
           recipeId,
         );
         detail = `Filed “${r.pageSlug}” from ${r.snippetCount} snippets across ${r.sourceCount} sources`;
+        break;
+      }
+      case 'archive.ask': {
+        const r = await runArchiveAsk(
+          userId,
+          action.config,
+          event,
+          recipeName,
+          recipeId,
+        );
+        detail = r.pageSlug
+          ? `Filed answer at /p/${r.pageSlug}`
+          : r.outboundId
+            ? `Mailed answer (outbound:${r.outboundId})`
+            : r.reply.slice(0, 400);
+        break;
+      }
+      case 'email.sendToSelf': {
+        const r = await runEmailSendToSelf(userId, action.config, event, recipeName);
+        detail = `Mailed (outbound:${r.outboundId})`;
         break;
       }
     }

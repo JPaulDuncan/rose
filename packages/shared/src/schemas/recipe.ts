@@ -124,8 +124,10 @@ export const ActionKind = z.enum([
   'email.markSpam',
   'email.archive',
   'email.block',
+  'email.sendToSelf',
   'llm.run',
   'briefing.generate',
+  'archive.ask',
 ]);
 export type ActionKind = z.infer<typeof ActionKind>;
 
@@ -280,6 +282,74 @@ const BriefingGenerateAction = z.object({
   }),
 });
 
+/**
+ * Send a plain email to the user's own primary inbox. Subject and
+ * body are Mustache-templated against the trigger event so a
+ * page.created recipe can fire "[Rose] {{title}} — {{summary}}"
+ * to the user as a quick "I made you a thing" notification.
+ *
+ * Outbound transport is the user's existing configured Source
+ * (Gmail / IMAP). The recipient is the user's `User.email`
+ * unless `to` is set to override.
+ */
+const EmailSendToSelfAction = z.object({
+  kind: z.literal('email.sendToSelf'),
+  config: z.object({
+    /** Subject line. Templates: see archive.ask + llm.run docs. */
+    subject: z.string().min(1).max(200),
+    /** Plain-text or markdown body. */
+    body: z.string().min(1).max(20_000),
+    /** Optional override; defaults to the user's primary email. */
+    to: z.string().email().max(320).optional(),
+  }),
+});
+
+/**
+ * "Ask the archive" — runs a free-text question against the user's
+ * pages via the same retrieval-augmented pipeline that powers the
+ * Chat UI, then files the answer somewhere the user will see it.
+ *
+ * Pair with `time.scheduled` for "every Monday morning, summarise
+ * what's new about Project X across my archive and email me a
+ * newsletter," or with `tag.applied` for "every time something
+ * lands in #invoices, ask the archive what's outstanding and
+ * publish a page." User-supplied prompt; we add the standard
+ * RAG context block.
+ */
+const ArchiveAskAction = z.object({
+  kind: z.literal('archive.ask'),
+  config: z.object({
+    /** The question / instruction posed to the archive. Mustache
+     *  variables ({{topic}}, {{title}}, {{tag}}, {{date}}) are
+     *  rendered first; the query is then matched against the
+     *  user's pages for retrieval. */
+    prompt: z.string().min(1).max(4000),
+    /** Optional persona / framing prompt. */
+    system: z.string().max(2000).optional(),
+    /** What to do with the answer:
+     *   • 'page'   — file it as a Page (one Page per recipe; later
+     *                 runs update the same page in place).
+     *   • 'email'  — send it to the user's primary inbox.
+     *   • 'push'   — surface it as a push notification (truncated).
+     *   • 'audit-only' — record on RecipeAudit, no other side-effect. */
+    output: z.enum(['page', 'email', 'push', 'audit-only']).default('page'),
+    /** Page output: title for the resulting page (defaults to a
+     *  short slug derived from the prompt). */
+    pageTitle: z.string().max(200).optional(),
+    /** Email output: subject line override. Defaults to the
+     *  rendered prompt (truncated). */
+    emailSubject: z.string().max(200).optional(),
+    /** Push output: title override; defaults to the recipe name. */
+    pushTitle: z.string().max(80).optional(),
+    /** How many top-K archive hits to inject as context. Bounded
+     *  so a chatty corpus doesn't blow the model's window. */
+    topK: z.number().int().min(1).max(20).default(8),
+    /** LLM sampling controls. */
+    temperature: z.number().min(0).max(1).optional(),
+    maxTokens: z.number().int().min(1).max(4000).optional(),
+  }),
+});
+
 export const ActionSchema = z.discriminatedUnion('kind', [
   NotifyPushAction,
   TagAddAction,
@@ -290,8 +360,10 @@ export const ActionSchema = z.discriminatedUnion('kind', [
   EmailMarkSpamAction,
   EmailArchiveAction,
   EmailBlockAction,
+  EmailSendToSelfAction,
   LlmRunAction,
   BriefingGenerateAction,
+  ArchiveAskAction,
 ]);
 export type Action = z.infer<typeof ActionSchema>;
 
