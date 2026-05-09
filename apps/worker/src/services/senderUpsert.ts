@@ -1,6 +1,13 @@
 import { Types } from 'mongoose';
 import { Queue } from 'bullmq';
-import { Sender, SenderBrand, Entity, type EmailDoc, type PageDoc } from '@rose/db';
+import {
+  Sender,
+  SenderBrand,
+  Entity,
+  Organization,
+  type EmailDoc,
+  type PageDoc,
+} from '@rose/db';
 import { senderDomainTag } from '@rose/email-parser';
 import { redis } from '../lib/redis.js';
 import { logger } from '../lib/logger.js';
@@ -245,6 +252,29 @@ export async function upsertSendersFromPage(
         },
         { upsert: true },
       );
+      // Organizations are global — populate the shared
+      // Organization row alongside the per-user Entity. setOnInsert
+      // on displayName means the FIRST sender-upsert wins the
+      // canonical name; later writes don't clobber a name another
+      // user (or the LLM extractor) already set.
+      try {
+        await Organization.updateOne(
+          { key: b.brandKey },
+          {
+            $setOnInsert: {
+              key: b.brandKey,
+              displayName: b.name || b.brandKey,
+              firstSeenBy: userId,
+            },
+          },
+          { upsert: true },
+        );
+      } catch (err) {
+        logger.debug(
+          { err, brandKey: b.brandKey },
+          'sender → organization upsert failed (continuing)',
+        );
+      }
     } catch (err) {
       logger.warn(
         { err, brandKey: b.brandKey, userId: String(userId) },

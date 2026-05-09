@@ -97,7 +97,49 @@ export type Migration = {
  * doesn't need a migration entry. Future entries (Float32 embedding
  * encoding, body-collection split, etc.) will land here.
  */
-const MIGRATIONS: Migration[] = [];
+const MIGRATIONS: Migration[] = [
+  {
+    // Backfill the global Organization collection from existing
+    // per-user Entity rows of type='organization'. Before this
+    // migration, organizations only lived on per-user Entity rows;
+    // the new Organization collection is the canonical source for
+    // the shared name + aliases. Idempotent via `key` upserts:
+    // re-running aggregates aliases via $addToSet without
+    // overwriting any user's later edit.
+    name: '2026-05-09-backfill-organizations',
+    async run(conn) {
+      const entities = conn.collection('entities');
+      const orgs = conn.collection('organizations');
+      const cursor = entities.find(
+        { type: 'organization' },
+        { projection: { key: 1, displayName: 1, aliases: 1, userId: 1 } },
+      );
+      while (await cursor.hasNext()) {
+        const ent = await cursor.next();
+        if (!ent) continue;
+        const key = String(ent.key ?? '').trim();
+        if (!key) continue;
+        const displayName = String(ent.displayName ?? key);
+        const aliases = Array.isArray(ent.aliases)
+          ? (ent.aliases as unknown[]).map(String).filter(Boolean)
+          : [];
+        const set: Record<string, unknown> = {
+          $setOnInsert: {
+            key,
+            displayName,
+            firstSeenBy: ent.userId ?? null,
+            createdAt: new Date(),
+          },
+          $set: { updatedAt: new Date() },
+        };
+        if (aliases.length) {
+          set.$addToSet = { aliases: { $each: aliases } };
+        }
+        await orgs.updateOne({ key }, set, { upsert: true });
+      }
+    },
+  },
+];
 
 export async function runMigrations(
   conn: Connection = mongoose.connection,

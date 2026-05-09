@@ -84,6 +84,8 @@ export { PromoCode } from './models/PromoCode.js';
 export type { PromoCodeDoc } from './models/PromoCode.js';
 export { AlertRule } from './models/AlertRule.js';
 export type { AlertRuleDoc } from './models/AlertRule.js';
+export { Organization } from './models/Organization.js';
+export type { OrganizationDoc } from './models/Organization.js';
 export { uniqueSlug } from './util/uniqueSlug.js';
 export {
   applyRetentionForUser,

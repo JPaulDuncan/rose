@@ -1,6 +1,7 @@
 import type { Types } from 'mongoose';
 import {
   Entity,
+  Organization,
   Instruction,
   normalizeTagKey,
   daydreamSubjectKey,
@@ -139,6 +140,38 @@ export async function extractEntitiesFromPage(
         },
         { upsert: true },
       );
+      // Organizations are global — every user sees the same row
+      // when they open /n/<key>. Dual-write so the per-user Entity
+      // captures pageCount + lastSeenAt while the global
+      // Organization owns the canonical name + aliases + (later)
+      // the LLM-written brief. setOnInsert on displayName means
+      // the FIRST extraction to surface an org wins the casing;
+      // subsequent extractions don't clobber. Aliases use
+      // $addToSet so every user contributes to the global alias
+      // list without overwriting each other.
+      if (e.type === 'organization') {
+        try {
+          await Organization.updateOne(
+            { key: normKey },
+            {
+              $setOnInsert: {
+                key: normKey,
+                displayName: e.name,
+                firstSeenBy: userId,
+              },
+              ...(aliasKeys.length
+                ? { $addToSet: { aliases: { $each: aliasKeys } } }
+                : {}),
+            },
+            { upsert: true },
+          );
+        } catch (err) {
+          logger.warn(
+            { err, key: normKey },
+            'extract-entities: failed to upsert Organization row',
+          );
+        }
+      }
     } catch (err) {
       // Don't fail the whole extraction over one upsert; the
       // page-level `entities[]` is still durable, and the next

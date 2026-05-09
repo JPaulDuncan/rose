@@ -46,6 +46,14 @@ type EntityResponse = {
   placeCoords: { lat: number; lon: number; displayName: string | null } | null;
   pages: EntityPageDoc[];
   related: RelatedEntity[];
+  /** Globally-shared facts for organization-typed entities. Null
+   *  for other types or when no Organization row exists yet. */
+  org: {
+    displayName: string | null;
+    websites: string[];
+    logoUrl: string | null;
+    summary: string;
+  } | null;
 };
 
 type DaydreamNoteView = {
@@ -136,6 +144,17 @@ export default function EntityPage() {
   return (
     <div className="mx-auto w-full max-w-5xl px-6 py-10">
       <div className="mb-6 flex items-start gap-3">
+        {data.org?.logoUrl ? (
+          <img
+            src={data.org.logoUrl}
+            alt=""
+            className="mt-1 h-8 w-8 shrink-0 rounded object-contain"
+            referrerPolicy="no-referrer"
+            onError={(e) => {
+              (e.currentTarget as HTMLImageElement).style.display = 'none';
+            }}
+          />
+        ) : null}
         <span className={`mt-1 inline-flex items-center gap-1.5 rounded px-2 py-0.5 text-xs font-medium ${typeBadgeClass(data.type)}`}>
           <TypeIcon type={data.type} className="h-3 w-3" />
           {data.type ? TYPE_LABEL[data.type] : 'Mention'}
@@ -157,6 +176,23 @@ export default function EntityPage() {
               </>
             )}
           </p>
+          {data.org?.websites && data.org.websites.length > 0 && (
+            <p className="mt-1 text-xs text-ink-500">
+              {data.org.websites.slice(0, 3).map((w, i) => (
+                <span key={w}>
+                  {i > 0 && ' · '}
+                  <a
+                    href={`https://${w}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-rose-600 hover:underline"
+                  >
+                    {w}
+                  </a>
+                </span>
+              ))}
+            </p>
+          )}
         </div>
       </div>
 

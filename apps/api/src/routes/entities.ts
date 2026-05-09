@@ -6,6 +6,7 @@ import {
   DaydreamNote,
   Sender,
   User,
+  Organization,
   normalizeTagKey,
   ENTITY_TYPES,
   daydreamSubjectKey,
@@ -85,6 +86,29 @@ entitiesRouter.post('/', async (req, res) => {
     pageCount: 0,
     lastSeenAt: new Date(),
   });
+  // Organizations are global — dual-write so other users see this
+  // org on /n/<key>. setOnInsert keeps an existing canonical name
+  // intact; the per-user displayName edit lives on Entity.
+  if (type === 'organization') {
+    try {
+      await Organization.updateOne(
+        { key },
+        {
+          $setOnInsert: {
+            key,
+            displayName: displayName.slice(0, 200),
+            firstSeenBy: userId,
+          },
+          ...(aliases.length
+            ? { $addToSet: { aliases: { $each: aliases } } }
+            : {}),
+        },
+        { upsert: true },
+      );
+    } catch {
+      // Best-effort; the per-user row succeeded.
+    }
+  }
   res.status(201).json({
     key: created.key,
     displayName: created.displayName,
@@ -232,15 +256,62 @@ entitiesRouter.get('/:key', async (req, res) => {
       count: v.count,
     }));
 
+  // Organizations are global — merge the shared facts (canonical
+  // displayName, aliases, summary, websites, logo) from the
+  // Organization row so every user sees the same brand identity for
+  // an org-typed entity. The user's own Entity still owns their
+  // pageCount / lastSeenAt / per-user overrides.
+  let orgFacts: {
+    displayName?: string;
+    aliases?: string[];
+    websites?: string[];
+    logoUrl?: string | null;
+    summary?: string;
+  } = {};
+  if (inferredType === 'organization') {
+    const org = await Organization.findOne({ key: canonicalKey })
+      .select('displayName aliases websites logoUrl summary forgottenBriefBy')
+      .lean();
+    if (org) {
+      const muted = (
+        (org.forgottenBriefBy as Types.ObjectId[] | undefined) ?? []
+      ).some((u) => String(u) === String(userId));
+      orgFacts = {
+        displayName: (org.displayName as string | undefined) || undefined,
+        aliases: (org.aliases as string[] | undefined) ?? [],
+        websites: (org.websites as string[] | undefined) ?? [],
+        logoUrl: (org.logoUrl as string | null | undefined) ?? null,
+        summary: muted ? '' : ((org.summary as string | undefined) ?? ''),
+      };
+    }
+  }
+
+  // Aliases: union of per-user (Entity) and global (Organization).
+  const aliasSet = new Set<string>([
+    ...(((entity?.aliases as string[] | undefined) ?? [])),
+    ...(orgFacts.aliases ?? []),
+  ]);
+
   res.json({
     key: canonicalKey,
-    displayName: inferredDisplayName || canonicalKey,
+    // Per-user displayName wins when the user has explicitly set
+    // one; otherwise fall back to the global org name.
+    displayName:
+      inferredDisplayName || orgFacts.displayName || canonicalKey,
     type: inferredType,
-    aliases: ((entity?.aliases as string[] | undefined) ?? []),
+    aliases: [...aliasSet],
     pageCount: pages.length,
     placeCoords,
     pages,
     related: relatedList,
+    org: inferredType === 'organization'
+      ? {
+          displayName: orgFacts.displayName ?? null,
+          websites: orgFacts.websites ?? [],
+          logoUrl: orgFacts.logoUrl ?? null,
+          summary: orgFacts.summary ?? '',
+        }
+      : null,
   });
 });
 
@@ -327,6 +398,27 @@ entitiesRouter.patch('/:key', async (req, res) => {
       { $set: { 'entities.$[matched].type': update.type } },
       { arrayFilters: [{ 'matched.normKey': key }] },
     );
+  }
+  // Org-typed entity edits flow into the global Organization row.
+  // Aliases use $addToSet so one user's discovery surfaces for
+  // everyone; displayName is intentionally NOT mirrored on PATCH —
+  // the per-user displayName lives on Entity, and the canonical
+  // global name is set once on first insert.
+  if (result.type === 'organization') {
+    try {
+      const orgUpdate: Record<string, unknown> = {
+        $setOnInsert: { key, displayName: result.displayName, firstSeenBy: userId },
+      };
+      const newAliases = Array.isArray(update.aliases)
+        ? (update.aliases as string[])
+        : [];
+      if (newAliases.length) {
+        orgUpdate.$addToSet = { aliases: { $each: newAliases } };
+      }
+      await Organization.updateOne({ key }, orgUpdate, { upsert: true });
+    } catch {
+      // Best-effort.
+    }
   }
   res.json({
     key: result.key,
