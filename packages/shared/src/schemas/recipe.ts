@@ -297,9 +297,20 @@ export type Action = z.infer<typeof ActionSchema>;
 
 // ─── Recipe ──────────────────────────────────────────────────────────
 
+/** Recipe scope. 'global' recipes are admin-managed and apply
+ *  application-wide; 'user' recipes belong to one user. */
+export const RecipeScope = z.enum(['user', 'global']);
+export type RecipeScope = z.infer<typeof RecipeScope>;
+
+/** Action kinds that only an admin may add to a recipe. Centralised
+ *  here so the API, the dispatcher, and the wizard agree. */
+export const ADMIN_ONLY_ACTION_KINDS = ['llm.run', 'briefing.generate'] as const;
+export type AdminOnlyActionKind = (typeof ADMIN_ONLY_ACTION_KINDS)[number];
+
 export const Recipe = z.object({
   _id: z.string(),
   userId: z.string(),
+  scope: RecipeScope.default('user'),
   name: z.string().min(1).max(120),
   description: z.string().max(500).default(''),
   enabled: z.boolean().default(true),
@@ -326,6 +337,8 @@ export const RecipeCreateRequest = z.object({
   name: z.string().min(1).max(120),
   description: z.string().max(500).optional(),
   enabled: z.boolean().optional(),
+  /** Defaults to 'user'. 'global' is gated to admins at the API layer. */
+  scope: RecipeScope.optional(),
   trigger: TriggerSchema,
   conditions: z.array(ConditionSchema).max(10).optional(),
   actions: z.array(ActionSchema).min(1).max(10),
@@ -338,6 +351,7 @@ export const RecipeUpdateRequest = z.object({
   name: z.string().min(1).max(120).optional(),
   description: z.string().max(500).optional(),
   enabled: z.boolean().optional(),
+  scope: RecipeScope.optional(),
   trigger: TriggerSchema.optional(),
   conditions: z.array(ConditionSchema).max(10).optional(),
   actions: z.array(ActionSchema).min(1).max(10).optional(),
@@ -345,6 +359,15 @@ export const RecipeUpdateRequest = z.object({
   fireLimitPerHour: z.number().int().min(1).max(1000).optional(),
 });
 export type RecipeUpdateRequest = z.infer<typeof RecipeUpdateRequest>;
+
+/** Returns true if any of the actions need admin privileges. */
+export function actionsRequireAdmin(
+  actions: { kind: string }[] | null | undefined,
+): boolean {
+  if (!actions) return false;
+  const adminSet = new Set<string>(ADMIN_ONLY_ACTION_KINDS);
+  return actions.some((a) => adminSet.has(a.kind));
+}
 
 // ─── Event payloads (worker → dispatcher) ────────────────────────────
 

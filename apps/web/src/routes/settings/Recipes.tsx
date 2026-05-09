@@ -31,6 +31,9 @@ type Recipe = {
   name: string;
   description: string;
   enabled: boolean;
+  /** 'user' (owned by the requester) or 'global' (admin-managed,
+   *  application-wide). Visible only to admins on the Globals tab. */
+  scope?: 'user' | 'global';
   trigger: { kind: string; config: Record<string, unknown> };
   conditions: { kind: string; config: Record<string, unknown> }[];
   actions: { kind: string; config: Record<string, unknown> }[];
@@ -58,9 +61,24 @@ type Recipe = {
 export default function RecipesSettings() {
   const api = useApi();
   const qc = useQueryClient();
+  // Admin probe — used to surface the Globals tab + the wizard's
+  // admin-only options. Returns isAdmin: false for non-admins
+  // rather than 401/403 so we don't clutter the dev console.
+  const { data: adminInfo } = useQuery({
+    queryKey: ['admin', 'me'],
+    queryFn: () => api.get<{ isAdmin: boolean }>('/api/admin/me'),
+    staleTime: 60 * 1000,
+  });
+  const isAdmin = adminInfo?.isAdmin ?? false;
+  const [tab, setTab] = useState<'mine' | 'global'>('mine');
+  const queryKey = tab === 'global' ? ['recipes', 'global'] : ['recipes'];
   const { data, isLoading } = useQuery({
-    queryKey: ['recipes'],
-    queryFn: () => api.get<{ recipes: Recipe[] }>('/api/recipes'),
+    queryKey,
+    queryFn: () =>
+      api.get<{ recipes: Recipe[] }>(
+        tab === 'global' ? '/api/recipes?scope=global' : '/api/recipes',
+      ),
+    enabled: tab === 'mine' || isAdmin,
   });
   const [editing, setEditing] = useState<Recipe | null>(null);
   const [creating, setCreating] = useState(false);
@@ -70,26 +88,37 @@ export default function RecipesSettings() {
   );
   const [openAuditId, setOpenAuditId] = useState<string | null>(null);
 
+  function invalidateRecipeQueries() {
+    qc.invalidateQueries({ queryKey: ['recipes'] });
+    qc.invalidateQueries({ queryKey: ['recipes', 'global'] });
+  }
+
   const toggleEnabled = useMutation({
     mutationFn: async ({ id, enabled }: { id: string; enabled: boolean }) =>
       api.patch<Recipe>(`/api/recipes/${id}`, { enabled }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['recipes'] }),
+    onSuccess: () => invalidateRecipeQueries(),
     onError: (e: Error) => toast.error(e.message),
   });
   const remove = useMutation({
     mutationFn: async (id: string) => api.del<{ ok: true }>(`/api/recipes/${id}`),
     onSuccess: () => {
       toast.success('Recipe deleted');
-      qc.invalidateQueries({ queryKey: ['recipes'] });
+      invalidateRecipeQueries();
     },
   });
   const create = useMutation({
     mutationFn: async (body: RecipeFormValues) =>
-      api.post<Recipe>('/api/recipes', body),
+      api.post<Recipe>('/api/recipes', {
+        ...body,
+        // When the admin is on the Globals tab, every newly-created
+        // recipe defaults to scope=global. The wizard exposes a
+        // toggle to override.
+        scope: body.scope ?? (tab === 'global' ? 'global' : 'user'),
+      }),
     onSuccess: () => {
       toast.success('Recipe created');
       setCreating(false);
-      qc.invalidateQueries({ queryKey: ['recipes'] });
+      invalidateRecipeQueries();
     },
     onError: (e: Error) => toast.error(e.message),
   });
@@ -99,7 +128,7 @@ export default function RecipesSettings() {
     onSuccess: () => {
       toast.success('Recipe updated');
       setEditing(null);
-      qc.invalidateQueries({ queryKey: ['recipes'] });
+      invalidateRecipeQueries();
     },
     onError: (e: Error) => toast.error(e.message),
   });
@@ -120,6 +149,43 @@ export default function RecipesSettings() {
           triggers and the four most common actions (push, tag, category,
           webhook).
         </p>
+        {isAdmin && (
+          <div className="mt-3 inline-flex rounded-md border border-ink-200 p-0.5 text-xs dark:border-ink-800">
+            <button
+              type="button"
+              className={
+                'rounded px-3 py-1 ' +
+                (tab === 'mine'
+                  ? 'bg-rose-500 text-white'
+                  : 'text-ink-600 dark:text-ink-300')
+              }
+              onClick={() => {
+                setTab('mine');
+                setEditing(null);
+                setCreating(false);
+              }}
+            >
+              My recipes
+            </button>
+            <button
+              type="button"
+              className={
+                'rounded px-3 py-1 ' +
+                (tab === 'global'
+                  ? 'bg-rose-500 text-white'
+                  : 'text-ink-600 dark:text-ink-300')
+              }
+              onClick={() => {
+                setTab('global');
+                setEditing(null);
+                setCreating(false);
+              }}
+              title="Global recipes apply to every user"
+            >
+              Global (admin)
+            </button>
+          </div>
+        )}
       </div>
 
       {!creating && !editing && !browsingTemplates && (
@@ -157,7 +223,12 @@ export default function RecipesSettings() {
 
       {creating && (
         <RecipeWizard
-          initial={templateInitial ?? undefined}
+          initial={
+            templateInitial
+              ? { ...templateInitial, scope: tab === 'global' ? 'global' : 'user' }
+              : { scope: tab === 'global' ? 'global' : 'user' }
+          }
+          isAdmin={isAdmin}
           onCancel={() => {
             setCreating(false);
             setTemplateInitial(null);
@@ -169,6 +240,7 @@ export default function RecipesSettings() {
       {editing && (
         <RecipeWizard
           initial={editing}
+          isAdmin={isAdmin}
           onCancel={() => setEditing(null)}
           onSubmit={(values) => update.mutate({ id: editing._id, body: values })}
           submitting={update.isPending}
@@ -181,7 +253,11 @@ export default function RecipesSettings() {
             <div className="text-sm text-ink-500">Loading…</div>
           ) : recipes.length === 0 ? (
             <div className="py-6 text-center text-sm text-ink-500">
-              No recipes yet. Click <strong>New recipe</strong> to add one.
+              {tab === 'global'
+                ? 'No global recipes yet. Globals apply to every user — create one to broadcast a system-wide automation.'
+                : (
+                  <>No recipes yet. Click <strong>New recipe</strong> to add one.</>
+                )}
             </div>
           ) : (
             <ul className="space-y-2 text-sm">
@@ -226,6 +302,11 @@ export default function RecipesSettings() {
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-baseline gap-2">
                       <span className="font-medium">{r.name}</span>
+                      {r.scope === 'global' && (
+                        <span className="rounded-full bg-sky-100 px-1.5 py-0.5 text-[10px] uppercase tracking-widest text-sky-700 dark:bg-sky-950/40 dark:text-sky-200">
+                          global
+                        </span>
+                      )}
                       {r.virtual ? (
                         <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] uppercase tracking-widest text-amber-700 dark:bg-amber-950/40 dark:text-amber-200">
                           spam policy

@@ -866,11 +866,54 @@ async function processEvent(event: RecipeEvent): Promise<void> {
   // Recipes are loaded fresh per event so a save during dispatch is
   // visible immediately. Phase 1 has small per-user recipe counts;
   // a user-scoped in-memory cache is a Phase 5 polish.
-  const recipes = await Recipe.find({
-    userId: userObjId,
-    enabled: true,
-    'trigger.kind': event.kind,
-  }).lean();
+  //
+  // Two loads: the user's own recipes and any admin-managed globals
+  // matching the trigger. Globals fire in the triggering user's
+  // context (event.userId) so actions like tag.add land on the
+  // right page; for time.scheduled the cron emits with admin's
+  // userId so global cron recipes run admin-side.
+  // For time.scheduled, BullMQ emits a per-recipe job with the
+  // originating recipeId, so the dispatcher must load only that
+  // single row — otherwise every user's cron tick would fire every
+  // scheduled recipe (their own + every global).
+  const isCron = event.kind === 'time.scheduled';
+  const cronRecipeId = isCron && Types.ObjectId.isValid(event.recipeId)
+    ? new Types.ObjectId(event.recipeId)
+    : null;
+
+  const [userRecipes, globalRecipes] = isCron
+    ? [
+        cronRecipeId
+          ? await Recipe.find({
+              _id: cronRecipeId,
+              enabled: true,
+              'trigger.kind': 'time.scheduled',
+              scope: { $ne: 'global' },
+            }).lean()
+          : [],
+        cronRecipeId
+          ? await Recipe.find({
+              _id: cronRecipeId,
+              enabled: true,
+              'trigger.kind': 'time.scheduled',
+              scope: 'global',
+            }).lean()
+          : [],
+      ]
+    : await Promise.all([
+        Recipe.find({
+          userId: userObjId,
+          scope: { $ne: 'global' },
+          enabled: true,
+          'trigger.kind': event.kind,
+        }).lean(),
+        Recipe.find({
+          scope: 'global',
+          enabled: true,
+          'trigger.kind': event.kind,
+        }).lean(),
+      ]);
+  const recipes = [...userRecipes, ...globalRecipes];
   if (recipes.length === 0) return;
 
   for (const recipe of recipes as unknown as RecipeDoc[]) {

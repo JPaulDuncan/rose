@@ -11,12 +11,20 @@ export type RecipeFormValues = {
   name: string;
   description: string;
   enabled: boolean;
+  /** 'user' (visible only to the owner) or 'global' (admin-managed,
+   *  applies to every user). Globals + the toggle are admin-only. */
+  scope?: 'user' | 'global';
   trigger: { kind: string; config: Record<string, unknown> };
   conditions: { kind: string; config: Record<string, unknown> }[];
   actions: { kind: string; config: Record<string, unknown> }[];
   cooldownSeconds: number;
   fireLimitPerHour: number;
 };
+
+/** Action kinds the API gates to admins. Mirrors
+ *  ADMIN_ONLY_ACTION_KINDS in @rose/shared so the wizard hides them
+ *  from non-admin users. */
+const ADMIN_ONLY_ACTIONS = new Set<string>(['llm.run', 'briefing.generate']);
 
 const TRIGGERS: {
   kind: string;
@@ -141,6 +149,7 @@ const ACTIONS: {
 
 export function RecipeWizard({
   initial,
+  isAdmin = false,
   onCancel,
   onSubmit,
   submitting,
@@ -150,12 +159,16 @@ export function RecipeWizard({
     name?: string;
     description?: string;
     enabled?: boolean;
+    scope?: 'user' | 'global';
     trigger?: { kind: string; config: Record<string, unknown> };
     conditions?: { kind: string; config: Record<string, unknown> }[];
     actions?: { kind: string; config: Record<string, unknown> }[];
     cooldownSeconds?: number;
     fireLimitPerHour?: number;
   };
+  /** Caller passes the current user's admin status — gates the
+   *  scope=global toggle and filters out admin-only actions. */
+  isAdmin?: boolean;
   onCancel: () => void;
   onSubmit: (values: RecipeFormValues) => void;
   submitting: boolean;
@@ -165,6 +178,7 @@ export function RecipeWizard({
     name: initial?.name ?? '',
     description: initial?.description ?? '',
     enabled: initial?.enabled ?? true,
+    scope: initial?.scope ?? 'user',
     trigger: initial?.trigger ?? {
       kind: 'email.ingested',
       config: {},
@@ -176,6 +190,9 @@ export function RecipeWizard({
   });
 
   const isEdit = !!initial?._id;
+  const visibleActions = isAdmin
+    ? ACTIONS
+    : ACTIONS.filter((a) => !ADMIN_ONLY_ACTIONS.has(a.kind));
 
   function pickTrigger(kind: string) {
     const t = TRIGGERS.find((x) => x.kind === kind)!;
@@ -224,7 +241,7 @@ export function RecipeWizard({
   }
 
   function addAction() {
-    const a = ACTIONS[0]!;
+    const a = visibleActions[0]!;
     setValues((v) => ({
       ...v,
       actions: [...v.actions, { kind: a.kind, config: { ...a.defaultConfig } }],
@@ -307,6 +324,7 @@ export function RecipeWizard({
       {step === 2 && (
         <ActionsStep
           values={values}
+          actions={visibleActions}
           addAction={addAction}
           removeAction={removeAction}
           setKind={setActionKind}
@@ -317,6 +335,7 @@ export function RecipeWizard({
         <NameStep
           values={values}
           setValues={setValues}
+          isAdmin={isAdmin}
         />
       )}
 
@@ -599,12 +618,16 @@ function ConditionConfig({
 
 function ActionsStep({
   values,
+  actions,
   addAction,
   removeAction,
   setKind,
   setCfg,
 }: {
   values: RecipeFormValues;
+  /** Already filtered by admin status — non-admins don't see
+   *  llm.run / briefing.generate. */
+  actions: typeof ACTIONS;
   addAction: () => void;
   removeAction: (i: number) => void;
   setKind: (i: number, kind: string) => void;
@@ -632,7 +655,7 @@ function ActionsStep({
                   email.ingested. Disable the incompatible options
                   in-line so the user can't compose an invalid recipe
                   in the first place. */}
-              {ACTIONS.map((opt) => {
+              {actions.map((opt) => {
                 const incompatible =
                   opt.requires === 'email' &&
                   values.trigger.kind !== 'email.ingested';
@@ -836,9 +859,12 @@ function ActionConfig({
 function NameStep({
   values,
   setValues,
+  isAdmin = false,
 }: {
   values: RecipeFormValues;
   setValues: (next: RecipeFormValues | ((prev: RecipeFormValues) => RecipeFormValues)) => void;
+  /** Admin-only scope toggle is hidden for non-admins. */
+  isAdmin?: boolean;
 }) {
   return (
     <div className="space-y-3">
@@ -851,6 +877,26 @@ function NameStep({
           maxLength={120}
         />
       </Field>
+      {isAdmin && (
+        <Field
+          label="Scope"
+          hint="Globals fire on every user's matching events; for time.scheduled they run once per tick in the admin's context."
+        >
+          <select
+            className="input"
+            value={values.scope ?? 'user'}
+            onChange={(e) =>
+              setValues((v) => ({
+                ...v,
+                scope: (e.target.value as 'user' | 'global'),
+              }))
+            }
+          >
+            <option value="user">My recipes (just me)</option>
+            <option value="global">Global (every user)</option>
+          </select>
+        </Field>
+      )}
       <Field label="Description (optional)">
         <input
           className="input"

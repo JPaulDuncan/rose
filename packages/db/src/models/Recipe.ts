@@ -36,6 +36,26 @@ const actionSchema = new Schema(
 
 const recipeSchema = new Schema(
   {
+    /**
+     * Scope of the recipe:
+     *   • 'user'   — owned by the user identified by `userId`. Visible
+     *                only to that user. Fires on that user's events.
+     *   • 'global' — admin-managed, applies application-wide. Fires on
+     *                EVERY user's matching events (and runs in the
+     *                triggering user's context so actions like tag.add
+     *                land on the right page). For time.scheduled it
+     *                fires once per tick in the admin's context.
+     *                Invisible to non-admins; admin-only to manage.
+     *
+     * `userId` stays required even for globals — it stores the admin
+     * who created the row (audit + cron-event source).
+     */
+    scope: {
+      type: String,
+      enum: ['user', 'global'],
+      default: 'user',
+      index: true,
+    },
     userId: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
     name: { type: String, required: true, maxlength: 120 },
     description: { type: String, default: '', maxlength: 500 },
@@ -86,6 +106,10 @@ const recipeSchema = new Schema(
 
 recipeSchema.index({ userId: 1, enabled: 1, 'trigger.kind': 1 });
 recipeSchema.index({ userId: 1, name: 1 });
+// Global dispatch lookup: each event scans all enabled globals for
+// the matching trigger kind. Bounded since admins rarely create more
+// than a handful of globals.
+recipeSchema.index({ scope: 1, enabled: 1, 'trigger.kind': 1 });
 
 export type RecipeDoc = HydratedDocument<InferSchemaType<typeof recipeSchema>> & {
   _id: Types.ObjectId;

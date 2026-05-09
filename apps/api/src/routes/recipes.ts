@@ -10,8 +10,10 @@ import {
   type Trigger,
   type Condition,
   evaluateRecipe,
+  actionsRequireAdmin,
 } from '@rose/shared';
 import { userIdOf } from '../middleware/auth.js';
+import { isAdminRequest } from '../middleware/admin.js';
 import { validateBody } from '../middleware/validate.js';
 import { recipesQueue } from '../lib/queues.js';
 import { logger } from '../lib/logger.js';
@@ -135,11 +137,32 @@ recipesRouter.get('/templates', async (_req, res) => {
 
 recipesRouter.get('/', async (req, res) => {
   const userId = new Types.ObjectId(userIdOf(req));
+  const admin = await isAdminRequest(req);
+  // ?scope=global lists global recipes (admin-only). ?scope=user is
+  // the legacy default. No filter = user-scoped only — globals are
+  // invisible to non-admins, and admins manage them via the
+  // dedicated tab so they don't bleed into the personal list.
+  const requestedScope = (req.query.scope as string | undefined) ?? 'user';
+  if (requestedScope === 'global') {
+    if (!admin) {
+      res.status(403).json({
+        error: 'forbidden',
+        message: 'Global recipes are admin-only.',
+      });
+      return;
+    }
+    const recipes = await Recipe.find({ scope: 'global' })
+      .sort({ createdAt: -1 })
+      .lean();
+    res.json({ recipes });
+    return;
+  }
   // Topic Watches own their own surface — hide the auto-generated
   // recipes from the regular list so the user doesn't see them in
   // two places. Other importedFrom values stay visible.
   const recipes = await Recipe.find({
     userId,
+    scope: { $ne: 'global' },
     importedFrom: { $ne: 'topic-watch' },
   })
     .sort({ createdAt: -1 })
@@ -210,7 +233,13 @@ recipesRouter.get('/:id', async (req, res) => {
     res.status(400).json({ error: 'invalid_request', message: 'Invalid id' });
     return;
   }
-  const recipe = await Recipe.findOne({ _id: req.params.id, userId }).lean();
+  // Admins can fetch any recipe (including globals owned by them or
+  // by another admin in the future); non-admins are restricted to
+  // their own user-scoped rows.
+  const admin = await isAdminRequest(req);
+  const recipe = await Recipe.findOne(
+    admin ? { _id: req.params.id } : { _id: req.params.id, userId, scope: { $ne: 'global' } },
+  ).lean();
   if (!recipe) {
     res.status(404).json({ error: 'not_found', message: 'Recipe not found' });
     return;
@@ -222,7 +251,25 @@ recipesRouter.post('/', validateBody(RecipeCreateRequest), async (req, res, next
   try {
     const userId = new Types.ObjectId(userIdOf(req));
     const body = req.body as typeof RecipeCreateRequest._type;
-    const recipe = await Recipe.create({ userId, ...body });
+    const wantsGlobal = body.scope === 'global';
+    const usesAdminActions = actionsRequireAdmin(body.actions);
+    if (wantsGlobal || usesAdminActions) {
+      const admin = await isAdminRequest(req);
+      if (!admin) {
+        res.status(403).json({
+          error: 'forbidden',
+          message: wantsGlobal
+            ? 'Only an administrator may create global recipes.'
+            : 'One or more selected actions are admin-only.',
+        });
+        return;
+      }
+    }
+    const recipe = await Recipe.create({
+      userId,
+      scope: body.scope ?? 'user',
+      ...body,
+    });
     try {
       await syncCronSchedule({
         _id: recipe._id,
@@ -255,8 +302,38 @@ recipesRouter.patch('/:id', validateBody(RecipeUpdateRequest), async (req, res, 
       return;
     }
     const body = req.body as typeof RecipeUpdateRequest._type;
+    const admin = await isAdminRequest(req);
+    // Editing a global, switching scope to/from global, or adding
+    // admin-only actions all require admin. Non-admins editing their
+    // own user-scoped recipe with safe actions stay on the legacy
+    // path.
+    const targetExisting = await Recipe.findOne({ _id: req.params.id })
+      .select('scope userId')
+      .lean();
+    if (!targetExisting) {
+      res.status(404).json({ error: 'not_found', message: 'Recipe not found' });
+      return;
+    }
+    const isGlobalRow = targetExisting.scope === 'global';
+    const becomingGlobal = body.scope === 'global';
+    const usesAdminActions = actionsRequireAdmin(body.actions);
+    if ((isGlobalRow || becomingGlobal || usesAdminActions) && !admin) {
+      res.status(403).json({
+        error: 'forbidden',
+        message: isGlobalRow
+          ? 'Global recipes can only be edited by an administrator.'
+          : becomingGlobal
+            ? 'Only an administrator may promote a recipe to global.'
+            : 'One or more selected actions are admin-only.',
+      });
+      return;
+    }
+    // Owner check: non-admins may only patch their own row.
+    const filter = admin
+      ? { _id: req.params.id }
+      : { _id: req.params.id, userId, scope: { $ne: 'global' } };
     const updated = await Recipe.findOneAndUpdate(
-      { _id: req.params.id, userId },
+      filter,
       { $set: body },
       { new: true },
     );
@@ -290,9 +367,41 @@ recipesRouter.delete('/:id', async (req, res) => {
     res.status(400).json({ error: 'invalid_request', message: 'Invalid id' });
     return;
   }
+  const admin = await isAdminRequest(req);
+  // Globals are admin-only to delete. Non-admins are also blocked
+  // from touching them via the standard owner-scoped filter (their
+  // userId never matches the admin row).
+  const target = await Recipe.findOne({ _id: req.params.id })
+    .select('scope userId')
+    .lean();
+  if (!target) {
+    res.json({ ok: true });
+    return;
+  }
+  if (target.scope === 'global' && !admin) {
+    res.status(403).json({
+      error: 'forbidden',
+      message: 'Global recipes can only be deleted by an administrator.',
+    });
+    return;
+  }
+  if (
+    target.scope !== 'global' &&
+    !admin &&
+    String(target.userId) !== String(userId)
+  ) {
+    res.status(404).json({ error: 'not_found', message: 'Recipe not found' });
+    return;
+  }
   await recipesQueue.removeRepeatableByKey(cronJobKey(req.params.id)).catch(() => null);
-  await Recipe.deleteOne({ _id: req.params.id, userId });
-  await RecipeAudit.deleteMany({ recipeId: req.params.id, userId });
+  await Recipe.deleteOne({ _id: req.params.id });
+  // For globals delete every user's audit row; for user recipes
+  // scope to the owner.
+  if (target.scope === 'global') {
+    await RecipeAudit.deleteMany({ recipeId: req.params.id });
+  } else {
+    await RecipeAudit.deleteMany({ recipeId: req.params.id, userId });
+  }
   res.json({ ok: true });
 });
 
@@ -303,7 +412,34 @@ recipesRouter.get('/:id/audit', async (req, res) => {
     return;
   }
   const limit = Math.min(Number(req.query.limit ?? 50), 200);
-  const rows = await RecipeAudit.find({ userId, recipeId: req.params.id })
+  // Globals: only the admin sees audit (and they see every user's
+  // fires). User recipes: owner sees their own slice.
+  const admin = await isAdminRequest(req);
+  const target = await Recipe.findOne({ _id: req.params.id }).select('scope userId').lean();
+  if (!target) {
+    res.status(404).json({ error: 'not_found' });
+    return;
+  }
+  if (target.scope === 'global') {
+    if (!admin) {
+      res.status(403).json({ error: 'forbidden' });
+      return;
+    }
+    const rows = await RecipeAudit.find({ recipeId: req.params.id })
+      .sort({ firedAt: -1 })
+      .limit(limit)
+      .lean();
+    res.json({ audit: rows });
+    return;
+  }
+  if (String(target.userId) !== String(userId) && !admin) {
+    res.status(404).json({ error: 'not_found' });
+    return;
+  }
+  const auditFilter = admin
+    ? { recipeId: req.params.id }
+    : { userId, recipeId: req.params.id };
+  const rows = await RecipeAudit.find(auditFilter)
     .sort({ firedAt: -1 })
     .limit(limit)
     .lean();
