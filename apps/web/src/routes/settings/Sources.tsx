@@ -90,12 +90,18 @@ type WebsiteFormValues = {
   name: string;
   url: string;
   pollIntervalMinutes: number;
+  /** Optional sitemap URL — when set, every poll also fetches the
+   *  sitemap and queues new entries. Empty string = off. */
+  sitemapUrl?: string;
+  sitemapMaxUrlsPerSync?: number;
 };
 
 const DEFAULT_WEBSITE: WebsiteFormValues = {
   name: '',
   url: '',
   pollIntervalMinutes: 360,
+  sitemapUrl: '',
+  sitemapMaxUrlsPerSync: 50,
 };
 
 type SourceWithConfig = Source & {
@@ -1129,6 +1135,9 @@ function EditWebsiteForm({
     name: data.name,
     url: cfg.url,
     pollIntervalMinutes: cfg.pollIntervalMinutes,
+    sitemapUrl: (cfg as { sitemapUrl?: string }).sitemapUrl ?? '',
+    sitemapMaxUrlsPerSync:
+      (cfg as { sitemapMaxUrlsPerSync?: number }).sitemapMaxUrlsPerSync ?? 50,
   };
   return <WebsiteForm mode="edit" initial={initial} onCancel={onCancel} onSubmit={onSubmit} />;
 }
@@ -1250,6 +1259,52 @@ function WebsiteForm({
           />
         </Field>
       </div>
+
+      {/* Sitemap mode (web-integration Phase 4). Optional —
+          when set the worker also pulls the sitemap.xml each
+          tick and queues every new entry through fetchAndParse.
+          Bounded by `sitemapMaxUrlsPerSync` so a 50k-entry
+          sitemap can't drown the queue on first run. */}
+      <details className="rounded-lg border border-ink-200 p-3 dark:border-ink-800">
+        <summary className="cursor-pointer text-sm font-medium">
+          Sitemap mode
+          {values.sitemapUrl ? (
+            <span className="ml-2 rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-200">
+              enabled
+            </span>
+          ) : null}
+        </summary>
+        <p className="mt-2 text-xs text-ink-500">
+          Track every article on a section of the site by pointing at its{' '}
+          <code className="text-[10px]">sitemap.xml</code>. Each poll
+          fetches the sitemap, dedups against URLs we already ingested,
+          and queues new entries through the same path as a manual
+          "Save URL." Leave blank to disable.
+        </p>
+        <div className="mt-3 grid gap-3 sm:grid-cols-[2fr_1fr]">
+          <Field label="Sitemap URL">
+            <input
+              type="url"
+              className="input"
+              placeholder="https://example.com/sitemap.xml"
+              value={values.sitemapUrl ?? ''}
+              onChange={(e) => set('sitemapUrl', e.target.value)}
+            />
+          </Field>
+          <Field label="Max URLs per pull">
+            <input
+              type="number"
+              className="input"
+              min={1}
+              max={500}
+              value={values.sitemapMaxUrlsPerSync ?? 50}
+              onChange={(e) =>
+                set('sitemapMaxUrlsPerSync', Number(e.target.value) || 50)
+              }
+            />
+          </Field>
+        </div>
+      </details>
 
       {testResult.state === 'ok' && (
         <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-2 text-sm text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-200">

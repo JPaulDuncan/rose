@@ -59,7 +59,10 @@ const eventSchema = new Schema(
 );
 
 eventSchema.index({ userId: 1, start: 1, dismissed: 1 });
-eventSchema.index({ sourceEmailId: 1 });
+// Inline `index: true` on `sourceEmailId` already covers the
+// {sourceEmailId: 1} index; the explicit `eventSchema.index(...)`
+// duplicate was tripping Mongoose's duplicate-index warning on
+// every model registration.
 eventSchema.index({ userId: 1, gcalId: 1 }, { sparse: true });
 
 export type EventDoc = HydratedDocument<InferSchemaType<typeof eventSchema>> & {

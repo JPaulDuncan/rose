@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Bell, Plus, Trash2 } from 'lucide-react';
+import { Bell, Plus, Send, Trash2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useApi, humaniseError } from '../lib/api';
 import { useConfirm } from './ConfirmModal';
@@ -100,6 +100,16 @@ export function AlertRulesPanel() {
     onError: (e: Error) => toast.error(humaniseError(e)),
   });
 
+  const testFire = useMutation({
+    mutationFn: (id: string) =>
+      api.post<{ ok: true }>(`/api/alerts/${id}/test`, {}),
+    onSuccess: () =>
+      toast.success(
+        'Test push enqueued — check your subscribed devices in a few seconds.',
+      ),
+    onError: (e: Error) => toast.error(humaniseError(e)),
+  });
+
   const rules = data?.rules ?? [];
 
   return (
@@ -185,22 +195,34 @@ export function AlertRulesPanel() {
                   <span className="text-ink-500">
                     fired {relTime(r.lastFiredAt)}
                   </span>
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      const ok = await confirm.confirm({
-                        title: 'Delete this alert rule?',
-                        body: 'No further notifications will fire from this rule. You can recreate it any time.',
-                        confirmLabel: 'Delete',
-                        destructive: true,
-                      });
-                      if (ok) del.mutate(r._id);
-                    }}
-                    className="ml-auto btn-ghost text-[10px] text-red-700 dark:text-red-300"
-                    aria-label="Delete rule"
-                  >
-                    <Trash2 className="h-3 w-3" />
-                  </button>
+                  <div className="ml-auto flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => testFire.mutate(r._id)}
+                      disabled={testFire.isPending}
+                      className="btn-ghost text-[10px]"
+                      aria-label="Send test notification"
+                      title="Send a test push to verify your subscriptions deliver"
+                    >
+                      <Send className="h-3 w-3" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const ok = await confirm.confirm({
+                          title: 'Delete this alert rule?',
+                          body: 'No further notifications will fire from this rule. You can recreate it any time.',
+                          confirmLabel: 'Delete',
+                          destructive: true,
+                        });
+                        if (ok) del.mutate(r._id);
+                      }}
+                      className="btn-ghost text-[10px] text-red-700 dark:text-red-300"
+                      aria-label="Delete rule"
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </button>
+                  </div>
                 </div>
                 {r.name && (
                   <div className="mt-1 text-[11px] italic text-ink-500">

@@ -1,9 +1,16 @@
 import { Router } from 'express';
 import { Types } from 'mongoose';
 import { z } from 'zod';
+import { Queue } from 'bullmq';
 import { AlertRule } from '@rose/db';
 import { userIdOf } from '../middleware/auth.js';
 import { validateBody } from '../middleware/validate.js';
+import { redis } from '../lib/redis.js';
+
+// Lazy queue handle for the test-fire endpoint. The pushNotify
+// worker is the consumer; we enqueue via the same `rose.push-notify`
+// queue name so the path is identical to a real alert fire.
+const pushQueue = new Queue('rose.push-notify', { connection: redis });
 
 /**
  * Operator-facing alert rules. Mounted under /api/alerts.
@@ -120,6 +127,53 @@ alertsRouter.delete('/:id', async (req, res, next) => {
       userId,
     });
     res.json({ ok: true, deleted: (r.deletedCount ?? 0) > 0 });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Fire a synthetic push for a single rule, bypassing the cooldown
+ * + threshold check. Verifies the user actually has a working push
+ * subscription — the alert engine itself is silent until something
+ * real trips, so without this the operator can't tell whether their
+ * push key is configured + delivering until a real alert happens
+ * (which is exactly when you want delivery to be working).
+ *
+ * Goes through the existing /api/me/push enqueue path so this
+ * inherits the same delivery semantics as a real alert.
+ */
+alertsRouter.post('/:id/test', async (req, res, next) => {
+  try {
+    const userId = new Types.ObjectId(userIdOf(req));
+    const idParam = String(req.params.id ?? '');
+    if (!Types.ObjectId.isValid(idParam)) {
+      res.status(400).json({ error: 'invalid_id' });
+      return;
+    }
+    const rule = await AlertRule.findOne({
+      _id: new Types.ObjectId(idParam),
+      userId,
+    }).lean();
+    if (!rule) {
+      res.status(404).json({ error: 'not_found' });
+      return;
+    }
+
+    // Enqueue via the same pushNotify queue the alertSweeper uses.
+    await pushQueue.add(
+      'push',
+      {
+        userId: String(userId),
+        notification: {
+          title: rule.name?.trim() || 'Rose alert (test)',
+          body: `Test fire for ${rule.kind} rule. Threshold: ${rule.threshold ?? 1}.`,
+          url: '/settings/diagnostics',
+        },
+      },
+      { attempts: 2, removeOnComplete: 50, removeOnFail: 50 },
+    );
+    res.json({ ok: true });
   } catch (err) {
     next(err);
   }

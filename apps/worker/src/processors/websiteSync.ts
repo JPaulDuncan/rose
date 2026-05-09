@@ -15,8 +15,166 @@ import { extractArticle } from '../services/extractArticle.js';
 
 const QUEUE = 'rose.website-sync';
 const generateQueue = new Queue('rose.generate-page', { connection: bullConnection() });
+// Sitemap-mode reuses the existing fetchAndParse worker — every
+// URL surfaced from sitemap.xml goes through the same path as a
+// user's manual "save URL" so the dedup + content-extract +
+// page-generation pipeline stays one canonical flow.
+const fetchAndParseQueue = new Queue('rose.fetch-and-parse', {
+  connection: bullConnection(),
+});
 
 type WebsiteJobData = { sourceId: string; userId: string };
+
+/**
+ * Sitemap.xml URL extractor. Pulls every `<loc>...</loc>` value
+ * via regex — the format is well-specified and we don't need full
+ * XML semantics for this. Honours `<lastmod>` to skip URLs unchanged
+ * since the source's last sync (so repeated polls don't re-queue
+ * stable archives).
+ *
+ * Sitemap *index* files (where `<loc>` points to another sitemap.xml
+ * rather than a content URL) are detected by the extension and one
+ * level of nesting is followed. Beyond one level we stop — that's
+ * the realistic shape; nested sitemaps deeper than that are rare
+ * and would risk runaway recursion against a hostile sitemap.
+ */
+async function fetchSitemapUrls(
+  url: string,
+  since: Date | null,
+  cap: number,
+  depth = 0,
+): Promise<string[]> {
+  if (depth > 1) return [];
+  let xml: string;
+  try {
+    await assertSafeHttpUrl(url);
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 20_000);
+    let resp: Response;
+    try {
+      resp = await fetch(url, {
+        headers: {
+          'User-Agent': 'Rose/1.0 (+https://rose.local; sitemap)',
+          Accept: 'application/xml, text/xml, */*;q=0.5',
+        },
+        signal: ctrl.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+    if (!resp.ok) {
+      throw new Error(`sitemap fetch returned ${resp.status}`);
+    }
+    xml = await resp.text();
+  } catch (err) {
+    if (err instanceof UnsafeUrlError) throw err;
+    throw new Error(`sitemap fetch failed: ${(err as Error).message}`);
+  }
+
+  const isIndex = /<sitemapindex\b/i.test(xml);
+  const out: string[] = [];
+
+  // Extract <url><loc>...</loc>...<lastmod>...</lastmod></url> blocks.
+  // The capture group below grabs the whole inner content of each
+  // <url> or <sitemap> entry so we can pick out loc + lastmod.
+  const blockRe = isIndex
+    ? /<sitemap\b[\s\S]*?<\/sitemap>/gi
+    : /<url\b[\s\S]*?<\/url>/gi;
+  const locRe = /<loc>\s*([^<\s][^<]*?)\s*<\/loc>/i;
+  const lastmodRe = /<lastmod>\s*([^<\s][^<]*?)\s*<\/lastmod>/i;
+
+  for (const block of xml.match(blockRe) ?? []) {
+    if (out.length >= cap) break;
+    const loc = block.match(locRe)?.[1];
+    if (!loc) continue;
+    if (isIndex) {
+      // Recurse one level into the referenced sitemap.
+      const inner = await fetchSitemapUrls(
+        loc,
+        since,
+        cap - out.length,
+        depth + 1,
+      ).catch(() => [] as string[]);
+      for (const u of inner) {
+        if (out.length >= cap) break;
+        out.push(u);
+      }
+      continue;
+    }
+    // Skip URLs unchanged since the last sync, when both sides are
+    // present + parseable. lastmod can be a full ISO datetime or
+    // just a date — Date constructor handles both.
+    if (since) {
+      const lm = block.match(lastmodRe)?.[1];
+      if (lm) {
+        const lmDate = new Date(lm);
+        if (Number.isFinite(lmDate.getTime()) && lmDate < since) continue;
+      }
+    }
+    out.push(loc);
+  }
+  return out;
+}
+
+/**
+ * Discover URLs from a sitemap, skip ones we already have an Email
+ * for, and enqueue the rest through fetchAndParse. Returns the
+ * count actually enqueued (post-dedup).
+ */
+async function syncSitemap(
+  userId: Types.ObjectId,
+  sitemapUrl: string,
+  cap: number,
+  since: Date | null,
+): Promise<number> {
+  const urls = await fetchSitemapUrls(sitemapUrl, since, cap);
+  if (urls.length === 0) return 0;
+
+  // Dedup against existing url-kind Email rows for this user. The
+  // unique index on (userId, sourceUrl) is the ground truth, but a
+  // pre-check avoids a queue full of jobs that will all skip on
+  // insert. We pull just the URLs we'd otherwise re-enqueue.
+  const existing = await Email.find({
+    userId,
+    kind: 'url',
+    sourceUrl: { $in: urls },
+  })
+    .select('sourceUrl')
+    .lean();
+  const seen = new Set(existing.map((e) => String(e.sourceUrl)));
+
+  let enqueued = 0;
+  for (const url of urls) {
+    if (seen.has(url)) continue;
+    try {
+      await fetchAndParseQueue.add(
+        'sitemap-url',
+        {
+          kind: 'url',
+          userId: String(userId),
+          url,
+          tags: [],
+        },
+        {
+          attempts: 2,
+          removeOnComplete: 200,
+          removeOnFail: 200,
+          // Sitemap discovery is bulk; let user-initiated saves
+          // jump the queue ahead of these. Higher number = lower
+          // priority in BullMQ.
+          priority: 200,
+        },
+      );
+      enqueued += 1;
+    } catch (err) {
+      logger.debug(
+        { err: (err as Error).message, url },
+        'sitemap: enqueue failed (continuing)',
+      );
+    }
+  }
+  return enqueued;
+}
 
 type FetchOutcome =
   | { kind: 'unchanged' }
@@ -118,6 +276,35 @@ export function startWebsiteSyncWorker() {
       if (!source || source.type !== 'website' || !source.encryptedConfig) return;
 
       const cfg = decryptJson<WebsiteConfig>(source.encryptedConfig);
+
+      // Sitemap mode (web-integration Phase 4). Runs BEFORE the
+      // single-page fetch so the sitemap-discovery side-effect
+      // happens even when the headline page hasn't changed (304).
+      // Bounded by cfg.sitemapMaxUrlsPerSync so a sitemap with
+      // 50k entries can't flood the fetchAndParse queue on first
+      // run. Errors here are swallowed — the headline page is the
+      // primary contract; sitemap discovery is opportunistic.
+      if (cfg.sitemapUrl) {
+        try {
+          const queued = await syncSitemap(
+            userId,
+            cfg.sitemapUrl,
+            cfg.sitemapMaxUrlsPerSync ?? 50,
+            source.lastSyncAt ?? null,
+          );
+          if (queued > 0) {
+            logger.info(
+              { sourceId: String(source._id), sitemapUrl: cfg.sitemapUrl, queued },
+              'website-sync: sitemap discovery enqueued URLs',
+            );
+          }
+        } catch (err) {
+          logger.warn(
+            { err: (err as Error).message, sitemapUrl: cfg.sitemapUrl },
+            'website-sync: sitemap pull failed (continuing with headline page)',
+          );
+        }
+      }
 
       let outcome: FetchOutcome;
       try {

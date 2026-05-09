@@ -80,12 +80,27 @@ export const WebsiteConfig = z.object({
   url: z.string().url(),
   /** How often the worker re-fetches the page. Default: every 6 hours. */
   pollIntervalMinutes: z.number().int().min(15).max(1440).default(360),
+  /**
+   * Sitemap mode (web-integration Phase 4). When set, the worker
+   * treats `url` as a single page AND additionally fetches the
+   * referenced sitemap.xml on each tick, queueing every URL it
+   * surfaces (deduplicated against the existing Email rows for this
+   * source) through fetchAndParse. Use this to track "every new
+   * article under apnews.com/world" without listing each URL by
+   * hand. Bounded by `sitemapMaxUrlsPerSync` so a 50k-entry sitemap
+   * doesn't drown the queue on first run.
+   */
+  sitemapUrl: z.string().url().optional(),
+  /** Hard cap on URLs queued from a single sitemap pull. */
+  sitemapMaxUrlsPerSync: z.number().int().min(1).max(500).default(50),
 });
 export type WebsiteConfig = z.infer<typeof WebsiteConfig>;
 
 export const WebsiteUpdateConfig = z.object({
   url: z.string().url().optional(),
   pollIntervalMinutes: z.number().int().min(15).max(1440).optional(),
+  sitemapUrl: z.string().url().nullable().optional(),
+  sitemapMaxUrlsPerSync: z.number().int().min(1).max(500).optional(),
 });
 export type WebsiteUpdateConfig = z.infer<typeof WebsiteUpdateConfig>;
 

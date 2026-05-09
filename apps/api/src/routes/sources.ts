@@ -201,7 +201,12 @@ sourcesRouter.post('/', validateBody(SourceCreateRequest), async (req, res) => {
 
   if (body.type === 'website') {
     const interval = body.config.pollIntervalMinutes;
-    const cfg: WebsiteConfig = { url: body.config.url, pollIntervalMinutes: interval };
+    const cfg: WebsiteConfig = {
+      url: body.config.url,
+      pollIntervalMinutes: interval,
+      sitemapMaxUrlsPerSync: body.config.sitemapMaxUrlsPerSync ?? 50,
+      ...(body.config.sitemapUrl ? { sitemapUrl: body.config.sitemapUrl } : {}),
+    };
     const src = await Source.create({
       userId,
       type: 'website',
@@ -600,10 +605,19 @@ sourcesRouter.patch('/:id', validateBody(SourceUpdateRequest), async (req, res) 
 
   if (body.websiteConfig && src.type === 'website' && src.encryptedConfig) {
     const current = decryptJson<WebsiteConfig>(src.encryptedConfig);
+    const nextSitemapUrl =
+      body.websiteConfig.sitemapUrl === null
+        ? undefined
+        : body.websiteConfig.sitemapUrl ?? current.sitemapUrl;
     const merged: WebsiteConfig = {
       url: body.websiteConfig.url ?? current.url,
       pollIntervalMinutes:
         body.websiteConfig.pollIntervalMinutes ?? current.pollIntervalMinutes,
+      sitemapMaxUrlsPerSync:
+        body.websiteConfig.sitemapMaxUrlsPerSync ??
+        current.sitemapMaxUrlsPerSync ??
+        50,
+      ...(nextSitemapUrl ? { sitemapUrl: nextSitemapUrl } : {}),
     };
     src.encryptedConfig = encryptJson(merged);
     if (merged.url !== current.url) {
