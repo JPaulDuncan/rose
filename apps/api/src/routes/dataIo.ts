@@ -74,7 +74,18 @@ dataIoRouter.get('/export', async (req, res) => {
     Sender.find({ userId }).lean(),
     Rule.find({ userId }).lean(),
     Entity.find({ userId }).select('-embedding').lean(),
-    TagCanonical.find({ userId }).select('-embedding').lean(),
+    // Tag canonicals are global — export only those that appear on
+    // this user's pages so re-import preserves their taxonomy
+    // without trying to dump (or restore) the shared registry.
+    Page.find({ userId })
+      .distinct('tags')
+      .then((tags) =>
+        tags.length
+          ? TagCanonical.find({ canonical: { $in: tags as string[] } })
+              .select('-embedding')
+              .lean()
+          : [],
+      ),
   ]);
 
   // Revisions need the page IDs, fetch separately so the type inference
@@ -184,7 +195,11 @@ dataIoRouter.post('/import', upload.single('file'), async (req, res) => {
     Sender.deleteMany({ userId }),
     Rule.deleteMany({ userId }),
     Entity.deleteMany({ userId }),
-    TagCanonical.deleteMany({ userId }),
+    // TagCanonicals are global — don't drop the shared taxonomy
+    // when one user re-imports their archive. The import path
+    // below upserts canonicals it carries via $setOnInsert so the
+    // user's prior tags stay coherent without clobbering anyone
+    // else's edits.
   ]);
 
   // Re-insert. We rewrite ObjectIds onto a clean ID-space rooted at
@@ -300,11 +315,31 @@ dataIoRouter.post('/import', upload.single('file'), async (req, res) => {
     model: Entity,
     preserveId: false,
   });
-  const importedTagCanonicalsCount = await importCollection({
-    list: parsed.tagCanonicals as AnyDoc[] | undefined,
-    model: TagCanonical,
-    preserveId: false,
-  });
+  // Tag canonicals are global. Each row from the export upserts
+  // into the shared registry: $setOnInsert wins canonical metadata
+  // for first-discovery, and aliases use $addToSet so the import
+  // contributes without clobbering edits from other users.
+  let importedTagCanonicalsCount = 0;
+  for (const raw of (parsed.tagCanonicals as AnyDoc[] | undefined) ?? []) {
+    const canonical = String((raw as { canonical?: string }).canonical ?? '').trim();
+    if (!canonical) continue;
+    const displayName = String((raw as { displayName?: string }).displayName ?? '');
+    const aliases = Array.isArray((raw as { aliases?: unknown[] }).aliases)
+      ? ((raw as { aliases?: string[] }).aliases ?? [])
+          .map(String)
+          .filter(Boolean)
+      : [];
+    const set: Record<string, unknown> = {
+      $setOnInsert: {
+        canonical,
+        displayName: displayName || canonical,
+        firstSeenBy: userId,
+      },
+    };
+    if (aliases.length) set.$addToSet = { aliases: { $each: aliases } };
+    await TagCanonical.updateOne({ canonical }, set, { upsert: true });
+    importedTagCanonicalsCount += 1;
+  }
 
   // User-level fields — replace settings + savedSearches + spamPolicy
   // + featuredTags + weatherLocations. Don't touch email, password,

@@ -184,7 +184,7 @@ const SCOPES: Scope[] = [
     group: 'metadata',
     label: 'Tag canonicals',
     description:
-      'Per-user tag synonym registry. Page tags stay; the canonicalisation table rebuilds on next page write.',
+      'Global tag synonym registry. Page tags stay; the canonicalisation table rebuilds on next page write.',
     run: () => deleteAllAndReport(TagCanonical),
   },
   {

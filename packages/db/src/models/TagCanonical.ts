@@ -27,11 +27,18 @@ export function titleCaseTag(canonical: string): string {
 }
 
 /**
- * Per-user tag synonym registry. Pages keep their tags in the kebab
+ * Global tag synonym registry. Pages keep their tags in the kebab
  * `canonical` form so URLs (`/t/job-listings`) and existing $in
  * queries still work, but the display layer can substitute
  * `displayName` ("Job Listings") and the canonicaliser knows that
  * "job-postings", "remote-work" and "fully-remote" all roll up here.
+ *
+ * Tags are global across users — the source of truth lives in this
+ * collection. Each user "sees" the canonicals that appear on their
+ * own Page.tags, but the displayName + aliases for those canonicals
+ * are sourced from the shared row. New canonicals discovered by any
+ * user's canonicalisation step land here once; subsequent users with
+ * the same emitted tag pass through the cheap path.
  *
  * Created lazily by the canonicalisation step in generatePage. The
  * LLM proposes mappings against a list of existing canonicals plus
@@ -41,25 +48,33 @@ export function titleCaseTag(canonical: string): string {
  */
 const tagCanonicalSchema = new Schema(
   {
-    userId: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
-    /** Stable lookup key, kebab-case. Used as the value persisted
-     *  on Page.tags so search and URL routes don't have to know
-     *  about display names. */
-    canonical: { type: String, required: true },
+    /** Audit-only — first user whose canonicalisation step minted
+     *  the row. Kept so we can attribute the canonical name on the
+     *  settings UI later. Not used for access control; visibility
+     *  comes from joining against a user's Page.tags. */
+    firstSeenBy: { type: Schema.Types.ObjectId, ref: 'User', default: null },
+    /** Stable lookup key, kebab-case. Globally unique. Used as the
+     *  value persisted on Page.tags so search and URL routes don't
+     *  have to know about display names. */
+    canonical: { type: String, required: true, unique: true, index: true },
     /** Human-readable form rendered as the pill label. Defaults to
      *  `titleCaseTag(canonical)` when the LLM doesn't suggest
-     *  something nicer. */
+     *  something nicer. First write wins via $setOnInsert; later
+     *  edits via the API mutate this directly. */
     displayName: { type: String, default: '' },
     /**
      * Other surface forms that map to this canonical. Persisted in
      * normalized kebab form so a quick `aliases: { $in: [...] }`
      * lookup resolves "remote-work" / "fully-remote" /
-     * "wfh" → the same canonical.
+     * "wfh" → the same canonical. Aliases are global; any user's
+     * discovery contributes via $addToSet.
      */
     aliases: { type: [String], default: [], index: true },
-    /** Rolling count of pages that currently carry this canonical.
-     *  Maintained lazily — best-effort signal for the settings UI to
-     *  surface heavy tags first when offering manual merges. */
+    /** Rolling count of pages (across ALL users) that currently
+     *  carry this canonical. Maintained lazily — best-effort signal
+     *  for the settings UI when offering manual merges. The per-user
+     *  count surfaced on the user's Tags settings page is computed
+     *  from Page.tags aggregation, not from this field. */
     pageCount: { type: Number, default: 0 },
     /**
      * Optional embedding of the canonical (for future use by a
@@ -75,8 +90,7 @@ const tagCanonicalSchema = new Schema(
   { timestamps: true },
 );
 
-tagCanonicalSchema.index({ userId: 1, canonical: 1 }, { unique: true });
-tagCanonicalSchema.index({ userId: 1, aliases: 1 });
+tagCanonicalSchema.index({ aliases: 1 });
 
 export type TagCanonicalDoc = HydratedDocument<InferSchemaType<typeof tagCanonicalSchema>>;
 export const TagCanonical = model('TagCanonical', tagCanonicalSchema);

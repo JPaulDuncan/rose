@@ -47,12 +47,16 @@ async function aggregateTagCounts(userId: Types.ObjectId): Promise<Map<string, n
 
 tagsRouter.get('/canonicals', async (req, res) => {
   const userId = new Types.ObjectId(userIdOf(req));
-  const [canonicals, counts] = await Promise.all([
-    TagCanonical.find({ userId })
-      .select('canonical displayName aliases pageCount updatedAt createdAt')
-      .lean(),
-    aggregateTagCounts(userId),
-  ]);
+  // Per-user "in use on N pages" still comes from the user's own
+  // Page.tags. The global registry supplies displayName + aliases
+  // for the canonicals the user actually has on pages.
+  const counts = await aggregateTagCounts(userId);
+  const canonicalKeys = [...counts.keys()];
+  const canonicals = canonicalKeys.length
+    ? await TagCanonical.find({ canonical: { $in: canonicalKeys } })
+        .select('canonical displayName aliases pageCount updatedAt createdAt')
+        .lean()
+    : [];
 
   // Compose: every canonical row + a synthesized "uncanonical"
   // entry per emergent tag the user has on pages but no canonical
@@ -125,9 +129,9 @@ tagsRouter.patch('/canonicals/:canonical', async (req, res) => {
     ];
     // Reject collisions with other canonicals — those should go
     // through the merge endpoint so Page.tags rewrites correctly.
+    // Global registry: a collision is a global collision.
     if (normalisedAliases.length) {
       const collision = await TagCanonical.findOne({
-        userId,
         canonical: { $ne: canonical, $in: normalisedAliases },
       })
         .select('canonical')
@@ -143,14 +147,18 @@ tagsRouter.patch('/canonicals/:canonical', async (req, res) => {
     update.aliases = normalisedAliases;
   }
 
+  // Tags are global — edits write through to the shared row. The
+  // userId is still recorded as the row's `firstSeenBy` on creation
+  // for audit / attribution, but the displayName + aliases are
+  // visible to every user the moment they're saved.
   const result = await TagCanonical.findOneAndUpdate(
-    { userId, canonical },
+    { canonical },
     {
       $set: update,
       $setOnInsert: {
-        userId,
         canonical,
         displayName: update.displayName ?? titleCaseTag(canonical),
+        firstSeenBy: userId,
       },
     },
     { upsert: true, new: true },
@@ -193,18 +201,20 @@ tagsRouter.post('/canonicals/:canonical/merge', async (req, res) => {
     return;
   }
 
-  const sourceRow = await TagCanonical.findOne({ userId, canonical: source });
+  const sourceRow = await TagCanonical.findOne({ canonical: source });
 
   // Ensure target exists. If it's a brand-new canonical we create
   // it; if it already exists we just absorb the source into it.
+  // Tags are global — the merge reshapes the shared registry and
+  // every user's Page.tags arrays.
   await TagCanonical.updateOne(
-    { userId, canonical: target },
+    { canonical: target },
     {
       $setOnInsert: {
-        userId,
         canonical: target,
         displayName:
           body.intoDisplayName?.trim().slice(0, 80) || titleCaseTag(target),
+        firstSeenBy: userId,
       },
       $addToSet: {
         aliases: { $each: [source, ...((sourceRow?.aliases as string[] | undefined) ?? [])] },
@@ -213,26 +223,26 @@ tagsRouter.post('/canonicals/:canonical/merge', async (req, res) => {
     { upsert: true },
   );
 
-  // Repoint every page tagged with the source. We snapshot the
-  // affected ids first because Mongo's array-element ops can't
-  // combine $pull and $addToSet on the same field in one update —
-  // and "addToSet on every page that doesn't have target" would be
-  // catastrophically wrong (it'd dump the target onto every other
-  // page in the corpus).
-  const affected = await Page.find({ userId, tags: source }).select('_id').lean();
+  // Repoint every page tagged with the source — across ALL users.
+  // We snapshot the affected ids first because Mongo's
+  // array-element ops can't combine $pull and $addToSet on the same
+  // field in one update — and "addToSet on every page that doesn't
+  // have target" would be catastrophically wrong (it'd dump the
+  // target onto every other page in the corpus).
+  const affected = await Page.find({ tags: source }).select('_id').lean();
   const ids = affected.map((p) => p._id as Types.ObjectId);
   if (ids.length > 0) {
     await Page.updateMany(
-      { _id: { $in: ids }, userId },
+      { _id: { $in: ids } },
       { $pull: { tags: source } },
     );
     await Page.updateMany(
-      { _id: { $in: ids }, userId, tags: { $ne: target } },
+      { _id: { $in: ids }, tags: { $ne: target } },
       { $addToSet: { tags: target } },
     );
   }
 
-  await TagCanonical.deleteOne({ userId, canonical: source });
+  await TagCanonical.deleteOne({ canonical: source });
   // Plan 14 — daydream notes are global; deleting here would
   // pull the brief from every other user's tag page too. Tag
   // canonicals are also per-user (TagCanonical is a per-user
@@ -274,7 +284,7 @@ tagsRouter.post('/canonicals/:canonical/rename', async (req, res) => {
     });
     return;
   }
-  const collision = await TagCanonical.findOne({ userId, canonical: newCanonical }).lean();
+  const collision = await TagCanonical.findOne({ canonical: newCanonical }).lean();
   if (collision) {
     res.status(409).json({
       error: 'canonical_exists',
@@ -283,7 +293,7 @@ tagsRouter.post('/canonicals/:canonical/rename', async (req, res) => {
     return;
   }
 
-  const sourceRow = await TagCanonical.findOne({ userId, canonical: oldCanonical });
+  const sourceRow = await TagCanonical.findOne({ canonical: oldCanonical });
   const displayName =
     body.displayName?.trim().slice(0, 80) ||
     sourceRow?.displayName ||
@@ -295,28 +305,26 @@ tagsRouter.post('/canonicals/:canonical/rename', async (req, res) => {
   ]);
   aliases.delete(newCanonical);
 
-  // Create the new row, then delete the old. Doing this in two
-  // operations keeps history tidy if the rename is racy.
+  // Create the new global row, then delete the old. Doing this in
+  // two operations keeps history tidy if the rename is racy.
   await TagCanonical.create({
-    userId,
     canonical: newCanonical,
     displayName,
     aliases: [...aliases],
+    firstSeenBy: userId,
   });
   if (sourceRow) await TagCanonical.deleteOne({ _id: sourceRow._id });
 
-  // Rewrite Page.tags. Same pattern as merge.
-  const affected = await Page.find({ userId, tags: oldCanonical })
-    .select('_id')
-    .lean();
+  // Rewrite Page.tags across ALL users — tags are global.
+  const affected = await Page.find({ tags: oldCanonical }).select('_id').lean();
   const ids = affected.map((p) => p._id as Types.ObjectId);
   if (ids.length > 0) {
     await Page.updateMany(
-      { _id: { $in: ids }, userId },
+      { _id: { $in: ids } },
       { $pull: { tags: oldCanonical } },
     );
     await Page.updateMany(
-      { _id: { $in: ids }, userId, tags: { $ne: newCanonical } },
+      { _id: { $in: ids }, tags: { $ne: newCanonical } },
       { $addToSet: { tags: newCanonical } },
     );
   }
@@ -332,7 +340,7 @@ tagsRouter.post('/canonicals/:canonical/rename', async (req, res) => {
  * page that has it.
  */
 tagsRouter.delete('/canonicals/:canonical', async (req, res) => {
-  const userId = new Types.ObjectId(userIdOf(req));
+  void userIdOf(req); // auth-only; deletion is global
   const canonical = normalizeTagKey(decodeURIComponent(req.params.canonical ?? ''));
   if (!canonical) {
     res.status(400).json({ error: 'invalid_request', message: 'Invalid canonical' });
@@ -340,12 +348,17 @@ tagsRouter.delete('/canonicals/:canonical', async (req, res) => {
   }
   const purge = (req.query.purgeFromPages ?? req.body?.purgeFromPages) === 'true' ||
     req.body?.purgeFromPages === true;
-  await TagCanonical.deleteOne({ userId, canonical });
-  // Plan 14 — daydream notes are global; see merge handler above.
+  // Tags are global — deleting the row removes the canonical from
+  // the registry for every user. Pages that still carry the kebab
+  // key keep working (URLs and queries don't depend on the row);
+  // the UI just falls back to title-cased rendering.
+  await TagCanonical.deleteOne({ canonical });
   let affected = 0;
   if (purge) {
+    // Strip the tag from every user's pages — same global semantics
+    // as merge / rename.
     const r = await Page.updateMany(
-      { userId, tags: canonical },
+      { tags: canonical },
       { $pull: { tags: canonical } },
     );
     affected = r.modifiedCount ?? 0;

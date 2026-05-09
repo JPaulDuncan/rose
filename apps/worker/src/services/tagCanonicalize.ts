@@ -34,10 +34,10 @@ export async function canonicalizeTags(
   if (normalized.length === 0) return [];
 
   // Direct canonical or alias hit. Cheap; covers the steady state
-  // where every tag is already known. If every tag resolves we
-  // return without ever talking to the LLM.
+  // where every tag is already known. Tags are global — any user's
+  // prior canonicalisation seeds the cache for everyone else, so
+  // we don't filter by userId here.
   const directHits = await TagCanonical.find({
-    userId,
     $or: [
       { canonical: { $in: normalized } },
       { aliases: { $in: normalized } },
@@ -61,10 +61,10 @@ export async function canonicalizeTags(
   // We have at least one unknown tag — fetch a candidate set of
   // existing canonicals to feed the LLM as the "merge into one of
   // these or treat as new" anchor list. Prefer the heaviest tags
-  // first so the LLM has the user's most-used taxonomy in front of
-  // it; cap at 80 lines so the prompt stays bounded for users with
-  // thousands of canonicals.
-  const existingCanonicals = await TagCanonical.find({ userId })
+  // first so the LLM has the most-used global taxonomy in front of
+  // it; cap at 80 lines so the prompt stays bounded as the
+  // collection grows.
+  const existingCanonicals = await TagCanonical.find({})
     .sort({ pageCount: -1, updatedAt: -1 })
     .limit(80)
     .select('canonical displayName aliases')
@@ -172,7 +172,11 @@ export async function resolveTagDisplayNames(
 ): Promise<Record<string, string>> {
   const keys = [...new Set(canonicals.map((c) => normalizeTagKey(c)).filter(Boolean))];
   if (keys.length === 0) return {};
-  const rows = await TagCanonical.find({ userId, canonical: { $in: keys } })
+  // Global registry — drop the userId filter; the displayName is
+  // shared. The userId param is kept on the function signature so
+  // callers don't have to change.
+  void userId;
+  const rows = await TagCanonical.find({ canonical: { $in: keys } })
     .select('canonical displayName')
     .lean();
   const out: Record<string, string> = {};
@@ -213,32 +217,19 @@ async function persistMapping(
     // Pure passthrough; nothing to persist.
     return;
   }
-  if (isNew || alias === canonical) {
-    // Create the canonical if needed; idempotent upsert.
-    await TagCanonical.updateOne(
-      { userId, canonical },
-      {
-        $setOnInsert: {
-          userId,
-          canonical,
-          displayName: displayName || titleCaseTag(canonical),
-        },
-        $addToSet: alias !== canonical ? { aliases: alias } : { aliases: { $each: [] } },
-      },
-      { upsert: true },
-    );
-    return;
-  }
-  // Aliasing onto an existing canonical.
+  // Tags are global. setOnInsert for the displayName so the first
+  // canonicalisation wins the canonical name; later users with the
+  // same emitted tag don't clobber. Aliases use $addToSet so every
+  // user's discovery survives.
   await TagCanonical.updateOne(
-    { userId, canonical },
+    { canonical },
     {
       $setOnInsert: {
-        userId,
         canonical,
         displayName: displayName || titleCaseTag(canonical),
+        firstSeenBy: userId,
       },
-      $addToSet: { aliases: alias },
+      ...(alias !== canonical ? { $addToSet: { aliases: alias } } : {}),
     },
     { upsert: true },
   );

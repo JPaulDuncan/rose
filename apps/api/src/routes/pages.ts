@@ -63,9 +63,11 @@ async function tagDisplayNamesFor(
   userId: Types.ObjectId,
   canonicals: string[],
 ): Promise<Record<string, string>> {
+  // Tags are global; the displayName is shared across users.
+  void userId;
   const keys = [...new Set(canonicals.filter((c) => typeof c === 'string' && c.length > 0))];
   if (keys.length === 0) return {};
-  const rows = await TagCanonical.find({ userId, canonical: { $in: keys } })
+  const rows = await TagCanonical.find({ canonical: { $in: keys } })
     .select('canonical displayName')
     .lean();
   const out: Record<string, string> = {};

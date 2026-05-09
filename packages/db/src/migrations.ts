@@ -266,6 +266,78 @@ const MIGRATIONS: Migration[] = [
       }
     },
   },
+  {
+    // Collapse per-user TagCanonical rows into the global registry.
+    // Each (userId, canonical) row becomes one shared (canonical)
+    // row keyed on the kebab. First-seen displayName wins; aliases
+    // accumulate via $addToSet so every user's discoveries
+    // contribute. The legacy (userId, canonical) compound unique
+    // index is dropped — the new schema enforces a global unique on
+    // canonical alone.
+    name: '2026-05-09-globalise-tag-canonicals',
+    async run(conn) {
+      const tags = conn.collection('tagcanonicals');
+      try {
+        await tags.dropIndex('userId_1_canonical_1');
+      } catch {
+        // Not present — first-run on this DB or already dropped.
+      }
+      const cursor = tags.find(
+        { userId: { $exists: true } },
+        {
+          projection: {
+            _id: 1,
+            userId: 1,
+            canonical: 1,
+            displayName: 1,
+            aliases: 1,
+            pageCount: 1,
+            createdAt: 1,
+          },
+        },
+      );
+      while (await cursor.hasNext()) {
+        const row = await cursor.next();
+        if (!row) continue;
+        const canonical = String(row.canonical ?? '').trim();
+        if (!canonical) continue;
+        const aliases = Array.isArray(row.aliases)
+          ? (row.aliases as unknown[]).map(String).filter(Boolean)
+          : [];
+        const update: Record<string, unknown> = {
+          $setOnInsert: {
+            canonical,
+            displayName: String(row.displayName ?? '') || canonical,
+            firstSeenBy: row.userId ?? null,
+            createdAt: row.createdAt ?? new Date(),
+          },
+          $set: { updatedAt: new Date() },
+          $inc: { pageCount: Number(row.pageCount ?? 0) },
+        };
+        if (aliases.length) {
+          update.$addToSet = { aliases: { $each: aliases } };
+        }
+        const upserted = await tags.findOneAndUpdate(
+          { canonical },
+          update,
+          { upsert: true, returnDocument: 'after' },
+        );
+        const globalId = upserted?._id ?? row._id;
+        if (String(row._id) !== String(globalId)) {
+          // A different row already owned this canonical; drop the
+          // legacy duplicate. We've already folded its aliases /
+          // pageCount above.
+          await tags.deleteOne({ _id: row._id });
+        } else {
+          // Same row — strip the now-vestigial userId field.
+          await tags.updateOne(
+            { _id: row._id },
+            { $unset: { userId: '' } },
+          );
+        }
+      }
+    },
+  },
 ];
 
 export async function runMigrations(
