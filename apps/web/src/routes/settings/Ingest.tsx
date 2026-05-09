@@ -79,9 +79,15 @@ export default function IngestPage() {
   const [activeJob, setActiveJob] = useState<string | null>(null);
   const [diagEmailId, setDiagEmailId] = useState<string | null>(null);
 
+  // `pending=1` server-side filters out terminal states (generated +
+  // skipped) so this view only shows emails that still need
+  // attention. Successfully-generated items live on /p/<slug> from
+  // the article view; surfacing them here just adds noise to the
+  // "what's stuck" mental model the queue is trying to communicate.
   const { data, isLoading } = useQuery({
-    queryKey: ['emails'],
-    queryFn: () => api.get<{ emails: EmailRow[] }>('/api/emails?limit=100'),
+    queryKey: ['emails', 'pending'],
+    queryFn: () =>
+      api.get<{ emails: EmailRow[] }>('/api/emails?limit=100&pending=1'),
     refetchInterval: 5000,
   });
 

@@ -21,8 +21,16 @@ emailsRouter.get('/', async (req, res) => {
   // matching emails from the ingest queue without losing them.
   const archived = req.query.archived === '1';
   const includeAll = req.query.all === '1';
+  // `pending=1` filters out the terminal ingest states (generated +
+  // skipped) so the Ingest queue only shows items that still need
+  // attention. Distinct from `status=…` which pins to one specific
+  // state — pending=1 means "anything still in flight or stuck."
+  const pendingOnly = req.query.pending === '1';
   const filter: Record<string, unknown> = { userId };
   if (status) filter.ingestStatus = status;
+  else if (pendingOnly) {
+    filter.ingestStatus = { $nin: ['generated', 'skipped'] };
+  }
   if (archived) filter.archivedAt = { $ne: null };
   else if (!includeAll) filter.archivedAt = null;
   const emails = await Email.find(filter)
