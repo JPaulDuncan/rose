@@ -24,6 +24,10 @@ type Rule = {
   description?: string;
   enabled: boolean;
   priority: number;
+  /** 'user' (mine) or 'global' (admin-managed, applies to every
+   *  user's incoming mail). Visible only to admins on the Globals
+   *  tab. */
+  scope?: 'user' | 'global';
   conditions: Condition[];
   actions: Action[];
   matchCount: number;
@@ -61,26 +65,43 @@ const ACTION_KINDS: { kind: string; label: string; paramHint: string }[] = [
 export default function RulesSettings() {
   const api = useApi();
   const qc = useQueryClient();
+  const { data: adminInfo } = useQuery({
+    queryKey: ['admin', 'me'],
+    queryFn: () => api.get<{ isAdmin: boolean }>('/api/admin/me'),
+    staleTime: 60 * 1000,
+  });
+  const isAdmin = adminInfo?.isAdmin ?? false;
+  const [tab, setTab] = useState<'mine' | 'global'>('mine');
+  const queryKey = tab === 'global' ? ['rules', 'global'] : ['rules'];
   const { data, isLoading } = useQuery({
-    queryKey: ['rules'],
-    queryFn: () => api.get<{ rules: Rule[] }>('/api/rules'),
+    queryKey,
+    queryFn: () =>
+      api.get<{ rules: Rule[] }>(
+        tab === 'global' ? '/api/rules?scope=global' : '/api/rules',
+      ),
+    enabled: tab === 'mine' || isAdmin,
   });
   const [editing, setEditing] = useState<Rule | null>(null);
   const [creating, setCreating] = useState(false);
 
+  function invalidateRuleQueries() {
+    qc.invalidateQueries({ queryKey: ['rules'] });
+    qc.invalidateQueries({ queryKey: ['rules', 'global'] });
+  }
+
   const remove = useMutation({
     mutationFn: async (id: string) => api.del<{ ok: true }>(`/api/rules/${id}`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['rules'] }),
+    onSuccess: () => invalidateRuleQueries(),
   });
   const togglePower = useMutation({
     mutationFn: async ({ id, enabled }: { id: string; enabled: boolean }) =>
       api.patch<Rule>(`/api/rules/${id}`, { enabled }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['rules'] }),
+    onSuccess: () => invalidateRuleQueries(),
   });
   const reorder = useMutation({
     mutationFn: async (order: string[]) =>
       api.post<{ ok: true }>('/api/rules/reorder', { order }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['rules'] }),
+    onSuccess: () => invalidateRuleQueries(),
   });
 
   const rules = data?.rules ?? [];
@@ -104,8 +125,47 @@ export default function RulesSettings() {
           When an incoming email matches all of a rule's conditions, its
           actions run in order. Rules fire after parse and before page
           generation, so they can change tags, priority, category, or
-          even archive the message.
+          even archive the message. Admin-managed{' '}
+          <strong>global</strong> rules apply to every user's mail in
+          their own context.
         </p>
+        {isAdmin && (
+          <div className="mt-3 inline-flex rounded-md border border-ink-200 p-0.5 text-xs dark:border-ink-800">
+            <button
+              type="button"
+              className={
+                'rounded px-3 py-1 ' +
+                (tab === 'mine'
+                  ? 'bg-rose-500 text-white'
+                  : 'text-ink-600 dark:text-ink-300')
+              }
+              onClick={() => {
+                setTab('mine');
+                setEditing(null);
+                setCreating(false);
+              }}
+            >
+              My rules
+            </button>
+            <button
+              type="button"
+              className={
+                'rounded px-3 py-1 ' +
+                (tab === 'global'
+                  ? 'bg-rose-500 text-white'
+                  : 'text-ink-600 dark:text-ink-300')
+              }
+              onClick={() => {
+                setTab('global');
+                setEditing(null);
+                setCreating(false);
+              }}
+              title="Global rules apply to every user"
+            >
+              Global (admin)
+            </button>
+          </div>
+        )}
       </div>
 
       <div className="flex justify-end">
@@ -123,7 +183,11 @@ export default function RulesSettings() {
 
       {(creating || editing) && (
         <RuleEditor
-          initial={editing ?? newRule()}
+          initial={
+            editing ??
+            ({ ...newRule(), scope: tab === 'global' ? 'global' : 'user' } as Rule)
+          }
+          isAdmin={isAdmin}
           onCancel={() => {
             setEditing(null);
             setCreating(false);
@@ -176,6 +240,11 @@ export default function RulesSettings() {
                   <span className="text-[10px] uppercase tracking-widest text-ink-400">
                     pri {r.priority}
                   </span>
+                  {r.scope === 'global' && (
+                    <span className="rounded-full bg-sky-100 px-1.5 py-0.5 text-[10px] uppercase tracking-widest text-sky-700 dark:bg-sky-950/40 dark:text-sky-200">
+                      global
+                    </span>
+                  )}
                   {!r.enabled && (
                     <span className="rounded bg-ink-100 px-1.5 py-0.5 text-[10px] uppercase tracking-widest text-ink-500 dark:bg-ink-800 dark:text-ink-300">
                       paused
@@ -307,10 +376,13 @@ function ReplayButton({ ruleId }: { ruleId: string }) {
 
 function RuleEditor({
   initial,
+  isAdmin = false,
   onCancel,
   onSaved,
 }: {
   initial: Rule;
+  /** Admin-only: exposes the Scope selector. */
+  isAdmin?: boolean;
   onCancel: () => void;
   onSaved: () => void;
 }) {
@@ -318,6 +390,7 @@ function RuleEditor({
   const [name, setName] = useState(initial.name);
   const [description, setDescription] = useState(initial.description ?? '');
   const [enabled, setEnabled] = useState(initial.enabled);
+  const [scope, setScope] = useState<'user' | 'global'>(initial.scope ?? 'user');
   const [conditions, setConditions] = useState<Condition[]>(initial.conditions);
   const [actions, setActions] = useState<Action[]>(initial.actions);
   const [testResult, setTestResult] = useState<{ total: number; sample: { _id: string; subject: string; from: string | null }[] } | null>(null);
@@ -329,6 +402,10 @@ function RuleEditor({
         description: description.trim() || undefined,
         enabled,
         priority: initial.priority || 100,
+        // Only send scope when admin is using the editor — server
+        // ignores the field for non-admins, but keeping it absent
+        // avoids any 403 on a stray default.
+        ...(isAdmin ? { scope } : {}),
         conditions,
         actions,
       };
@@ -406,6 +483,25 @@ function RuleEditor({
           onChange={(e) => setDescription(e.target.value)}
         />
       </label>
+
+      {isAdmin && (
+        <label className="block text-xs">
+          <span className="mb-1 block font-medium">Scope</span>
+          <select
+            className="input"
+            value={scope}
+            onChange={(e) => setScope(e.target.value as 'user' | 'global')}
+          >
+            <option value="user">My rules (just me)</option>
+            <option value="global">Global (every user's mail)</option>
+          </select>
+          <span className="mt-1 block text-[10px] text-ink-500">
+            Globals fire on every user's incoming mail in their own
+            context. Use sparingly — they pre-empt user rules at the
+            same priority.
+          </span>
+        </label>
+      )}
 
       <fieldset className="space-y-2 rounded-lg border border-ink-200 p-3 dark:border-ink-800">
         <legend className="px-1 text-[10px] uppercase tracking-widest text-ink-500">

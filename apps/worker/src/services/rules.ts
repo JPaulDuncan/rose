@@ -232,9 +232,27 @@ export async function evaluateRules(
   email: EmailDoc,
 ): Promise<RuleVerdict> {
   const v = emptyVerdict();
-  const rules = await Rule.find({ userId, enabled: true })
-    .sort({ priority: 1, createdAt: 1 })
-    .lean();
+  // Load the user's own rules + every admin-managed global rule.
+  // Globals fire on every user's incoming mail in that user's
+  // context, mirroring the recipes pattern. We sort by priority
+  // across the union so an admin's high-priority global can
+  // pre-empt a user's lower-priority custom — and vice-versa.
+  const [userRules, globalRules] = await Promise.all([
+    Rule.find({ userId, enabled: true, scope: { $ne: 'global' } })
+      .sort({ priority: 1, createdAt: 1 })
+      .lean(),
+    Rule.find({ scope: 'global', enabled: true })
+      .sort({ priority: 1, createdAt: 1 })
+      .lean(),
+  ]);
+  const rules = [...userRules, ...globalRules].sort((a, b) => {
+    const pa = (a.priority as number | undefined) ?? 100;
+    const pb = (b.priority as number | undefined) ?? 100;
+    if (pa !== pb) return pa - pb;
+    const ca = a.createdAt ? new Date(a.createdAt as Date).getTime() : 0;
+    const cb = b.createdAt ? new Date(b.createdAt as Date).getTime() : 0;
+    return ca - cb;
+  });
   if (!rules.length) return v;
 
   for (const rule of rules) {

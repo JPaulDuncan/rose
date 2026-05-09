@@ -57,11 +57,17 @@ export const RuleAction = z.object({
 });
 export type RuleAction = z.infer<typeof RuleAction>;
 
+/** Rule scope — mirrors Recipe.scope. 'global' is admin-only. */
+export const RuleScope = z.enum(['user', 'global']);
+export type RuleScope = z.infer<typeof RuleScope>;
+
 export const RuleUpsert = z.object({
   name: z.string().min(1).max(80),
   description: z.string().max(500).optional(),
   enabled: z.boolean().default(true),
   priority: z.number().int().min(0).max(10000).default(100),
+  /** Defaults to 'user'. 'global' requires admin at the API. */
+  scope: RuleScope.optional(),
   conditions: z.array(RuleCondition).max(20),
   actions: z.array(RuleAction).min(1).max(10),
 });

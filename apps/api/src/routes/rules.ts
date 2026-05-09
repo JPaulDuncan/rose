@@ -7,6 +7,7 @@ import {
 } from '@rose/db';
 import { RuleUpsert } from '@rose/shared';
 import { userIdOf } from '../middleware/auth.js';
+import { isAdminRequest } from '../middleware/admin.js';
 import { validateBody } from '../middleware/validate.js';
 import { matchesRule } from '../lib/ruleEval.js';
 import { generatePageQueue } from '../lib/queues.js';
@@ -15,7 +16,26 @@ export const rulesRouter: Router = Router();
 
 rulesRouter.get('/', async (req, res) => {
   const userId = new Types.ObjectId(userIdOf(req));
-  const rules = await Rule.find({ userId })
+  const admin = await isAdminRequest(req);
+  // ?scope=global lists global rules (admin-only). No filter =
+  // user-scoped only — globals are invisible to non-admins, mirrors
+  // the recipes pattern.
+  const requestedScope = (req.query.scope as string | undefined) ?? 'user';
+  if (requestedScope === 'global') {
+    if (!admin) {
+      res.status(403).json({
+        error: 'forbidden',
+        message: 'Global rules are admin-only.',
+      });
+      return;
+    }
+    const rules = await Rule.find({ scope: 'global' })
+      .sort({ priority: 1, createdAt: 1 })
+      .lean();
+    res.json({ rules });
+    return;
+  }
+  const rules = await Rule.find({ userId, scope: { $ne: 'global' } })
     .sort({ priority: 1, createdAt: 1 })
     .lean();
   res.json({ rules });
@@ -27,7 +47,14 @@ rulesRouter.get('/:id', async (req, res) => {
     res.status(404).json({ error: 'not_found' });
     return;
   }
-  const rule = await Rule.findOne({ _id: req.params.id, userId }).lean();
+  const admin = await isAdminRequest(req);
+  // Admins can fetch any rule (including globals); non-admins are
+  // restricted to their own user-scoped rows.
+  const rule = await Rule.findOne(
+    admin
+      ? { _id: req.params.id }
+      : { _id: req.params.id, userId, scope: { $ne: 'global' } },
+  ).lean();
   if (!rule) {
     res.status(404).json({ error: 'not_found' });
     return;
@@ -38,7 +65,21 @@ rulesRouter.get('/:id', async (req, res) => {
 rulesRouter.post('/', validateBody(RuleUpsert), async (req, res) => {
   const userId = new Types.ObjectId(userIdOf(req));
   const body = req.body as typeof RuleUpsert._type;
-  const created = await Rule.create({ userId, ...body });
+  if (body.scope === 'global') {
+    const admin = await isAdminRequest(req);
+    if (!admin) {
+      res.status(403).json({
+        error: 'forbidden',
+        message: 'Only an administrator may create global rules.',
+      });
+      return;
+    }
+  }
+  const created = await Rule.create({
+    userId,
+    scope: body.scope ?? 'user',
+    ...body,
+  });
   res.status(201).json(created);
 });
 
@@ -50,11 +91,28 @@ rulesRouter.patch('/:id', validateBody(RuleUpsert.partial()), async (req, res) =
     return;
   }
   const body = req.body as Partial<typeof RuleUpsert._type>;
-  const rule = await Rule.findOneAndUpdate(
-    { _id: id, userId },
-    body,
-    { new: true },
-  );
+  const admin = await isAdminRequest(req);
+  // Editing a global, or promoting a rule to global, requires admin.
+  const existing = await Rule.findOne({ _id: id }).select('scope userId').lean();
+  if (!existing) {
+    res.status(404).json({ error: 'not_found' });
+    return;
+  }
+  const isGlobalRow = existing.scope === 'global';
+  const becomingGlobal = body.scope === 'global';
+  if ((isGlobalRow || becomingGlobal) && !admin) {
+    res.status(403).json({
+      error: 'forbidden',
+      message: isGlobalRow
+        ? 'Global rules can only be edited by an administrator.'
+        : 'Only an administrator may promote a rule to global.',
+    });
+    return;
+  }
+  const filter = admin
+    ? { _id: id }
+    : { _id: id, userId, scope: { $ne: 'global' } };
+  const rule = await Rule.findOneAndUpdate(filter, body, { new: true });
   if (!rule) {
     res.status(404).json({ error: 'not_found' });
     return;
@@ -64,7 +122,34 @@ rulesRouter.patch('/:id', validateBody(RuleUpsert.partial()), async (req, res) =
 
 rulesRouter.delete('/:id', async (req, res) => {
   const userId = new Types.ObjectId(userIdOf(req));
-  await Rule.deleteOne({ _id: req.params.id, userId });
+  const admin = await isAdminRequest(req);
+  const target = await Rule.findOne({ _id: req.params.id }).select('scope userId').lean();
+  if (!target) {
+    res.json({ ok: true });
+    return;
+  }
+  if (target.scope === 'global' && !admin) {
+    res.status(403).json({
+      error: 'forbidden',
+      message: 'Global rules can only be deleted by an administrator.',
+    });
+    return;
+  }
+  if (
+    target.scope !== 'global' &&
+    !admin &&
+    String(target.userId) !== String(userId)
+  ) {
+    res.status(404).json({ error: 'not_found' });
+    return;
+  }
+  await Rule.deleteOne({ _id: req.params.id });
+  // Globals: drop every user's audit row. User rules: scope to owner.
+  if (target.scope === 'global') {
+    await RuleAuditLog.deleteMany({ ruleId: req.params.id });
+  } else {
+    await RuleAuditLog.deleteMany({ ruleId: req.params.id, userId });
+  }
   res.json({ ok: true });
 });
 
