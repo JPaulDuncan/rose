@@ -74,6 +74,12 @@ export class OllamaProvider implements LlmProvider {
         format: opts.format,
         stream: true,
         options: samplerOptions,
+        // `keep_alive` matches the docker-compose OLLAMA_KEEP_ALIVE
+        // (24h) explicitly per-request, defending against any
+        // operator who flipped the env back to 5min — without this
+        // the model unloads between requests and we eat a 30s reload
+        // on the next one.
+        keep_alive: '24h',
       }),
       signal: opts.signal,
     });
@@ -98,7 +104,15 @@ export class OllamaProvider implements LlmProvider {
     signal?: AbortSignal,
     numGpu?: number,
   ): Promise<number[]> {
-    const body: Record<string, unknown> = { model, prompt: input };
+    const body: Record<string, unknown> = {
+      model,
+      prompt: input,
+      // Same 24h keep-alive as generation — without it the embed
+      // model unloads after a few minutes idle and the next call
+      // pays the model-load cost. Embed bursts (taxonomy snap,
+      // web research) particularly benefit.
+      keep_alive: '24h',
+    };
     if (numGpu != null) body.options = { num_gpu: numGpu };
     const res = await fetch(`${this.cfg.baseUrl}/api/embeddings`, {
       method: 'POST',
