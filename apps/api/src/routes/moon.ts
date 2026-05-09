@@ -6,6 +6,7 @@ import {
   upcomingPrincipalPhases,
   type MoonPhase,
 } from '@rose/shared';
+import { MoonSnapshot } from '@rose/db';
 import { logger } from '../lib/logger.js';
 
 export const moonRouter: Router = Router();
@@ -200,13 +201,81 @@ function fromLocal(now: Date): CacheEntry {
   };
 }
 
+/**
+ * Hydrate the in-memory cache from the most-recent persisted
+ * snapshot, when one exists within the TTL window. Mirrors the
+ * weather endpoint's cross-process reuse pattern (Plan 17): on
+ * cache miss, check the global Mongo snapshot before round-tripping
+ * to USNO, so a fresh instance / sibling replica doesn't re-fetch
+ * data another process has already paid for.
+ */
+async function hydrateFromMongo(): Promise<CacheEntry | null> {
+  try {
+    const row = await MoonSnapshot.findOne({
+      fetchedAt: { $gte: new Date(Date.now() - TTL_MS) },
+    })
+      .sort({ fetchedAt: -1 })
+      .lean();
+    if (!row) return null;
+    return {
+      fetchedAt: new Date(row.fetchedAt as Date).getTime(),
+      phase: row.phase as MoonPhase,
+      label: row.label,
+      illumination: row.illumination,
+      source: row.source as 'usno' | 'local',
+      principal: (row.principal ?? []).map((p) => ({
+        phase: p.phase,
+        date: p.date,
+      })),
+      upcoming: (row.upcoming ?? []).map((p) => ({
+        phase: p.phase,
+        date: p.date,
+      })),
+    };
+  } catch (err) {
+    logger.debug({ err }, 'moon: hydrate-from-mongo failed (continuing)');
+    return null;
+  }
+}
+
+/**
+ * Persist the freshly-fetched snapshot so other processes (and
+ * this one after a restart) can reuse it without hitting USNO
+ * again. Fire-and-forget — a transient Mongo blip shouldn't sink
+ * the response.
+ */
+function persist(entry: CacheEntry): void {
+  void MoonSnapshot.create({
+    fetchedAt: new Date(entry.fetchedAt),
+    phase: entry.phase,
+    label: entry.label,
+    illumination: entry.illumination,
+    source: entry.source,
+    principal: entry.principal ?? [],
+    upcoming: entry.upcoming ?? [],
+  }).catch((err) =>
+    logger.debug({ err }, 'moon: snapshot persist failed (continuing)'),
+  );
+}
+
 moonRouter.get('/', async (_req, res) => {
   const now = new Date();
   if (cache && Date.now() - cache.fetchedAt < TTL_MS) {
     res.json(cache);
     return;
   }
+  // Cross-process reuse: another replica may have just fetched
+  // the same data. Surface that without round-tripping to USNO
+  // again — the moon is the same for everyone, every user pays
+  // the upstream cost once per TTL window.
+  const fromDb = await hydrateFromMongo();
+  if (fromDb) {
+    cache = fromDb;
+    res.json(fromDb);
+    return;
+  }
   const fresh = (await fromUsno(now)) ?? fromLocal(now);
   cache = fresh;
+  persist(fresh);
   res.json(fresh);
 });

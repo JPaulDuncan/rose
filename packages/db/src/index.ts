@@ -76,6 +76,8 @@ export { Entity, ENTITY_TYPES, daydreamSubjectKey } from './models/Entity.js';
 export type { EntityDoc, EntityType } from './models/Entity.js';
 export { WeatherSnapshot } from './models/WeatherSnapshot.js';
 export type { WeatherSnapshotDoc } from './models/WeatherSnapshot.js';
+export { MoonSnapshot } from './models/MoonSnapshot.js';
+export type { MoonSnapshotDoc } from './models/MoonSnapshot.js';
 export { Recipe } from './models/Recipe.js';
 export type { RecipeDoc } from './models/Recipe.js';
 export { RecipeAudit } from './models/RecipeAudit.js';
