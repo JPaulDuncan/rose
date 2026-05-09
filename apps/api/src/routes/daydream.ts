@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { Types } from 'mongoose';
-import { User, DaydreamNote } from '@rose/db';
+import { User, DaydreamNote, Page, Sender, Entity } from '@rose/db';
 
 /**
  * Plan 15 — resolve a list of userIds to `{id → displayName}` for
@@ -131,25 +131,125 @@ daydreamRouter.patch('/', validateBody(DaydreamSettingsUpdate), async (req, res)
 });
 
 /**
+ * Build the user's "interest set" — the (kind, subjectKey) pairs
+ * the daydream layer should consider relevant to them. The set is
+ * the union of:
+ *
+ *   • every entry on `Page.daydreamSubjects` across the user's
+ *     pages (the worker's own canonical interest record — populated
+ *     as data flows through the page-write pipeline),
+ *   • every brandKey on this user's `Sender` rows (kind=sender),
+ *   • every key on this user's `Entity` rows (kind=entity).
+ *
+ * Notes about subjects in this set are "aligned" with the user;
+ * everything else is foreign-research that another user generated
+ * and we don't surface. The user can override with `?all=true` to
+ * inspect the global pool from Settings → Daydream.
+ *
+ * Subject keys are normalised the same way the worker writes them
+ * (`daydreamSubjectKey` — lowercased, whitespace-collapsed) so a
+ * pure $in lookup is enough.
+ */
+async function userInterestSet(
+  userId: Types.ObjectId,
+): Promise<{ keys: Set<string>; cap: boolean }> {
+  // 1. Page.daydreamSubjects — pre-computed by the worker.
+  // 2. Sender.brandKey — kind=sender.
+  // 3. Entity.key — kind=entity (display key matches subjectKey for entities
+  //    extracted via daydreamSubjectKey).
+  // Capped to 5_000 distinct interests per user so a power user
+  // doesn't blow up the $in. The cap is conservative; in practice
+  // most users have a few hundred at most.
+  const CAP = 5_000;
+  const keys = new Set<string>();
+  const dsRows = await Page.aggregate<{ _id: { kind: string; subjectKey: string } }>([
+    { $match: { userId } },
+    { $unwind: '$daydreamSubjects' },
+    {
+      $group: {
+        _id: {
+          kind: '$daydreamSubjects.kind',
+          subjectKey: '$daydreamSubjects.subjectKey',
+        },
+      },
+    },
+    { $limit: CAP },
+  ]);
+  for (const r of dsRows) {
+    if (r._id?.kind && r._id.subjectKey) {
+      keys.add(`${r._id.kind}__${r._id.subjectKey}`);
+    }
+  }
+  if (keys.size < CAP) {
+    const senderRows = await Sender.find({ userId })
+      .select('brandKey')
+      .limit(CAP - keys.size)
+      .lean();
+    for (const s of senderRows) {
+      if (s.brandKey) keys.add(`sender__${(s.brandKey as string).toLowerCase()}`);
+    }
+  }
+  if (keys.size < CAP) {
+    const entityRows = await Entity.find({ userId })
+      .select('key displayName')
+      .limit(CAP - keys.size)
+      .lean();
+    for (const e of entityRows) {
+      // Entities use the lowercased displayName form for the
+      // subjectKey, NOT the kebab `key`. Match what the daydream
+      // worker writes so we hit the right notes.
+      const display = (e.displayName as string | undefined) ?? '';
+      const subjectKey = display.trim().toLowerCase().replace(/\s+/g, ' ');
+      if (subjectKey) keys.add(`entity__${subjectKey}`);
+    }
+  }
+  return { keys, cap: keys.size >= CAP };
+}
+
+/**
  * Recent daydream activity for the Settings page — a chronological
  * log so the user can see what daydream is doing without reading
- * worker logs. Plan 14 — notes are now globally shared, so this
- * lists everything the current user hasn't "forgotten" (sorted by
- * generatedAt). Failures with their reason stay surfaced.
+ * worker logs. Notes are stored globally (Plan 14); this endpoint
+ * surfaces only the ones aligned with the user's interest set so
+ * they don't see foreign-research from subjects they have nothing
+ * in common with.
+ *
+ * Query flags:
+ *   • ?all=true — bypass alignment and show every note in the
+ *     global pool (still hides ones the user has forgotten).
+ *     Useful for debugging from Settings → Daydream.
  */
 daydreamRouter.get('/recent', async (req, res) => {
   const userId = new Types.ObjectId(userIdOf(req));
   const limit = Math.min(Number(req.query.limit ?? 50), 200);
-  const notes = await DaydreamNote.find({ forgottenBy: { $ne: userId } })
+  const showAll = (req.query.all ?? '') === 'true';
+  let interestKeys: Set<string> | null = null;
+  if (!showAll) {
+    const { keys } = await userInterestSet(userId);
+    interestKeys = keys;
+  }
+  // Pull a generous over-fetch so client-side alignment filtering
+  // still returns `limit` rows when the user's interest set is
+  // narrower than the global pool's recent activity.
+  const overFetch = showAll ? limit : Math.min(limit * 8, 500);
+  const candidates = await DaydreamNote.find({ forgottenBy: { $ne: userId } })
     .sort({ generatedAt: -1 })
-    .limit(limit)
+    .limit(overFetch)
     .lean();
+  const notes = !interestKeys
+    ? candidates
+    : candidates
+        .filter((n) =>
+          interestKeys!.has(`${n.kind}__${(n.subjectKey as string).toLowerCase()}`),
+        )
+        .slice(0, limit);
   // Plan 15 — resolve `firstResearchedBy` to a display name so the
   // UI can render a "contributed by …" chip alongside each note.
   const names = await displayNamesFor(
     notes.map((n) => n.firstResearchedBy as Types.ObjectId | null),
   );
   res.json({
+    aligned: !showAll,
     notes: notes.map((n) => ({
       _id: String(n._id),
       kind: n.kind,

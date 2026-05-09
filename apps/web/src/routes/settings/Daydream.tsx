@@ -31,9 +31,17 @@ export default function DaydreamSettings() {
     queryKey: ['daydream-settings'],
     queryFn: () => api.get<DaydreamSettingsT>('/api/daydream'),
   });
+  // Default view is "aligned with my interests" — notes about
+  // subjects this user actually has data on. Toggling to All shows
+  // every note in the global pool, useful for inspecting other
+  // users' research without it cluttering the steady-state view.
+  const [showAllNotes, setShowAllNotes] = useState(false);
   const { data: recent } = useQuery({
-    queryKey: ['daydream-recent'],
-    queryFn: () => api.get<{ notes: RecentNote[] }>('/api/daydream/recent?limit=50'),
+    queryKey: ['daydream-recent', showAllNotes],
+    queryFn: () =>
+      api.get<{ aligned: boolean; notes: RecentNote[] }>(
+        `/api/daydream/recent?limit=50${showAllNotes ? '&all=true' : ''}`,
+      ),
     refetchInterval: 15_000,
   });
   const [form, setForm] = useState<DaydreamSettingsT | null>(null);
@@ -725,15 +733,43 @@ export default function DaydreamSettings() {
         <div className="mb-3 flex items-center gap-2">
           <RotateCw className="h-5 w-5 text-rose-500" />
           <h2 className="font-semibold">Recent activity</h2>
-          <span className="ml-auto text-xs text-ink-500">
+          <div className="ml-auto inline-flex rounded-md border border-ink-200 p-0.5 text-xs dark:border-ink-800">
+            <button
+              type="button"
+              className={
+                'rounded px-2 py-0.5 ' +
+                (!showAllNotes
+                  ? 'bg-rose-500 text-white'
+                  : 'text-ink-600 dark:text-ink-300')
+              }
+              onClick={() => setShowAllNotes(false)}
+              title="Notes about subjects you actually have data on"
+            >
+              Aligned with you
+            </button>
+            <button
+              type="button"
+              className={
+                'rounded px-2 py-0.5 ' +
+                (showAllNotes
+                  ? 'bg-rose-500 text-white'
+                  : 'text-ink-600 dark:text-ink-300')
+              }
+              onClick={() => setShowAllNotes(true)}
+              title="Every note in the global pool, including other users'"
+            >
+              All
+            </button>
+          </div>
+          <span className="text-xs text-ink-500">
             {recent?.notes.length ?? 0} notes
           </span>
         </div>
         {(recent?.notes.length ?? 0) === 0 ? (
           <p className="text-sm italic text-ink-500">
-            No daydream activity yet. Once enabled, the sweeper picks
-            pages while the rest of the pipeline is idle and writes
-            encyclopedic context here.
+            {showAllNotes
+              ? 'No daydream activity in the global pool yet.'
+              : 'No notes aligned with your interests yet. Once your pages have tags, entities, or sender brands, the worker writes encyclopedic context for them here. Switch to All to see what other users are researching.'}
           </p>
         ) : (
           <ul className="divide-y divide-ink-200 text-sm dark:divide-ink-800">
