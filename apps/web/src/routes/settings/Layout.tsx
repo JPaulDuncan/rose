@@ -19,6 +19,7 @@ const TABS = [
   { to: 'library', label: 'Library' },
   { to: 'spam', label: 'Spam' },
   { to: 'storage', label: 'Storage' },
+  { to: 'reports', label: 'Reports' },
 ];
 
 /** Admin-only tabs. Models is global LLM-stack configuration —

@@ -10,6 +10,7 @@ import {
   Moon,
   Command,
   LogOut,
+  Bug,
   BookOpen,
   ShieldAlert,
   Megaphone,
@@ -34,6 +35,7 @@ import { useAuth } from '../lib/auth';
 import { useTheme } from '../lib/theme';
 import { CommandPalette } from './CommandPalette';
 import { KeyboardHelp } from './KeyboardHelp';
+import { ReportModal } from './ReportModal';
 import { useHotkeys } from '../hooks/useHotkeys';
 
 type NavItem = {
@@ -74,6 +76,7 @@ export function Shell({ children }: { children: ReactNode }) {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [reportOpen, setReportOpen] = useState(false);
   const navigate = useNavigate();
   const searchInputRef = useRef<HTMLInputElement>(null);
 
@@ -117,6 +120,7 @@ export function Shell({ children }: { children: ReactNode }) {
     'g q': () => navigate('/quarantine'),
     'g p': () => navigate('/promotions'),
     'g s': () => navigate('/settings'),
+    'g r': () => setReportOpen(true),
     n: (e) => {
       const tag = (e.target as HTMLElement)?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA') return;
@@ -195,7 +199,11 @@ export function Shell({ children }: { children: ReactNode }) {
             >
               <Settings className="h-4 w-4" />
             </NavLink>
-            <UserMenu user={user} onLogout={logout} />
+            <UserMenu
+              user={user}
+              onLogout={logout}
+              onReport={() => setReportOpen(true)}
+            />
             {/* Mobile hamburger */}
             <button
               type="button"
@@ -244,6 +252,7 @@ export function Shell({ children }: { children: ReactNode }) {
 
       <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
       <KeyboardHelp open={helpOpen} onClose={() => setHelpOpen(false)} />
+      <ReportModal open={reportOpen} onClose={() => setReportOpen(false)} />
     </div>
   );
 }
@@ -374,9 +383,11 @@ function MoreMenu({ items }: { items: NavItem[] }) {
 function UserMenu({
   user,
   onLogout,
+  onReport,
 }: {
   user: { displayName?: string; email?: string } | null;
   onLogout: () => void;
+  onReport: () => void;
 }) {
   const initial = (user?.displayName ?? user?.email ?? '?')
     .charAt(0)
@@ -402,6 +413,18 @@ function UserMenu({
             <div className="truncate text-sm font-medium">{user?.displayName}</div>
             <div className="truncate text-xs text-ink-500">{user?.email}</div>
           </div>
+          <button
+            type="button"
+            onClick={() => {
+              onReport();
+              close();
+            }}
+            className="flex w-full items-center gap-2 rounded px-2.5 py-1.5 text-left text-sm text-ink-700 hover:bg-ink-100 dark:text-ink-200 dark:hover:bg-ink-800"
+            title="Report a bug or request a feature"
+          >
+            <Bug className="h-4 w-4" />
+            Report a bug or feature
+          </button>
           <button
             type="button"
             onClick={() => {
