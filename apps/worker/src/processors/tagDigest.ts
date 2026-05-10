@@ -62,14 +62,30 @@ export function startTagDigestWorker(): void {
       const userId = new Types.ObjectId(job.data.userId);
       const tag = job.data.tag.toLowerCase();
       const dayKey = utcDayKey();
+      // Multi-tag intersection: the API encodes "Receipt + Anthropic"
+      // as `receipt+anthropic`. Split on `+` to drive the page
+      // filter; the original joined slug stays as `tag` for the
+      // (userId, tag, dayKey) digest key.
+      const tagParts = tag
+        .split('+')
+        .map((p) => p.trim())
+        .filter(Boolean);
+      const tagsRequired = [...new Set(tagParts)];
+      const isMulti = tagsRequired.length > 1;
+      const tagDisplay = isMulti
+        ? `#${tagsRequired.join(' + #')}`
+        : `#${tag}`;
 
-      // Pull the top 8 recently-updated pages for this tag. The LLM
-      // gets a compact label list (p1..pN) plus title + summary so
-      // the prompt stays bounded.
+      // Pull the top 8 recently-updated pages for this tag (or
+      // intersection). The LLM gets a compact label list (p1..pN)
+      // plus title + summary so the prompt stays bounded.
+      const tagFilters = tagsRequired.map((t) => ({
+        $or: [{ tags: t }, { topics: t }],
+      }));
       const pages = await Page.find({
         userId,
         $and: [
-          { $or: [{ tags: tag }, { topics: tag }] },
+          ...tagFilters,
           {
             $or: [
               { 'flags.userMarkedSpam': { $ne: true } },
@@ -99,7 +115,7 @@ export function startTagDigestWorker(): void {
               userId,
               tag,
               dayKey,
-              headline: `Quiet day on #${tag}`,
+              headline: `Quiet day on ${tagDisplay}`,
               dek: 'No new dispatches today.',
               bodyMd: '',
               topPageIds: [],
@@ -131,7 +147,11 @@ export function startTagDigestWorker(): void {
         .join('\n\n');
 
       const prompt = renderTemplate(template, {
-        tag,
+        // For single-tag, the template's existing {{tag}} stays
+        // singular. For multi-tag intersections, render the joined
+        // form (e.g. "receipt + anthropic") so the LLM frames the
+        // brief as a combined view rather than picking one tag.
+        tag: isMulti ? tagsRequired.join(' + ') : tag,
         day_label: new Date().toLocaleDateString(undefined, {
           weekday: 'long',
           month: 'long',

@@ -41,7 +41,12 @@ type TagDigestSummary = {
 };
 
 type TagPageResponse = {
+  /** The joined slug for digest lookup. Single-tag => the tag
+   *  itself; multi-tag => parts joined by `+`, e.g. "receipt+anthropic". */
   tag: string;
+  /** The constituent tags. Length > 1 indicates an intersection
+   *  view ("Receipt:Anthropic"). */
+  tags?: string[];
   pageCount: number;
   totalEmails: number;
   dateRange: { from: string; to: string } | null;
@@ -121,14 +126,19 @@ export default function TagPage() {
         <>
           <TagNameplate
             tag={data.tag}
-            description="No articles yet. As emails matching this tag arrive, they will land here."
+            tags={data.tags}
+            description={
+              (data.tags?.length ?? 0) > 1
+                ? 'No articles match this combination yet. As pages pick up all of these tags, they will land here.'
+                : 'No articles yet. As emails matching this tag arrive, they will land here.'
+            }
             isFeatured={isFeatured}
             onPin={() => pin.mutate()}
             onUnpin={() => unpin.mutate()}
             pinPending={pin.isPending}
             unpinPending={unpin.isPending}
           />
-          <div className="card mt-6 text-center text-ink-500">No pages match this tag.</div>
+          <div className="card mt-6 text-center text-ink-500">No pages match this combination.</div>
         </>
       ) : (
         <div className="grid gap-8 lg:grid-cols-[1fr_260px]">
@@ -149,7 +159,12 @@ export default function TagPage() {
           <aside className="space-y-4">
             <TagNameplate
               tag={data.tag}
-              description={`Articles tagged or extracted with #${data.tag}, aggregated from ${data.totalEmails} source email${data.totalEmails === 1 ? '' : 's'}.`}
+              tags={data.tags}
+              description={
+                (data.tags?.length ?? 0) > 1
+                  ? `${data.pageCount} page${data.pageCount === 1 ? '' : 's'} carry every one of these tags, aggregated from ${data.totalEmails} source email${data.totalEmails === 1 ? '' : 's'}.`
+                  : `Articles tagged or extracted with #${data.tag}, aggregated from ${data.totalEmails} source email${data.totalEmails === 1 ? '' : 's'}.`
+              }
               isFeatured={isFeatured}
               onPin={() => pin.mutate()}
               onUnpin={() => unpin.mutate()}
@@ -202,17 +217,37 @@ export default function TagPage() {
                 <div className="mb-3 flex items-center gap-2 text-xs uppercase tracking-widest text-ink-500">
                   <Network className="h-3.5 w-3.5" /> Co-occurring tags
                 </div>
+                <p className="mb-2 text-[11px] text-ink-500">
+                  Click <strong>+</strong> to combine with the current view
+                  ({(data.tags ?? [data.tag]).map((t) => `#${t}`).join(' + ')}).
+                </p>
                 <div className="flex flex-wrap gap-1.5">
-                  {data.relatedTags.map((t) => (
-                    <Link
-                      key={t.tag}
-                      to={`/t/${encodeURIComponent(t.tag)}`}
-                      className="pill text-[11px] hover:bg-rose-100 hover:text-rose-800 dark:hover:bg-rose-950/40 dark:hover:text-rose-300"
-                    >
-                      #{t.tag}
-                      <span className="ml-1 text-ink-400">{t.count}</span>
-                    </Link>
-                  ))}
+                  {data.relatedTags.map((t) => {
+                    const current = data.tags ?? [data.tag];
+                    const intersect = [...new Set([...current, t.tag])].join('+');
+                    return (
+                      <span
+                        key={t.tag}
+                        className="inline-flex items-center overflow-hidden rounded-full"
+                      >
+                        <Link
+                          to={`/t/${encodeURIComponent(t.tag)}`}
+                          className="pill rounded-r-none text-[11px] hover:bg-rose-100 hover:text-rose-800 dark:hover:bg-rose-950/40 dark:hover:text-rose-300"
+                          title={`Open #${t.tag} on its own`}
+                        >
+                          #{t.tag}
+                          <span className="ml-1 text-ink-400">{t.count}</span>
+                        </Link>
+                        <Link
+                          to={`/t/${encodeURIComponent(intersect)}`}
+                          className="border-l border-ink-200 bg-rose-50 px-2 text-[11px] font-bold text-rose-700 hover:bg-rose-100 dark:border-ink-800 dark:bg-rose-950/30 dark:text-rose-200 dark:hover:bg-rose-950/50"
+                          title={`Combine: pages tagged with all of ${[...current, t.tag].map((x) => `#${x}`).join(' + ')}`}
+                        >
+                          +
+                        </Link>
+                      </span>
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -223,8 +258,18 @@ export default function TagPage() {
   );
 }
 
+/** Title-case a kebab-style tag for the nameplate heading. */
+function titleCaseKebab(s: string): string {
+  return s
+    .split('-')
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ');
+}
+
 function TagNameplate({
   tag,
+  tags,
   description,
   isFeatured,
   onPin,
@@ -233,6 +278,8 @@ function TagNameplate({
   unpinPending,
 }: {
   tag: string;
+  /** When length > 1, render as an intersection nameplate. */
+  tags?: string[];
   description: string;
   isFeatured: boolean;
   onPin: () => void;
@@ -240,38 +287,61 @@ function TagNameplate({
   pinPending: boolean;
   unpinPending: boolean;
 }) {
+  const isMulti = (tags?.length ?? 0) > 1;
+  const heading = isMulti
+    ? (tags as string[]).map(titleCaseKebab).join(':')
+    : `#${tag}`;
   return (
     <div className="card">
       <div className="flex items-center gap-2 text-xs uppercase tracking-widest text-rose-500">
         <Hash className="h-3.5 w-3.5" />
-        Tag
+        {isMulti ? 'Combined view' : 'Tag'}
       </div>
-      <h1 className="mt-1 text-2xl font-bold tracking-tight">#{tag}</h1>
-      <div className="mt-2">
-        {isFeatured ? (
-          <button
-            type="button"
-            onClick={onUnpin}
-            disabled={unpinPending}
-            className="inline-flex items-center gap-1.5 rounded-full border border-rose-300 bg-rose-50 px-3 py-1 text-xs font-medium text-rose-800 transition-colors hover:bg-rose-100 disabled:opacity-50 dark:border-rose-800 dark:bg-rose-950/30 dark:text-rose-200 dark:hover:bg-rose-950/50"
-            title="Click to unpin from your newsletter"
-          >
-            <Star className="h-3.5 w-3.5" fill="currentColor" />
-            Featured · click to unpin
-          </button>
-        ) : (
-          <button
-            type="button"
-            onClick={onPin}
-            disabled={pinPending}
-            className="inline-flex items-center gap-1.5 rounded-full border border-ink-300 px-3 py-1 text-xs font-medium text-ink-700 transition-colors hover:border-rose-400 hover:bg-rose-50 hover:text-rose-700 disabled:opacity-50 dark:border-ink-700 dark:text-ink-200 dark:hover:border-rose-700 dark:hover:bg-rose-950/30 dark:hover:text-rose-200"
-            title="Pin this tag as a section in your newsletter"
-          >
-            <Star className="h-3.5 w-3.5" />
-            Feature in newsletter
-          </button>
-        )}
-      </div>
+      <h1 className="mt-1 text-2xl font-bold tracking-tight">{heading}</h1>
+      {isMulti && (
+        <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-ink-500">
+          <span>Pages tagged with all of:</span>
+          {(tags as string[]).map((t) => (
+            <Link
+              key={t}
+              to={`/t/${encodeURIComponent(t)}`}
+              className="rounded-full bg-rose-50 px-2 py-0.5 text-rose-700 hover:bg-rose-100 dark:bg-rose-950/30 dark:text-rose-200 dark:hover:bg-rose-950/50"
+              title={`Open #${t} on its own`}
+            >
+              #{t}
+            </Link>
+          ))}
+        </div>
+      )}
+      {/* Feature-in-newsletter is single-tag only — combined views
+          are read-only intersections, not pinnable as a section. */}
+      {!isMulti && (
+        <div className="mt-2">
+          {isFeatured ? (
+            <button
+              type="button"
+              onClick={onUnpin}
+              disabled={unpinPending}
+              className="inline-flex items-center gap-1.5 rounded-full border border-rose-300 bg-rose-50 px-3 py-1 text-xs font-medium text-rose-800 transition-colors hover:bg-rose-100 disabled:opacity-50 dark:border-rose-800 dark:bg-rose-950/30 dark:text-rose-200 dark:hover:bg-rose-950/50"
+              title="Click to unpin from your newsletter"
+            >
+              <Star className="h-3.5 w-3.5" fill="currentColor" />
+              Featured · click to unpin
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={onPin}
+              disabled={pinPending}
+              className="inline-flex items-center gap-1.5 rounded-full border border-ink-300 px-3 py-1 text-xs font-medium text-ink-700 transition-colors hover:border-rose-400 hover:bg-rose-50 hover:text-rose-700 disabled:opacity-50 dark:border-ink-700 dark:text-ink-200 dark:hover:border-rose-700 dark:hover:bg-rose-950/30 dark:hover:text-rose-200"
+              title="Pin this tag as a section in your newsletter"
+            >
+              <Star className="h-3.5 w-3.5" />
+              Feature in newsletter
+            </button>
+          )}
+        </div>
+      )}
       <p className="mt-2 text-sm text-ink-500">{description}</p>
     </div>
   );

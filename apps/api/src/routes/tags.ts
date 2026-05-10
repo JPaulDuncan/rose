@@ -423,21 +423,53 @@ tagsRouter.get('/', async (req, res) => {
 
 /**
  * Tag-aggregation page: every wiki page (and the email count behind it)
- * that includes the given tag in either its `tags` or `topics` array,
+ * that includes the given tag(s) in either its `tags` or `topics` array,
  * plus stats and the most common co-occurring tags.
+ *
+ * Multi-tag intersection: callers can pass `tag1+tag2` as the path
+ * segment (no encoding tricks needed — `+` is a literal in URL path
+ * segments per RFC 3986, only query strings interpret it as space).
+ * The endpoint splits on `+`, normalises each piece, and filters
+ * pages that carry ALL of them — so `/api/tags/receipt+anthropic`
+ * answers "what's tagged both Receipt and Anthropic?" with a
+ * combined view + a brief keyed on the joined slug. Single-tag
+ * callers see no change.
  */
 tagsRouter.get('/:tag', async (req, res) => {
   const userId = new Types.ObjectId(userIdOf(req));
-  const tag = decodeURIComponent(req.params.tag ?? '').trim().toLowerCase();
-  if (!tag) {
+  const raw = decodeURIComponent(req.params.tag ?? '').trim().toLowerCase();
+  if (!raw) {
     res.status(400).json({ error: 'invalid_request', message: 'Empty tag' });
     return;
   }
+  // Split on `+` for the intersection mode. Empty pieces are
+  // dropped so trailing/leading `+` doesn't poison the filter.
+  const parts = raw
+    .split('+')
+    .map((p) => p.trim())
+    .filter(Boolean);
+  const tagKeys = [...new Set(parts)];
+  const isMulti = tagKeys.length > 1;
+  // Joined storage key — one digest per intersection so daily
+  // regen + the on-demand pin still collapse to the same row.
+  const digestKey = tagKeys.join('+');
 
-  const filter = {
-    userId,
-    $or: [{ tags: tag }, { topics: tag }],
-  };
+  // Page filter:
+  //   single → existing $or {tags|topics}
+  //   multi  → $and of per-tag $or so every tag in the set must
+  //            appear (as either a tag or a topic) on the page.
+  const filter: Record<string, unknown> =
+    !isMulti
+      ? {
+          userId,
+          $or: [{ tags: tagKeys[0] }, { topics: tagKeys[0] }],
+        }
+      : {
+          userId,
+          $and: tagKeys.map((t) => ({
+            $or: [{ tags: t }, { topics: t }],
+          })),
+        };
 
   const pages = await Page.find(filter)
     .sort({ updatedAt: -1 })
@@ -446,7 +478,8 @@ tagsRouter.get('/:tag', async (req, res) => {
 
   if (pages.length === 0) {
     res.json({
-      tag,
+      tag: digestKey,
+      tags: tagKeys,
       pageCount: 0,
       totalEmails: 0,
       dateRange: null,
@@ -464,6 +497,7 @@ tagsRouter.get('/:tag', async (req, res) => {
   const senderCounts = new Map<string, number>();
   const tagCounts = new Map<string, number>();
   const topicCounts = new Map<string, number>();
+  const inputSet = new Set(tagKeys);
   for (const p of pages) {
     totalEmails += (p.sourceEmailIds ?? []).length;
     const upd = new Date(p.updatedAt as Date);
@@ -473,10 +507,10 @@ tagsRouter.get('/:tag', async (req, res) => {
       senderCounts.set(s, (senderCounts.get(s) ?? 0) + 1);
     }
     for (const t of (p.tags ?? []) as string[]) {
-      if (t !== tag) tagCounts.set(t, (tagCounts.get(t) ?? 0) + 1);
+      if (!inputSet.has(t)) tagCounts.set(t, (tagCounts.get(t) ?? 0) + 1);
     }
     for (const t of (p.topics ?? []) as string[]) {
-      if (t !== tag) topicCounts.set(t, (topicCounts.get(t) ?? 0) + 1);
+      if (!inputSet.has(t)) topicCounts.set(t, (topicCounts.get(t) ?? 0) + 1);
     }
   }
   const related = new Map<string, number>();
@@ -516,9 +550,10 @@ tagsRouter.get('/:tag', async (req, res) => {
   const brandByKey = new Map(brandRows.map((b) => [b.brandKey, b]));
   const senderByKey = new Map(senderRows.map((s) => [s.brandKey, s]));
 
-  const digest = shapeDigest(await latestDigest(userId, tag));
+  const digest = shapeDigest(await latestDigest(userId, digestKey));
   res.json({
-    tag,
+    tag: digestKey,
+    tags: tagKeys,
     pageCount: pages.length,
     totalEmails,
     dateRange:
@@ -549,35 +584,49 @@ tagsRouter.get('/:tag', async (req, res) => {
  * Latest digest for a tag — same shape served alongside /api/tags/:tag,
  * but pre-resolved so a UI that just wants the lede can pull it
  * without the page list.
+ *
+ * Accepts the same `+`-joined intersection key the GET endpoint
+ * does so a multi-tag page's digest survives a regen.
  */
 tagsRouter.get('/:tag/digest', async (req, res) => {
   const userId = new Types.ObjectId(userIdOf(req));
-  const tag = decodeURIComponent(req.params.tag ?? '').trim().toLowerCase();
-  if (!tag) {
+  const raw = decodeURIComponent(req.params.tag ?? '').trim().toLowerCase();
+  if (!raw) {
     res.status(400).json({ error: 'invalid_request', message: 'Empty tag' });
     return;
   }
-  const digest = shapeDigest(await latestDigest(userId, tag));
+  const digestKey = raw
+    .split('+')
+    .map((p) => p.trim())
+    .filter(Boolean)
+    .join('+');
+  const digest = shapeDigest(await latestDigest(userId, digestKey));
   res.json({ digest });
 });
 
 /** Force-regenerate today's digest. Capped via job-id collapsing —
- *  same (user, tag, day) triple wins. */
+ *  same (user, tag, day) triple wins. Multi-tag intersections
+ *  fan out to the worker as one job keyed on the joined slug. */
 tagsRouter.post('/:tag/digest/regenerate', async (req, res) => {
   const userId = new Types.ObjectId(userIdOf(req));
-  const tag = decodeURIComponent(req.params.tag ?? '').trim().toLowerCase();
-  if (!tag) {
+  const raw = decodeURIComponent(req.params.tag ?? '').trim().toLowerCase();
+  if (!raw) {
     res.status(400).json({ error: 'invalid_request', message: 'Empty tag' });
     return;
   }
+  const digestKey = raw
+    .split('+')
+    .map((p) => p.trim())
+    .filter(Boolean)
+    .join('+');
   const job = await tagDigestQueue.add(
     'digest',
-    { userId: String(userId), tag },
+    { userId: String(userId), tag: digestKey },
     {
       // BullMQ rejects ':' in custom job IDs (it reserves it for
       // internal namespacing). Use '__' so the (user, tag, day)
       // triple still collapses re-pins to one job.
-      jobId: `digest__${String(userId)}__${tag}__${utcDayKey()}`,
+      jobId: `digest__${String(userId)}__${digestKey}__${utcDayKey()}`,
       attempts: 1,
       removeOnComplete: 200,
       removeOnFail: 200,
