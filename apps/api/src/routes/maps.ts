@@ -1,6 +1,7 @@
 import { Router } from 'express';
+import { Types } from 'mongoose';
 import { z } from 'zod';
-import { User } from '@rose/db';
+import { User, Page } from '@rose/db';
 import { userIdOf } from '../middleware/auth.js';
 import { validateBody } from '../middleware/validate.js';
 import { redis } from '../lib/redis.js';
@@ -198,6 +199,86 @@ mapsRouter.get('/static', async (req, res, next) => {
 
     res.set('X-Map-Snapshot', 'miss');
     res.send(buf);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ─── All-places overview ─────────────────────────────────────────
+//
+// Aggregates every geocoded place across the user's Page.places[]
+// arrays into one deduped list — feeds the /map route's multi-pin
+// view. Rounded coords (3 d.p., ~110 m) collapse near-duplicates
+// from different pages so two emails about "the same" coffee shop
+// share one pin.
+
+mapsRouter.get('/places', async (req, res, next) => {
+  try {
+    const userId = new Types.ObjectId(userIdOf(req));
+    // Pull every page that has at least one geocoded place. We
+    // project just `places` to keep the working set small —
+    // no contentMd / embedding.
+    const pages = await Page.find({
+      userId,
+      'places.lat': { $ne: null },
+    })
+      .select('_id slug title places updatedAt')
+      .sort({ updatedAt: -1 })
+      .lean();
+
+    type PlaceEntry = {
+      normKey: string;
+      name: string;
+      displayName: string | null;
+      lat: number;
+      lon: number;
+      pageCount: number;
+      pages: { slug: string; title: string }[];
+    };
+    const out = new Map<string, PlaceEntry>();
+    for (const p of pages) {
+      const places = (p.places ?? []) as Array<{
+        name?: string;
+        normKey?: string;
+        lat?: number | null;
+        lon?: number | null;
+        displayName?: string | null;
+        failed?: boolean;
+      }>;
+      for (const place of places) {
+        if (place.failed) continue;
+        if (place.lat == null || place.lon == null) continue;
+        if (!place.normKey) continue;
+        // 3-d.p. rounding to dedupe slight jitter from different
+        // geocode batches. We key on normKey too so two places
+        // that happen to share a coordinate (same building) but
+        // different names stay distinct.
+        const lat = Math.round(place.lat * 1000) / 1000;
+        const lon = Math.round(place.lon * 1000) / 1000;
+        const key = `${place.normKey}__${lat},${lon}`;
+        let entry = out.get(key);
+        if (!entry) {
+          entry = {
+            normKey: place.normKey,
+            name: place.name ?? place.normKey,
+            displayName: place.displayName ?? null,
+            lat,
+            lon,
+            pageCount: 0,
+            pages: [],
+          };
+          out.set(key, entry);
+        }
+        entry.pageCount += 1;
+        if (entry.pages.length < 5) {
+          entry.pages.push({ slug: p.slug, title: p.title });
+        }
+      }
+    }
+    const list = [...out.values()].sort(
+      (a, b) => b.pageCount - a.pageCount || a.name.localeCompare(b.name),
+    );
+    res.json({ places: list });
   } catch (err) {
     next(err);
   }

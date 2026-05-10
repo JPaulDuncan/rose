@@ -22,6 +22,7 @@ import {
   Loader2,
   CloudSun,
   MoonStar,
+  MapPin as MapPinIcon,
   Package,
   Tag,
   Newspaper,
@@ -59,6 +60,7 @@ const SECONDARY_NAV: NavItem[] = [
   { to: '/watches', label: 'Topic Watches', icon: Newspaper, key: 'g v' },
   { to: '/weather', label: 'Weather', icon: CloudSun, key: 'g w' },
   { to: '/moon', label: 'Moon Phase', icon: MoonStar, key: 'g m' },
+  { to: '/map', label: 'Map', icon: MapPinIcon, key: 'g e' },
   // Plan 12 (R6) — single landing page that surfaces totals across
   // quarantine + spam + promotions. The dedicated routes still exist
   // for bulk actions (and keep their hotkeys), but the user has one
@@ -111,6 +113,7 @@ export function Shell({ children }: { children: ReactNode }) {
     'g v': () => navigate('/watches'),
     'g w': () => navigate('/weather'),
     'g m': () => navigate('/moon'),
+    'g e': () => navigate('/map'),
     'g q': () => navigate('/quarantine'),
     'g p': () => navigate('/promotions'),
     'g s': () => navigate('/settings'),
