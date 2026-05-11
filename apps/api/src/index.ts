@@ -58,6 +58,7 @@ import { daydreamRouter } from './routes/daydream.js';
 import { libraryRouter } from './routes/library.js';
 import { mapsRouter } from './routes/maps.js';
 import { reportsRouter } from './routes/reports.js';
+import { productsRouter } from './routes/products.js';
 import { errorHandler } from './middleware/error.js';
 import { requireAuth } from './middleware/auth.js';
 import { requireAdmin } from './middleware/admin.js';
@@ -145,6 +146,7 @@ export async function createServer(): Promise<Express> {
   app.use('/api/library', requireAuth, libraryRouter);
   app.use('/api/maps', requireAuth, mapsRouter);
   app.use('/api/reports', requireAuth, reportsRouter);
+  app.use('/api/products', requireAuth, productsRouter);
   // Streaming pull auth via query param; mount before the protected models router.
   app.use('/api/models', modelsStreamRouter);
   app.use('/api/models', requireAuth, requireAdmin, modelsRouter);

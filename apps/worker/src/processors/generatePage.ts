@@ -53,6 +53,7 @@ import { emitRecipeEvent } from '../lib/recipeEmit.js';
 import { describePageImages } from '../services/describeImages.js';
 import { extractPlacesFromPage, hashContent } from '../services/extractPlaces.js';
 import { runPostWriteEntityExtraction } from '../services/extractEntities.js';
+import { runPostWriteReceiptExtraction } from '../services/extractReceipt.js';
 import { geocode, normalizePlaceKey } from '../lib/geocode.js';
 import { canonicalizeTags } from '../services/tagCanonicalize.js';
 import { findMergeSuggestions } from '../services/mergeDetect.js';
@@ -394,6 +395,9 @@ async function runEntityExtraction(
   page: PageDoc,
 ): Promise<void> {
   await runPostWriteEntityExtraction(userId, page, hashContent(page.contentMd ?? ''));
+  // Receipt → product wiki. Best-effort, gated by tag — non-receipt
+  // pages skip the LLM call entirely inside the runner.
+  await runPostWriteReceiptExtraction(userId, page);
 }
 
 /**

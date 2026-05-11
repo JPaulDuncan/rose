@@ -122,3 +122,50 @@ export const TagCanonicalization = z.object({
     .max(40),
 });
 export type TagCanonicalization = z.infer<typeof TagCanonicalization>;
+
+/**
+ * LLM-extracted structured receipt data. Drives the per-user
+ * product wiki — every line item produces a global Product row +
+ * a per-user ProductPurchase row. The merchant + totals are
+ * stored on the purchase rows; the product row carries the
+ * canonical product info shared across users.
+ *
+ * Numeric fields are parsed as numbers (the prompt asks for raw
+ * decimals; the worker coerces strings just in case). Currency is
+ * ISO 4217 uppercase. The product `category` is a coarse bucket
+ * used by the spending-dashboard rollups.
+ */
+export const ReceiptExtraction = z.object({
+  merchant: z.string().trim().max(200).nullable().default(null),
+  purchasedAt: z.string().trim().max(40).nullable().default(null),
+  currency: z.string().trim().max(8).nullable().default(null),
+  totalAmount: z.number().nullable().default(null),
+  products: z
+    .array(
+      z.object({
+        name: z.string().trim().min(1).max(200),
+        modelNumber: z.string().trim().max(80).nullable().default(null),
+        manufacturer: z.string().trim().max(120).nullable().default(null),
+        category: z
+          .enum([
+            'food',
+            'electronics',
+            'clothing',
+            'home',
+            'media',
+            'service',
+            'travel',
+            'health',
+            'office',
+            'other',
+          ])
+          .nullable()
+          .default(null),
+        amount: z.number().nullable().default(null),
+        quantity: z.number().int().min(1).max(10_000).default(1),
+      }),
+    )
+    .max(30)
+    .default([]),
+});
+export type ReceiptExtraction = z.infer<typeof ReceiptExtraction>;

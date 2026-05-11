@@ -92,6 +92,10 @@ export { Organization } from './models/Organization.js';
 export type { OrganizationDoc } from './models/Organization.js';
 export { BugReport } from './models/BugReport.js';
 export type { BugReportDoc } from './models/BugReport.js';
+export { Product } from './models/Product.js';
+export type { ProductDoc } from './models/Product.js';
+export { ProductPurchase } from './models/ProductPurchase.js';
+export type { ProductPurchaseDoc } from './models/ProductPurchase.js';
 export { uniqueSlug } from './util/uniqueSlug.js';
 export {
   applyRetentionForUser,

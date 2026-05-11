@@ -25,6 +25,7 @@ import {
   MoonStar,
   MapPin as MapPinIcon,
   Package,
+  ShoppingBag,
   Tag,
   Newspaper,
   Keyboard,
@@ -58,6 +59,7 @@ const PRIMARY_NAV: NavItem[] = [
 const SECONDARY_NAV: NavItem[] = [
   { to: '/library', label: 'Library', icon: BookOpen, key: 'g l' },
   { to: '/shipments', label: 'Shipment Statuses', icon: Package, key: 'g k' },
+  { to: '/products', label: 'Products', icon: ShoppingBag, key: 'g u' },
   { to: '/promo-codes', label: 'Promotional Codes', icon: Tag, key: 'g d' },
   { to: '/watches', label: 'Topic Watches', icon: Newspaper, key: 'g v' },
   { to: '/weather', label: 'Weather', icon: CloudSun, key: 'g w' },
@@ -112,6 +114,7 @@ export function Shell({ children }: { children: ReactNode }) {
     'g x': () => navigate('/codex?tab=categories'),
     'g l': () => navigate('/library'),
     'g k': () => navigate('/shipments'),
+    'g u': () => navigate('/products'),
     'g d': () => navigate('/promo-codes'),
     'g v': () => navigate('/watches'),
     'g w': () => navigate('/weather'),
