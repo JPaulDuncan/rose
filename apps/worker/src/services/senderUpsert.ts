@@ -11,6 +11,7 @@ import {
 import { senderDomainTag } from '@rose/email-parser';
 import { redis } from '../lib/redis.js';
 import { logger } from '../lib/logger.js';
+import { enrichOrganizationWikidata } from './wikidataResolver.js';
 
 // One queue handle per process. The summarize-sender worker that
 // consumes these is started by the worker bootstrap.
@@ -269,6 +270,10 @@ export async function upsertSendersFromPage(
           },
           { upsert: true },
         );
+        // Ontology — best-effort Wikidata Q-ID resolution. Fire and
+        // forget so a slow/down upstream doesn't delay page write.
+        // Throttled to 90 days per row inside the resolver.
+        void enrichOrganizationWikidata(b.brandKey).catch(() => null);
       } catch (err) {
         logger.debug(
           { err, brandKey: b.brandKey },

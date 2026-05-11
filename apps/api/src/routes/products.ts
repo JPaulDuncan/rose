@@ -201,6 +201,9 @@ productsRouter.get('/:slug', async (req, res) => {
       category: product.category,
       summary: product.summary,
       imageUrl: product.imageUrl,
+      wikidataId: (product.wikidataId as string | null | undefined) ?? null,
+      wikidataConfidence:
+        (product.wikidataConfidence as number | undefined) ?? 0,
     },
     summary: {
       totalAmount: total,

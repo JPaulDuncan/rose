@@ -10,6 +10,7 @@ import { SYSTEM_PROMPT_BASE, extractJson } from '@rose/llm';
 import { senderDomainTag } from '@rose/email-parser';
 import { resolveProviderForUser } from '../lib/providers.js';
 import { logger } from '../lib/logger.js';
+import { enrichProductWikidata } from './wikidataResolver.js';
 
 /**
  * Pages that should run through the receipt extractor. Heuristic
@@ -128,6 +129,9 @@ async function upsertProduct(
     { $setOnInsert: setOnInsert },
     { upsert: true, new: true },
   );
+  // Ontology — best-effort Wikidata Q-ID resolution. Fire and
+  // forget; the resolver throttles per row (90-day refresh).
+  void enrichProductWikidata(slugKey).catch(() => null);
   return row?._id ?? null;
 }
 

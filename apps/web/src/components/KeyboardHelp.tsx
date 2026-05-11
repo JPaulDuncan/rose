@@ -38,6 +38,7 @@ const KEYBOARD_SHORTCUTS: Shortcut[] = [
   { keys: 'g s', label: 'Settings', group: 'navigation' },
   { keys: 'g e', label: 'Map', group: 'navigation' },
   { keys: 'g u', label: 'Products', group: 'navigation' },
+  { keys: 'g f', label: 'Subscriptions', group: 'navigation' },
   { keys: 'g z', label: 'Magazine layout', group: 'navigation' },
   { keys: 'g j', label: 'Triage queue', group: 'navigation' },
   { keys: 'g r', label: 'Report a bug / feature', group: 'misc' },

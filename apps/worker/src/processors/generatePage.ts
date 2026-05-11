@@ -54,6 +54,8 @@ import { describePageImages } from '../services/describeImages.js';
 import { extractPlacesFromPage, hashContent } from '../services/extractPlaces.js';
 import { runPostWriteEntityExtraction } from '../services/extractEntities.js';
 import { runPostWriteReceiptExtraction } from '../services/extractReceipt.js';
+import { runPostWriteRelationExtraction } from '../services/extractRelations.js';
+import { runPostWriteSubscriptionExtraction } from '../services/extractSubscription.js';
 import { geocode, normalizePlaceKey } from '../lib/geocode.js';
 import { canonicalizeTags } from '../services/tagCanonicalize.js';
 import { findMergeSuggestions } from '../services/mergeDetect.js';
@@ -398,6 +400,11 @@ async function runEntityExtraction(
   // Receipt → product wiki. Best-effort, gated by tag — non-receipt
   // pages skip the LLM call entirely inside the runner.
   await runPostWriteReceiptExtraction(userId, page);
+  // Typed-relation extraction. Independent hash gate so it can
+  // skip without affecting the other extractors.
+  await runPostWriteRelationExtraction(userId, page);
+  // Subscription extraction — tag/keyword-gated like receipts.
+  await runPostWriteSubscriptionExtraction(userId, page);
 }
 
 /**

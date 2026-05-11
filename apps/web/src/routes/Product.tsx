@@ -14,6 +14,8 @@ type ProductDetail = {
     category: string | null;
     summary: string;
     imageUrl: string | null;
+    wikidataId: string | null;
+    wikidataConfidence: number;
   };
   summary: {
     totalAmount: number;
@@ -133,6 +135,22 @@ export default function ProductPage() {
             {product.modelNumber ? ` · ${product.modelNumber}` : ''}
             {product.category ? ` · ${product.category}` : ''}
           </p>
+          {product.wikidataId && (
+            <p className="mt-1 text-xs">
+              <a
+                href={`https://www.wikidata.org/wiki/${product.wikidataId}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 rounded-full bg-ink-100 px-2 py-0.5 text-[11px] text-ink-700 hover:bg-ink-200 dark:bg-ink-800 dark:text-ink-200 dark:hover:bg-ink-700"
+                title={`Wikidata canonical entry · resolver confidence ${Math.round((product.wikidataConfidence ?? 0) * 100)}%`}
+              >
+                Wikidata: <code>{product.wikidataId}</code>
+                {(product.wikidataConfidence ?? 0) < 0.9 && (
+                  <span className="text-[10px] italic">unverified</span>
+                )}
+              </a>
+            </p>
+          )}
         </div>
       </div>
 

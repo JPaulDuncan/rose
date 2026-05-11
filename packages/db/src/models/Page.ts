@@ -337,6 +337,12 @@ const pageSchema = new Schema(
     /** Content-hash gate for entity extraction; same idempotent
      *  pattern as `placesExtractedFromHash`. */
     entitiesExtractedFromHash: { type: String, default: null },
+    /** Content-hash gate for typed-relation extraction. Same
+     *  idempotent pattern: the worker computes sha256(contentMd)
+     *  and skips when this field already matches. */
+    relationsExtractedFromHash: { type: String, default: null },
+    /** Content-hash gate for subscription extraction. */
+    subscriptionExtractedFromHash: { type: String, default: null },
     daydreamSubjects: {
       type: [
         new Schema(

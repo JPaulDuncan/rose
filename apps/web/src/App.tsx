@@ -26,6 +26,7 @@ const ProductPage = lazy(() => import('./routes/Product'));
 const MagazinePage = lazy(() => import('./routes/Magazine'));
 const TriagePage = lazy(() => import('./routes/Triage'));
 const LineagePage = lazy(() => import('./routes/Lineage'));
+const SubscriptionsPage = lazy(() => import('./routes/Subscriptions'));
 const CodexPage = lazy(() => import('./routes/Codex'));
 const TagPage = lazy(() => import('./routes/Tag'));
 const EntityPage = lazy(() => import('./routes/Entity'));
@@ -116,6 +117,7 @@ export default function App() {
         <Route path="/inbox" element={<Navigate to="/settings/ingest" replace />} />
         <Route path="/p/:slug" element={<PageView />} />
         <Route path="/p/:slug/lineage" element={<LineagePage />} />
+        <Route path="/subscriptions" element={<SubscriptionsPage />} />
         <Route path="/e/:id" element={<EmailView />} />
         <Route path="/t/:tag" element={<TagPage />} />
         <Route path="/n/:key" element={<EntityPage />} />
