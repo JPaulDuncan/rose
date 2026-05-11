@@ -77,6 +77,118 @@ emailsRouter.post('/by-ids', async (req, res) => {
   res.json({ emails });
 });
 
+/**
+ * Triage queue — the keyboard-driven /triage view's list source.
+ * Returns emails that still need attention: not generated, not
+ * skipped, not archived, not currently deferred. Sorted oldest
+ * first so the user works through the backlog rather than always
+ * facing the newest arrival.
+ *
+ * Defer semantics: an email with `deferredUntil` in the future
+ * is hidden until that time passes, at which point it reappears
+ * at the top of the queue.
+ */
+emailsRouter.get('/triage', async (req, res) => {
+  const userId = new Types.ObjectId(userIdOf(req));
+  const limit = Math.min(Number(req.query.limit ?? 100), 500);
+  const now = new Date();
+  const filter: Record<string, unknown> = {
+    userId,
+    ingestStatus: { $nin: ['generated', 'skipped'] },
+    archivedAt: null,
+    $or: [
+      { deferredUntil: null },
+      { deferredUntil: { $lte: now } },
+    ],
+  };
+  const emails = await Email.find(filter)
+    .sort({ date: 1, createdAt: 1 })
+    .limit(limit)
+    .select('-rawText -html -attachments')
+    .lean();
+  const total = await Email.countDocuments(filter);
+  res.json({ emails, total });
+});
+
+/**
+ * Soft-archive an email — hides it from the triage queue + the
+ * default ingest list. Idempotent. Also sets `ingestStatus` to
+ * `skipped` when the email was still pending so a downstream
+ * retry doesn't drag it back into the queue.
+ */
+emailsRouter.post('/:id/archive', async (req, res) => {
+  const userId = new Types.ObjectId(userIdOf(req));
+  if (!Types.ObjectId.isValid(req.params.id ?? '')) {
+    res.status(400).json({ error: 'invalid_request' });
+    return;
+  }
+  const r = await Email.updateOne(
+    { _id: req.params.id, userId },
+    [
+      {
+        $set: {
+          archivedAt: new Date(),
+          ingestStatus: {
+            $cond: [
+              { $in: ['$ingestStatus', ['generated', 'skipped']] },
+              '$ingestStatus',
+              'skipped',
+            ],
+          },
+        },
+      },
+    ],
+  );
+  if ((r.matchedCount ?? 0) === 0) {
+    res.status(404).json({ error: 'not_found' });
+    return;
+  }
+  res.json({ ok: true });
+});
+
+/** Clear the archive flag. Restores the row into the active list. */
+emailsRouter.post('/:id/unarchive', async (req, res) => {
+  const userId = new Types.ObjectId(userIdOf(req));
+  if (!Types.ObjectId.isValid(req.params.id ?? '')) {
+    res.status(400).json({ error: 'invalid_request' });
+    return;
+  }
+  await Email.updateOne(
+    { _id: req.params.id, userId },
+    { $set: { archivedAt: null } },
+  );
+  res.json({ ok: true });
+});
+
+/**
+ * Defer an email out of the triage queue for N hours. Body:
+ *   { hours?: number }   default 24
+ * Capped at 30 days so a fat-fingered defer doesn't lose an email
+ * forever. Pass `hours: 0` (or a negative value) to clear the
+ * defer entirely.
+ */
+emailsRouter.post('/:id/defer', async (req, res) => {
+  const userId = new Types.ObjectId(userIdOf(req));
+  if (!Types.ObjectId.isValid(req.params.id ?? '')) {
+    res.status(400).json({ error: 'invalid_request' });
+    return;
+  }
+  const hoursRaw = Number((req.body as { hours?: number } | undefined)?.hours ?? 24);
+  const hours = Number.isFinite(hoursRaw)
+    ? Math.max(-1, Math.min(30 * 24, hoursRaw))
+    : 24;
+  const deferredUntil =
+    hours <= 0 ? null : new Date(Date.now() + hours * 3600 * 1000);
+  await Email.updateOne(
+    { _id: req.params.id, userId },
+    { $set: { deferredUntil } },
+  );
+  res.json({
+    ok: true,
+    deferredUntil: deferredUntil ? deferredUntil.toISOString() : null,
+  });
+});
+
 emailsRouter.get('/:id', async (req, res) => {
   const userId = new Types.ObjectId(userIdOf(req));
   if (!Types.ObjectId.isValid(req.params.id)) {

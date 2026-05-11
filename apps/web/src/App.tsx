@@ -24,6 +24,7 @@ const MapPage = lazy(() => import('./routes/Map'));
 const ProductsPage = lazy(() => import('./routes/Products'));
 const ProductPage = lazy(() => import('./routes/Product'));
 const MagazinePage = lazy(() => import('./routes/Magazine'));
+const TriagePage = lazy(() => import('./routes/Triage'));
 const CodexPage = lazy(() => import('./routes/Codex'));
 const TagPage = lazy(() => import('./routes/Tag'));
 const EntityPage = lazy(() => import('./routes/Entity'));
@@ -124,6 +125,7 @@ export default function App() {
         <Route path="/products" element={<ProductsPage />} />
         <Route path="/products/:slug" element={<ProductPage />} />
         <Route path="/magazine" element={<MagazinePage />} />
+        <Route path="/triage" element={<TriagePage />} />
         <Route path="/codex" element={<CodexPage />} />
         {/* Old discovery surfaces folded into /codex — keep redirects so
             existing bookmarks land on the right tab. */}

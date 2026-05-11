@@ -11,6 +11,7 @@ import {
   Command,
   LogOut,
   Bug,
+  Inbox,
   BookOpen,
   ShieldAlert,
   Megaphone,
@@ -57,6 +58,7 @@ const PRIMARY_NAV: NavItem[] = [
 ];
 
 const SECONDARY_NAV: NavItem[] = [
+  { to: '/triage', label: 'Triage', icon: Inbox, key: 'g j' },
   { to: '/library', label: 'Library', icon: BookOpen, key: 'g l' },
   { to: '/shipments', label: 'Shipment Statuses', icon: Package, key: 'g k' },
   { to: '/products', label: 'Products', icon: ShoppingBag, key: 'g u' },
@@ -113,6 +115,7 @@ export function Shell({ children }: { children: ReactNode }) {
     // Old hotkeys kept as muscle-memory shortcuts to specific Codex tabs.
     'g t': () => navigate('/codex?tab=streams'),
     'g x': () => navigate('/codex?tab=categories'),
+    'g j': () => navigate('/triage'),
     'g l': () => navigate('/library'),
     'g k': () => navigate('/shipments'),
     'g u': () => navigate('/products'),

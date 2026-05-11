@@ -36,9 +36,23 @@ const KEYBOARD_SHORTCUTS: Shortcut[] = [
   { keys: 'g q', label: 'Quarantine', group: 'navigation' },
   { keys: 'g p', label: 'Promotions', group: 'navigation' },
   { keys: 'g s', label: 'Settings', group: 'navigation' },
+  { keys: 'g e', label: 'Map', group: 'navigation' },
+  { keys: 'g u', label: 'Products', group: 'navigation' },
+  { keys: 'g z', label: 'Magazine layout', group: 'navigation' },
+  { keys: 'g j', label: 'Triage queue', group: 'navigation' },
+  { keys: 'g r', label: 'Report a bug / feature', group: 'misc' },
 
   { keys: 'n', label: 'New / connect a source', group: 'actions' },
   { keys: 'Esc', label: 'Close dialog / palette', group: 'actions' },
+
+  { keys: 'j / k', label: 'Triage: next / previous email', group: 'actions' },
+  { keys: 'a', label: 'Triage: archive', group: 'actions' },
+  { keys: 's', label: 'Triage: mark sender as spam', group: 'actions' },
+  { keys: 'b', label: 'Triage: block sender', group: 'actions' },
+  { keys: 'p', label: 'Triage: page it (queue page generation)', group: 'actions' },
+  { keys: 'd / D', label: 'Triage: defer 24h / 1 week', group: 'actions' },
+  { keys: 'r', label: 'Triage: open reply composer', group: 'actions' },
+  { keys: 'o / Enter', label: 'Triage: open the email', group: 'actions' },
 ];
 
 const GROUP_TITLES: Record<Shortcut['group'], string> = {
