@@ -260,9 +260,18 @@ function Masthead({
             Today's Edition
           </div>
           <h1 className="mt-1 text-4xl font-bold tracking-tight">The Rose Digest</h1>
-          <div className="mt-1 flex items-center gap-1 text-sm text-ink-500">
-            <Calendar className="h-3.5 w-3.5" />
-            {edition.label}
+          <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-ink-500">
+            <span className="inline-flex items-center gap-1">
+              <Calendar className="h-3.5 w-3.5" />
+              {edition.label}
+            </span>
+            <Link
+              to="/magazine"
+              className="text-xs italic text-rose-600 hover:underline dark:text-rose-300"
+              title="View this edition as a print-ready magazine spread"
+            >
+              · view as magazine →
+            </Link>
           </div>
         </div>
         <div className="flex flex-wrap gap-4 text-xs text-ink-500">
