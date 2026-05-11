@@ -633,6 +633,232 @@ pagesRouter.get('/:id/related', async (req, res) => {
   });
 });
 
+/**
+ * Concept lineage — a small DAG of pages that influenced this
+ * one (upstream) and pages that descend from it (downstream).
+ *
+ * "Influence" is approximated from five signals because Rose
+ * pages don't have first-class cross-page citations:
+ *
+ *   • Outbound `/p/<slug>` links inside this page's contentMd →
+ *     upstream "cited" pages (the page explicitly references them).
+ *   • Inbound: other pages whose contentMd contains a link to
+ *     this page's slug → "cited-by".
+ *   • Overlap on Page.entities[].normKey → same subjects;
+ *     older are upstream, newer are downstream.
+ *   • Overlap on sourceEmailIds → same source mail; older
+ *     upstream, newer downstream.
+ *   • Overlap on tags/topics → weakest signal, smaller cap.
+ *
+ * Each candidate carries the reasons that surfaced it, ranked
+ * by reason count then proximity to the centre's articleDate.
+ * Lists capped so a noisy tag doesn't drown the view.
+ */
+pagesRouter.get('/:id/lineage', async (req, res) => {
+  const userId = new Types.ObjectId(userIdOf(req));
+  if (!Types.ObjectId.isValid(req.params.id ?? '')) {
+    res.status(400).json({ error: 'invalid_request', message: 'Invalid id' });
+    return;
+  }
+  const page = await Page.findOne({ _id: req.params.id, userId })
+    .select(
+      '+contentMd slug title summary articleDate entities sourceEmailIds tags topics updatedAt',
+    )
+    .lean();
+  if (!page) {
+    res.status(404).json({ error: 'not_found', message: 'Page not found' });
+    return;
+  }
+  const centerDate = new Date(
+    (page.articleDate as Date | null | undefined) ?? page.updatedAt,
+  ).getTime();
+
+  type LineageReason =
+    | 'cited'
+    | 'cited-by'
+    | 'shared-entity'
+    | 'shared-source'
+    | 'shared-tag';
+  type LineageCandidate = {
+    _id: string;
+    slug: string;
+    title: string;
+    summary: string;
+    articleDate: string | null;
+    updatedAt: string;
+    reasons: Set<LineageReason>;
+  };
+
+  const upstream = new Map<string, LineageCandidate>();
+  const downstream = new Map<string, LineageCandidate>();
+  // Capture the centre id once so the closure below isn't subject
+  // to TS's nullable-narrowing reset on the outer `page`.
+  const centerId = String(page._id);
+
+  type PageCandidate = {
+    _id: Types.ObjectId | string;
+    slug: string;
+    title: string;
+    summary?: string;
+    articleDate?: Date | string | null;
+    updatedAt: Date | string;
+  };
+  function bucketFor(p: PageCandidate): Map<string, LineageCandidate> {
+    const t = new Date(
+      (p.articleDate as Date | null | undefined) ?? p.updatedAt,
+    ).getTime();
+    return t < centerDate ? upstream : downstream;
+  }
+  function add(
+    target: Map<string, LineageCandidate>,
+    p: PageCandidate,
+    reason: LineageReason,
+  ) {
+    const id = String(p._id);
+    if (id === centerId) return;
+    let row = target.get(id);
+    if (!row) {
+      row = {
+        _id: id,
+        slug: p.slug,
+        title: p.title,
+        summary: p.summary ?? '',
+        articleDate: p.articleDate
+          ? new Date(p.articleDate as Date).toISOString()
+          : null,
+        updatedAt: new Date(p.updatedAt as Date).toISOString(),
+        reasons: new Set(),
+      };
+      target.set(id, row);
+    }
+    row.reasons.add(reason);
+  }
+
+  // 1. Outbound /p/<slug> citations from this page's body.
+  const body = (page.contentMd as string | undefined) ?? '';
+  const slugMatches = new Set<string>();
+  for (const m of body.matchAll(/\/p\/([a-z0-9][a-z0-9-]*)/g)) {
+    if (m[1] && m[1] !== page.slug) slugMatches.add(m[1]);
+  }
+  if (slugMatches.size > 0) {
+    const cited = (await Page.find({
+      userId,
+      slug: { $in: [...slugMatches] },
+    })
+      .select('_id slug title summary articleDate updatedAt')
+      .lean()) as unknown as PageCandidate[];
+    for (const c of cited) add(upstream, c, 'cited');
+  }
+
+  // 2. Inbound — other pages whose body links to THIS page.
+  const inboundRegex = `/p/${escapeLineageRegex(page.slug)}(?![a-z0-9-])`;
+  const incoming = (await Page.find({
+    userId,
+    _id: { $ne: page._id },
+    contentMd: { $regex: inboundRegex, $options: 'i' },
+  })
+    .select('_id slug title summary articleDate updatedAt')
+    .limit(40)
+    .lean()) as unknown as PageCandidate[];
+  for (const c of incoming) add(bucketFor(c), c, 'cited-by');
+
+  // 3. Shared entities.
+  const entityKeys = (
+    (page.entities as Array<{ normKey: string }> | undefined) ?? []
+  )
+    .map((e) => e.normKey)
+    .filter(Boolean);
+  if (entityKeys.length > 0) {
+    const peers = (await Page.find({
+      userId,
+      _id: { $ne: page._id },
+      'entities.normKey': { $in: entityKeys },
+    })
+      .select('_id slug title summary articleDate updatedAt')
+      .limit(80)
+      .lean()) as unknown as PageCandidate[];
+    for (const c of peers) add(bucketFor(c), c, 'shared-entity');
+  }
+
+  // 4. Shared source emails.
+  const emailIds = (
+    (page.sourceEmailIds as Types.ObjectId[] | undefined) ?? []
+  ).slice(0, 50);
+  if (emailIds.length > 0) {
+    const peers = (await Page.find({
+      userId,
+      _id: { $ne: page._id },
+      sourceEmailIds: { $in: emailIds },
+    })
+      .select('_id slug title summary articleDate updatedAt')
+      .limit(40)
+      .lean()) as unknown as PageCandidate[];
+    for (const c of peers) add(bucketFor(c), c, 'shared-source');
+  }
+
+  // 5. Shared tags / topics — weakest signal, smallest cap.
+  const tagKeys = [
+    ...new Set(
+      [
+        ...((page.tags as string[] | undefined) ?? []),
+        ...((page.topics as string[] | undefined) ?? []),
+      ].filter(Boolean),
+    ),
+  ];
+  if (tagKeys.length > 0) {
+    const peers = (await Page.find({
+      userId,
+      _id: { $ne: page._id },
+      $or: [{ tags: { $in: tagKeys } }, { topics: { $in: tagKeys } }],
+    })
+      .select('_id slug title summary articleDate updatedAt')
+      .limit(40)
+      .lean()) as unknown as PageCandidate[];
+    for (const c of peers) add(bucketFor(c), c, 'shared-tag');
+  }
+
+  function shapeBucket(rows: IterableIterator<LineageCandidate>) {
+    return [...rows]
+      .map((r) => ({
+        _id: r._id,
+        slug: r.slug,
+        title: r.title,
+        summary: r.summary,
+        articleDate: r.articleDate,
+        updatedAt: r.updatedAt,
+        reasons: [...r.reasons],
+      }))
+      .sort((a, b) => {
+        if (b.reasons.length !== a.reasons.length) {
+          return b.reasons.length - a.reasons.length;
+        }
+        const ta = new Date(a.articleDate ?? a.updatedAt).getTime();
+        const tb = new Date(b.articleDate ?? b.updatedAt).getTime();
+        return Math.abs(ta - centerDate) - Math.abs(tb - centerDate);
+      })
+      .slice(0, 20);
+  }
+
+  res.json({
+    center: {
+      _id: String(page._id),
+      slug: page.slug,
+      title: page.title,
+      summary: page.summary,
+      articleDate: page.articleDate
+        ? new Date(page.articleDate as Date).toISOString()
+        : null,
+      updatedAt: new Date(page.updatedAt as Date).toISOString(),
+    },
+    upstream: shapeBucket(upstream.values()),
+    downstream: shapeBucket(downstream.values()),
+  });
+});
+
+function escapeLineageRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 pagesRouter.get('/:id/revisions', async (req, res) => {
   const userId = new Types.ObjectId(userIdOf(req));
   const page = await Page.findOne({ _id: req.params.id, userId }).select('_id').lean();

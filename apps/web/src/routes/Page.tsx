@@ -333,6 +333,15 @@ export default function PageView() {
             )}
             <BackgroundPanel pageId={page._id} />
             <RelatedArticles pageId={page._id} />
+            <div className="text-right">
+              <Link
+                to={`/p/${page.slug}/lineage`}
+                className="inline-flex items-center gap-1 text-xs text-rose-600 hover:underline dark:text-rose-300"
+                title="Concept lineage — pages that influenced this one and pages built on it"
+              >
+                Concept lineage →
+              </Link>
+            </div>
             <Provenance page={page} />
           </div>
           {/* Right column (~30%) — reference cards: topics, images, links,
