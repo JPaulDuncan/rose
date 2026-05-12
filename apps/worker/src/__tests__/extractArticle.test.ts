@@ -44,6 +44,23 @@ describe('extractArticle quickSniff', () => {
     // assertion is that the path didn't error out.
     expect(r === null || typeof r === 'object').toBe(true);
   });
+
+  it('rejects captcha / cloudflare interstitials', () => {
+    // The htmlparser2 sniff catches "just a moment..." style
+    // Cloudflare gates the old regex stub missed.
+    const html =
+      '<html><head><title>Just a moment...</title></head><body><h1>Checking your browser</h1><p>Please enable cookies and JavaScript.</p></body></html>';
+    expect(extractArticle(html)).toBeNull();
+  });
+
+  it('ignores text inside <script> when scoring page weight', () => {
+    // A page whose only "content" is a giant inline analytics blob
+    // should be rejected; the old regex sniff would have let it
+    // through because html.length is large.
+    const scriptJunk = '"a":"b","c":"d",'.repeat(500);
+    const html = `<html><head><title>Tracking</title></head><body><script>window.__data=[${scriptJunk}];</script><p>hi</p></body></html>`;
+    expect(extractArticle(html)).toBeNull();
+  });
 });
 
 describe('extractArticle output shape', () => {

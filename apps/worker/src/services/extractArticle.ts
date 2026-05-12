@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { Readability } from '@mozilla/readability';
+import { Parser } from 'htmlparser2';
 import { parseHTML } from 'linkedom';
 import TurndownService from 'turndown';
 import { logger } from '../lib/logger.js';
@@ -60,20 +61,85 @@ export type ExtractedArticle = {
 };
 
 /**
- * Cheap upfront filter — runs against the raw HTML string without
- * parsing. Catches obvious thin / error / paywall pages so we don't
- * waste a Readability pass on them. The thresholds are conservative:
- * a real article will always have many more characters than these
- * floors.
+ * Cheap upfront filter — htmlparser2 SAX pass over the raw HTML.
+ * Counts visible text (excluding script/style/noscript/template) and
+ * captures the document title so we can reject thin / login-wall /
+ * captcha / soft-404 pages without paying for the linkedom DOM build
+ * + Readability traversal that follows.
+ *
+ * Cost: a few hundred microseconds to a couple ms even for 500KB of
+ * HTML; htmlparser2 streams tokens without ever building a DOM. The
+ * Readability path it short-circuits is 30–400ms per page, so even
+ * a 70% sniff hit-rate is a substantial CPU win over the
+ * web-research fetch fan-out.
  */
+const SNIFF_SKIP_TAGS = new Set([
+  'script',
+  'style',
+  'noscript',
+  'iframe',
+  'template',
+  'svg',
+]);
+
+const WALL_PATTERN =
+  /\b(sign[\s-]*in|sign[\s-]*up|log[\s-]*in|please\s+log\s*in|access\s+denied|forbidden|not\s+found|404|enable\s+javascript|are\s+you\s+a\s+human|captcha|verify\s+you\s+are|cloudflare|just\s+a\s+moment)\b/;
+
 function quickSniff(html: string): { thin: boolean; reason?: string } {
   if (!html || html.length < 200) return { thin: true, reason: 'too-short' };
-  // Login walls / 403 pages tend to be tiny and mention sign-in
-  // prominently. We deliberately don't reject anything that just
-  // contains the word "subscribe" — that's too aggressive for sites
-  // that have a footer subscribe form on every page.
-  if (html.length < 1500 && /sign\s*in|please\s+log\s*in|access\s+denied/i.test(html)) {
-    return { thin: true, reason: 'login-wall' };
+
+  let textLen = 0;
+  let title = '';
+  let inTitle = false;
+  let skipDepth = 0;
+  let textSampleLen = 0;
+  // Cap the lowercase sample we keep for keyword matching — most
+  // login walls give away their nature in the first 4KB of body
+  // text. Without this cap a 5MB tracking-pixel page would force a
+  // multi-megabyte toLowerCase per token.
+  const SAMPLE_BUDGET = 4096;
+  const sampleParts: string[] = [];
+
+  const parser = new Parser(
+    {
+      onopentag(name) {
+        if (SNIFF_SKIP_TAGS.has(name)) skipDepth += 1;
+        else if (name === 'title') inTitle = true;
+      },
+      ontext(text) {
+        if (skipDepth > 0) return;
+        if (inTitle) {
+          title += text;
+          return;
+        }
+        const trimmed = text.trim();
+        if (!trimmed) return;
+        textLen += trimmed.length;
+        if (textSampleLen < SAMPLE_BUDGET) {
+          const slice = trimmed.slice(0, SAMPLE_BUDGET - textSampleLen).toLowerCase();
+          sampleParts.push(slice);
+          textSampleLen += slice.length;
+        }
+      },
+      onclosetag(name) {
+        if (SNIFF_SKIP_TAGS.has(name)) skipDepth = Math.max(0, skipDepth - 1);
+        else if (name === 'title') inTitle = false;
+      },
+    },
+    { decodeEntities: true, lowerCaseTags: true, lowerCaseAttributeNames: true },
+  );
+  parser.write(html);
+  parser.end();
+
+  if (textLen < 200) return { thin: true, reason: 'too-short-text' };
+
+  // Wall patterns are only treated as bail signals on thin pages —
+  // a long article that happens to contain a "sign in" footer link
+  // is fine. The 1500-char threshold matches the original stub.
+  if (textLen < 1500) {
+    const titleLower = title.toLowerCase();
+    if (WALL_PATTERN.test(titleLower)) return { thin: true, reason: 'wall-title' };
+    if (WALL_PATTERN.test(sampleParts.join(' '))) return { thin: true, reason: 'wall-body' };
   }
   return { thin: false };
 }

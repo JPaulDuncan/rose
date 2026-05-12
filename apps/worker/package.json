@@ -23,6 +23,7 @@
     "bullmq": "^5.21.2",
     "dotenv": "^16.4.5",
     "googleapis": "^144.0.0",
+    "htmlparser2": "^10.1.0",
     "imapflow": "^1.0.171",
     "ioredis": "^5.4.1",
     "linkedom": "^0.18.12",
