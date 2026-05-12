@@ -1,7 +1,7 @@
-import { Worker, type Job } from 'bullmq';
+import { Worker, Queue, type Job } from 'bullmq';
 import { Types } from 'mongoose';
-import { Page, type PageDoc } from '@rose/db';
-import { bullConnection } from '../lib/redis.js';
+import { Page, User, type PageDoc } from '@rose/db';
+import { redis, bullConnection } from '../lib/redis.js';
 import { logger } from '../lib/logger.js';
 import { runPostWriteReceiptExtraction } from '../services/extractReceipt.js';
 import { runPostWriteRelationExtraction } from '../services/extractRelations.js';
@@ -26,11 +26,27 @@ import { runPostWriteSubscriptionExtraction } from '../services/extractSubscript
  * extractor runs, and the upgraded row replaces the older /
  * less-trusted one (typically `llm` → `structured`).
  *
+ * The `daydream` kind is different: instead of running an
+ * extractor in-process, it enqueues a `kind: 'page'` job onto the
+ * shared `rose.daydream` queue so the dedicated daydream worker
+ * (with its own daily cap + opt-in gate) does the research. Jobs
+ * use a deterministic id so a re-run collapses to one outstanding
+ * job per (user, page).
+ *
  * Concurrency stays low (2) so a deployment-wide backfill doesn't
  * starve real-time generation work.
  */
 
 const QUEUE = 'rose.backfill';
+
+/**
+ * Standalone handle to the daydream queue. The backfill worker
+ * doesn't share `@rose/api`'s queue registry (separate process,
+ * separate dependency graph) so we construct our own. Same
+ * connection options as `daydreamSweeper.ts` — point them at the
+ * same Redis and BullMQ deduplicates the jobs by id.
+ */
+const daydreamQueue = new Queue('rose.daydream', { connection: redis });
 
 export type BackfillJobData = {
   kind: 'receipt' | 'subscription' | 'relations' | 'daydream' | 'all';
@@ -60,19 +76,84 @@ async function processJob(job: Job<BackfillJobData>): Promise<unknown> {
     await runPostWriteRelationExtraction(userId, page);
     ran.push('relations');
   }
-  // Daydream backfill — these notes are global, so the right
-  // hook isn't per-page but per-subject. We surface the page's
-  // existing daydreamSubjects[] and let the worker's daydream
-  // queue do the actual research. For now we just no-op when
-  // kind=daydream; a future expansion can enqueue daydream jobs
-  // directly. Keeping the code path here so the admin UI's
-  // "Daydream" button isn't dead — it just logs and exits.
+  // Daydream backfill — enqueue a per-page daydream job. The
+  // daydream worker walks the page's `daydreamSubjects[]` array,
+  // runs adapters against each, and writes notes. This mirrors what
+  // the idle-time sweeper does (`daydreamSweeper.ts`) but on demand
+  // — useful for admins after a daydream-subject-extraction change.
+  //
+  // Per-job gates we still respect even though the sweeper skipped:
+  //   • Skip if the user has daydream disabled.
+  //   • Skip if the page has no `daydreamSubjects[]` to research.
+  //   • Skip spam-flagged pages.
+  // The daydream worker itself enforces the daily call cap (Redis
+  // counter), so enqueuing more than the cap is a no-op — the
+  // worker drains the queue and only the first N actually run.
   if (kind === 'daydream' || kind === 'all') {
-    logger.debug(
-      { pageId, kind },
-      'backfill: daydream kind is a no-op today (per-subject queue handles refreshes)',
-    );
-    ran.push('daydream(noop)');
+    const user = await User.findById(userId)
+      .select('settings.daydream.enabled settings.daydream.schedule')
+      .lean();
+    const enabled =
+      (user?.settings as { daydream?: { enabled?: boolean; schedule?: string } } | undefined)
+        ?.daydream?.enabled === true;
+    const subjects = (page.daydreamSubjects as
+      | Array<{ kind: string; subjectKey: string }>
+      | undefined) ?? [];
+    const flags = (page.flags as
+      | { userMarkedSpam?: boolean; hasLikelySpam?: boolean }
+      | undefined) ?? {};
+    const isSpammy =
+      flags.userMarkedSpam === true || flags.hasLikelySpam === true;
+
+    if (!enabled) {
+      logger.debug(
+        { pageId, userId: String(userId) },
+        'backfill: daydream skipped — user disabled',
+      );
+      ran.push('daydream(skip:disabled)');
+    } else if (isSpammy) {
+      logger.debug(
+        { pageId, userId: String(userId) },
+        'backfill: daydream skipped — spam-flagged page',
+      );
+      ran.push('daydream(skip:spam)');
+    } else if (subjects.length === 0) {
+      logger.debug(
+        { pageId, userId: String(userId) },
+        'backfill: daydream skipped — no subjects on page',
+      );
+      ran.push('daydream(skip:empty)');
+    } else {
+      try {
+        await daydreamQueue.add(
+          'page',
+          {
+            kind: 'page',
+            userId: String(userId),
+            pageId: String(page._id),
+          },
+          {
+            // Collapse to one job per (userId, pageId) so a
+            // re-run backfill doesn't fan out duplicate work.
+            jobId: `backfill-daydream__${String(userId)}__${String(page._id)}`,
+            attempts: 1,
+            removeOnComplete: 200,
+            removeOnFail: 200,
+            // Same priority as the sweeper — sits behind every
+            // real-time generation job. Daydream's own
+            // concurrency=1 keeps the cap honest.
+            priority: 10,
+          },
+        );
+        ran.push('daydream(enqueued)');
+      } catch (err) {
+        logger.warn(
+          { err, pageId, userId: String(userId) },
+          'backfill: daydream enqueue failed (continuing)',
+        );
+        ran.push('daydream(error)');
+      }
+    }
   }
   return { ran };
 }
