@@ -7,6 +7,7 @@ import { runPostWriteReceiptExtraction } from '../services/extractReceipt.js';
 import { runPostWriteRelationExtraction } from '../services/extractRelations.js';
 import { runPostWriteSubscriptionExtraction } from '../services/extractSubscription.js';
 import { extractOutboundLinks } from '../services/outboundLinks.js';
+import { enrichEntityWikidata } from '../services/wikidataResolver.js';
 
 /**
  * Backfill worker. Replays the four post-write extractors against
@@ -49,6 +50,13 @@ const QUEUE = 'rose.backfill';
  */
 const daydreamQueue = new Queue('rose.daydream', { connection: redis });
 
+/**
+ * Backfill jobs come in two shapes — page-shaped (most kinds) and
+ * entity-shaped (`entity-wikidata`). The dispatcher branches on
+ * `kind`. The shape is a single optional-field union rather than a
+ * discriminated TS one because BullMQ's `add()` API is value-typed
+ * and we want one queue handle, not two.
+ */
 export type BackfillJobData = {
   kind:
     | 'receipt'
@@ -56,17 +64,42 @@ export type BackfillJobData = {
     | 'relations'
     | 'daydream'
     | 'outbound-links'
+    | 'entity-wikidata'
     | 'all';
   userId: string;
-  pageId: string;
+  pageId?: string;
+  entityKey?: string;
 };
 
 async function processJob(job: Job<BackfillJobData>): Promise<unknown> {
-  const { kind, userId: userIdStr, pageId } = job.data;
-  if (!Types.ObjectId.isValid(userIdStr) || !Types.ObjectId.isValid(pageId)) {
+  const { kind, userId: userIdStr } = job.data;
+  if (!Types.ObjectId.isValid(userIdStr)) {
     return { skipped: 'invalid-id' };
   }
   const userId = new Types.ObjectId(userIdStr);
+
+  // Entity-shaped jobs run a totally different path; handle them
+  // first and short-circuit so the page-shaped lookup below
+  // doesn't try to resolve a phantom pageId.
+  if (kind === 'entity-wikidata') {
+    const entityKey = (job.data.entityKey ?? '').trim();
+    if (!entityKey) return { skipped: 'missing-entityKey' };
+    try {
+      await enrichEntityWikidata(userId, entityKey);
+      return { ran: ['entity-wikidata'] };
+    } catch (err) {
+      logger.warn(
+        { err, entityKey },
+        'backfill: entity-wikidata enrich failed',
+      );
+      return { ran: ['entity-wikidata(error)'] };
+    }
+  }
+
+  const pageId = job.data.pageId ?? '';
+  if (!Types.ObjectId.isValid(pageId)) {
+    return { skipped: 'invalid-id' };
+  }
   const page = (await Page.findOne({ _id: pageId, userId })) as PageDoc | null;
   if (!page) return { skipped: 'page-not-found' };
 

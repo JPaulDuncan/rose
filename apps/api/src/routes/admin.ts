@@ -703,6 +703,70 @@ adminRouter.post('/backfill', requireAdmin, async (req, res, next) => {
   }
 });
 
+/**
+ * Sister endpoint to /backfill for entity-shaped jobs. Walks the
+ * Entity collection across every user, picks rows of type
+ * person/place that haven't been resolved yet (or whose last
+ * resolve attempt was over 90 days ago), and enqueues one
+ * `kind: 'entity-wikidata'` job each. The backfill processor runs
+ * the existing `enrichEntityWikidata` helper, which fans out to
+ * the SPARQL relation enricher on success.
+ *
+ * Cap of 5_000 entities per request — Wikidata is rate-limited and
+ * each resolve does a fetch on cache miss, so a single sweep
+ * trades latency for politeness.
+ */
+adminRouter.post('/backfill-entities', requireAdmin, async (_req, res, next) => {
+  try {
+    const REFRESH_MS = 90 * 24 * 3600 * 1000;
+    const cutoff = new Date(Date.now() - REFRESH_MS);
+    const rows = await Entity.find({
+      type: { $in: ['person', 'place'] },
+      $or: [
+        { wikidataId: { $in: [null, undefined] } },
+        { wikidataResolvedAt: { $in: [null, undefined] } },
+        { wikidataResolvedAt: { $lt: cutoff } },
+      ],
+    })
+      .select('_id userId key type wikidataResolvedAt')
+      .sort({ pageCount: -1, updatedAt: -1 })
+      .limit(5000)
+      .lean();
+
+    let enqueued = 0;
+    for (const r of rows) {
+      try {
+        await backfillQueue.add(
+          'backfill',
+          {
+            kind: 'entity-wikidata',
+            userId: String(r.userId),
+            entityKey: r.key as string,
+          },
+          {
+            jobId: `backfill-entity__${String(r.userId)}__${r.key}`,
+            attempts: 1,
+            removeOnComplete: 500,
+            removeOnFail: 500,
+            priority: 100,
+          },
+        );
+        enqueued += 1;
+      } catch {
+        // Same-jobId rejection = already queued; count as enqueued
+        // so the response number reflects total work in flight.
+      }
+    }
+    res.status(202).json({
+      ok: true,
+      candidateEntities: rows.length,
+      enqueued,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 adminRouter.get('/reset/scopes', requireAdmin, (_req, res) => {
   res.json({
     scopes: SCOPES.map((s) => ({

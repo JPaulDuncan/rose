@@ -447,6 +447,22 @@ function ExtractionCoverage() {
     },
     onError: (e: Error) => toast.error(e.message),
   });
+  // Entity-Wikidata is fan-out shaped differently (one job per
+  // Entity row, not per Page) so it has its own admin endpoint.
+  const backfillEntities = useMutation({
+    mutationFn: async () =>
+      api.post<{ candidateEntities: number; enqueued: number }>(
+        '/api/admin/backfill-entities',
+        {},
+      ),
+    onSuccess: (r) => {
+      toast.success(
+        `Entity Q-ID backfill: ${r.enqueued.toLocaleString()} entities enqueued`,
+      );
+      qc.invalidateQueries({ queryKey: ['admin-extraction-stats'] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
   if (!stats) {
     return (
       <div className="card text-sm text-ink-500">Loading coverage…</div>
@@ -573,6 +589,32 @@ function ExtractionCoverage() {
           );
         })}
       </ul>
+      <div className="mt-3 flex items-center gap-3 rounded-lg border border-dashed border-ink-200 px-3 py-2 text-xs dark:border-ink-800">
+        <span className="text-ink-500">
+          Person + place entities don't appear in extraction coverage —
+          they live on the per-user Entity collection. Resolve their
+          Wikidata Q-IDs (and the SPARQL relations that chain off
+          them) here.
+        </span>
+        <button
+          type="button"
+          className="ml-auto btn-secondary text-xs"
+          onClick={() => backfillEntities.mutate()}
+          disabled={backfillEntities.isPending}
+          title="Run the Wikidata resolver against every person/place Entity that hasn't been touched in 90 days"
+        >
+          Backfill entity Q-IDs
+        </button>
+        <button
+          type="button"
+          className="btn-ghost text-xs"
+          onClick={() => backfill.mutate('outbound-links')}
+          disabled={backfill.isPending}
+          title="Populate Page.outboundLinks across every page so the lineage cited-by query uses the indexed lookup"
+        >
+          Backfill outbound links
+        </button>
+      </div>
     </div>
   );
 }
