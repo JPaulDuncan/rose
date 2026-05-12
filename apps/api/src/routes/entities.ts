@@ -299,6 +299,20 @@ entitiesRouter.get('/:key', async (req, res) => {
     ...(orgFacts.aliases ?? []),
   ]);
 
+  // Wikidata Q-ID — for organizations the canonical source is the
+  // global Organization row (already surfaced in `org` below). For
+  // person + place the resolver writes directly to Entity. We
+  // surface both shapes at the top level so the web client doesn't
+  // have to special-case per-type.
+  const topLevelWikidataId =
+    inferredType === 'organization'
+      ? (orgFacts.wikidataId ?? null)
+      : ((entity?.wikidataId as string | null | undefined) ?? null);
+  const topLevelWikidataConfidence =
+    inferredType === 'organization'
+      ? (orgFacts.wikidataConfidence ?? 0)
+      : ((entity?.wikidataConfidence as number | undefined) ?? 0);
+
   res.json({
     key: canonicalKey,
     // Per-user displayName wins when the user has explicitly set
@@ -311,6 +325,8 @@ entitiesRouter.get('/:key', async (req, res) => {
     placeCoords,
     pages,
     related: relatedList,
+    wikidataId: topLevelWikidataId,
+    wikidataConfidence: topLevelWikidataConfidence,
     org: inferredType === 'organization'
       ? {
           displayName: orgFacts.displayName ?? null,

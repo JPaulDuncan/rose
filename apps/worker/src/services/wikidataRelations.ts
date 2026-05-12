@@ -1,4 +1,5 @@
-import { Organization, EntityRelation } from '@rose/db';
+import type { Types } from 'mongoose';
+import { Entity, Organization, EntityRelation } from '@rose/db';
 import { redis } from '../lib/redis.js';
 import { logger } from '../lib/logger.js';
 
@@ -57,6 +58,44 @@ const ORG_PROPERTIES: readonly OrgPropertyMapping[] = [
   { property: 'P156', predicate: 'successor-of', orgIsObject: true },
 ];
 
+/**
+ * Person + place property maps. Same shape as `ORG_PROPERTIES` but
+ * `entityIsObject` reads as "is the local entity the OBJECT side of
+ * the resulting triple?" (e.g. P19 birth place: the person is the
+ * SUBJECT, the place is the OBJECT, so `entityIsObject: false`).
+ */
+type EntityPropertyMapping = {
+  property: string;
+  predicate: string;
+  entityIsObject: boolean;
+};
+
+const PERSON_PROPERTIES: readonly EntityPropertyMapping[] = [
+  // P108 — employer.
+  { property: 'P108', predicate: 'employer', entityIsObject: false },
+  // P26 — spouse. Symmetric predicate; direction here is arbitrary.
+  { property: 'P26', predicate: 'spouse', entityIsObject: false },
+  // P19 — place of birth.
+  { property: 'P19', predicate: 'born-in', entityIsObject: false },
+  // P22 / P25 — parents. The local person is the CHILD; the
+  // Wikidata value is the parent ⇒ value is SUBJECT of "parent-of".
+  { property: 'P22', predicate: 'parent-of', entityIsObject: true },
+  { property: 'P25', predicate: 'parent-of', entityIsObject: true },
+  // P40 — child. The local person is the PARENT; value is child ⇒
+  // local IS the subject of "parent-of".
+  { property: 'P40', predicate: 'parent-of', entityIsObject: false },
+  // P3373 — sibling. Symmetric.
+  { property: 'P3373', predicate: 'sibling-of', entityIsObject: false },
+];
+
+const PLACE_PROPERTIES: readonly EntityPropertyMapping[] = [
+  // P17 — country. Place is contained within a country.
+  { property: 'P17', predicate: 'located-in', entityIsObject: false },
+  // P131 — located in the administrative entity. Granular containment
+  // (city → state, state → country). Useful for breadcrumbs.
+  { property: 'P131', predicate: 'located-in', entityIsObject: false },
+];
+
 type SparqlBinding = {
   prop: { value: string };
   value: { value: string };
@@ -112,12 +151,16 @@ async function runSparql(query: string): Promise<SparqlBinding[]> {
 }
 
 /**
- * Fetch every interesting relation for one organization's Q-ID
- * from Wikidata. The query asks for ?prop ?value ?valueLabel across
- * all our mapped properties in a single round trip — the SPARQL
- * service inlines labels via the standard `wikibase:label` service.
+ * Fetch every interesting relation for one Q-ID from Wikidata,
+ * restricted to `properties`. The query asks for ?prop ?value
+ * ?valueLabel across all listed properties in a single round trip —
+ * the SPARQL service inlines labels via the standard
+ * `wikibase:label` service.
  */
-async function fetchOrgRelations(qid: string): Promise<
+async function fetchRelationsForQid(
+  qid: string,
+  properties: readonly string[],
+): Promise<
   Array<{
     property: string;
     targetQid: string;
@@ -125,13 +168,10 @@ async function fetchOrgRelations(qid: string): Promise<
   }>
 > {
   // Build a `VALUES` clause listing every property we care about.
-  const propsClause = ORG_PROPERTIES.map((p) => `wdt:${p.property}`).join(' ');
+  const propsClause = properties.map((p) => `(wdt:${p})`).join(' ');
   const query = `
     SELECT ?prop ?value ?valueLabel WHERE {
-      VALUES (?prop) { ${propsClause
-        .split(' ')
-        .map((p) => `(${p})`)
-        .join(' ')} }
+      VALUES (?prop) { ${propsClause} }
       wd:${qid} ?prop ?value .
       SERVICE wikibase:label { bd:serviceParam wikibase:language "en". }
     }
@@ -150,17 +190,42 @@ async function fetchOrgRelations(qid: string): Promise<
   return out;
 }
 
+/** Back-compat alias retained for callers that imported the
+ *  previous name. New code calls `fetchRelationsForQid` directly. */
+async function fetchOrgRelations(qid: string) {
+  return fetchRelationsForQid(
+    qid,
+    ORG_PROPERTIES.map((p) => p.property),
+  );
+}
+
 /**
- * Resolve a Q-ID to a local kebab key when an Organization in our
- * own collection already has that wikidataId. Lets the relation row's
- * fromKey/toKey use a familiar value when possible, instead of
- * always falling back to the Q-ID itself.
+ * Resolve a Q-ID to a local kebab key when an Organization or a
+ * per-user Entity in our own collections already carries that
+ * wikidataId. Lets the relation row's fromKey/toKey use a familiar
+ * value when possible, instead of always falling back to the Q-ID
+ * itself.
+ *
+ * `userId` is optional — Entity rows are per-user. When provided,
+ * we prefer a matching Entity row in the same user's scope (so a
+ * relation between two of their entities resolves to local kebabs
+ * on both ends). When absent we still check Organization (global).
  */
-async function localKeyForQid(qid: string): Promise<string | null> {
+async function localKeyForQid(
+  qid: string,
+  userId?: Types.ObjectId,
+): Promise<string | null> {
   const org = await Organization.findOne({ wikidataId: qid })
     .select('key')
     .lean();
-  return org?.key ?? null;
+  if (org?.key) return org.key as string;
+  if (userId) {
+    const ent = await Entity.findOne({ userId, wikidataId: qid })
+      .select('key')
+      .lean();
+    if (ent?.key) return ent.key as string;
+  }
+  return null;
 }
 
 /**
@@ -267,6 +332,112 @@ export async function enrichOrganizationRelations(orgKey: string): Promise<void>
     logger.info(
       { orgKey, qid, upserted },
       'wikidata-relations: enriched',
+    );
+  }
+}
+
+/**
+ * Run the relation extractor against one per-user Entity (person /
+ * place) with a resolved Q-ID. Same upsert semantics as
+ * `enrichOrganizationRelations`: rows land in EntityRelation with
+ * `wikidataConfirmed: true`, the relation cache key gates the
+ * SPARQL fetch to one per 90 days, and dedup is by triple.
+ *
+ * Note: EntityRelation is global, but the SOURCE entity here is
+ * per-user. We still upsert the Wikidata fact globally because it
+ * is public knowledge — multiple users surfacing the same person
+ * will all see the same relation row, and `wikidataConfirmed`
+ * exempts the row from per-user evidence filtering.
+ */
+export async function enrichEntityRelations(
+  userId: Types.ObjectId,
+  entityKey: string,
+): Promise<void> {
+  const entity = await Entity.findOne({ userId, key: entityKey })
+    .select('key displayName type wikidataId wikidataConfidence')
+    .lean();
+  if (!entity?.wikidataId) return;
+  if (((entity.wikidataConfidence as number | undefined) ?? 0) < 0.7) return;
+  const type = entity.type as string | undefined;
+  const properties =
+    type === 'person'
+      ? PERSON_PROPERTIES
+      : type === 'place'
+        ? PLACE_PROPERTIES
+        : null;
+  if (!properties) return;
+  const qid = entity.wikidataId as string;
+
+  const cached = await redis.get(cacheKey(qid)).catch(() => null);
+  if (cached === 'OK') return;
+
+  let relations;
+  try {
+    relations = await fetchRelationsForQid(
+      qid,
+      properties.map((p) => p.property),
+    );
+  } catch (err) {
+    logger.debug({ err, entityKey, qid }, 'wikidata-relations: entity fetch failed');
+    return;
+  }
+  if (relations.length === 0) {
+    await redis
+      .set(cacheKey(qid), 'OK', 'EX', CACHE_TTL_SEC)
+      .catch(() => null);
+    return;
+  }
+
+  const entityDisplayName =
+    (entity.displayName as string | undefined)?.trim() || entityKey;
+
+  let upserted = 0;
+  for (const r of relations) {
+    const mapping = properties.find((p) => p.property === r.property);
+    if (!mapping) continue;
+    const targetLocalKey = await localKeyForQid(r.targetQid, userId);
+    const targetKey = targetLocalKey ?? r.targetQid;
+    const targetDisplayName = r.targetLabel || r.targetQid;
+
+    const fromKey = mapping.entityIsObject ? targetKey : entityKey;
+    const toKey = mapping.entityIsObject ? entityKey : targetKey;
+    const fromDisplayName = mapping.entityIsObject
+      ? targetDisplayName
+      : entityDisplayName;
+    const toDisplayName = mapping.entityIsObject
+      ? entityDisplayName
+      : targetDisplayName;
+
+    try {
+      await EntityRelation.updateOne(
+        { fromKey, predicate: mapping.predicate, toKey },
+        {
+          $setOnInsert: { fromKey, predicate: mapping.predicate, toKey },
+          $set: {
+            wikidataConfirmed: true,
+            fromDisplayName,
+            toDisplayName,
+          },
+          $max: { confidence: 0.95 },
+        },
+        { upsert: true },
+      );
+      upserted += 1;
+    } catch (err) {
+      logger.warn(
+        { err, fromKey, predicate: mapping.predicate, toKey },
+        'wikidata-relations: entity upsert failed (continuing)',
+      );
+    }
+  }
+
+  await redis
+    .set(cacheKey(qid), 'OK', 'EX', CACHE_TTL_SEC)
+    .catch(() => null);
+  if (upserted > 0) {
+    logger.info(
+      { entityKey, qid, upserted, type },
+      'wikidata-relations: entity enriched',
     );
   }
 }

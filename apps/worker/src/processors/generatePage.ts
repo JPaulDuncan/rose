@@ -54,6 +54,7 @@ import { emitRecipeEvent } from '../lib/recipeEmit.js';
 import { describePageImages } from '../services/describeImages.js';
 import { extractPlacesFromPage, hashContent } from '../services/extractPlaces.js';
 import { runPostWriteEntityExtraction } from '../services/extractEntities.js';
+import { enrichEntityWikidata } from '../services/wikidataResolver.js';
 import { runPostWriteReceiptExtraction } from '../services/extractReceipt.js';
 import { runPostWriteRelationExtraction } from '../services/extractRelations.js';
 import { runPostWriteSubscriptionExtraction } from '../services/extractSubscription.js';
@@ -422,6 +423,16 @@ async function runPlacesExtraction(
           },
         },
         { upsert: true },
+      );
+      // Chain into the Wikidata resolver so /n/<place> can render
+      // the Q-ID badge and the relation panel populates containment
+      // (located-in country/admin entity). Fire-and-forget — the
+      // resolver throttles to one fetch per row per 90 days.
+      void enrichEntityWikidata(userId, p.normKey).catch((err) =>
+        logger.debug(
+          { err, key: p.normKey },
+          'place → entity wikidata enrich failed',
+        ),
       );
     } catch (err) {
       logger.warn(

@@ -47,6 +47,12 @@ type EntityResponse = {
   placeCoords: { lat: number; lon: number; displayName: string | null } | null;
   pages: EntityPageDoc[];
   related: RelatedEntity[];
+  /** Top-level Wikidata Q-ID. For organizations this mirrors
+   *  `org.wikidataId` (canonical source = global Organization);
+   *  for person + place it's the resolver's verdict on the
+   *  per-user Entity row. Null when unresolved. */
+  wikidataId: string | null;
+  wikidataConfidence: number;
   /** Globally-shared facts for organization-typed entities. Null
    *  for other types or when no Organization row exists yet. */
   org: {
@@ -198,17 +204,17 @@ export default function EntityPage() {
               ))}
             </p>
           )}
-          {data.org?.wikidataId && (
+          {data.wikidataId && (
             <p className="mt-1 text-xs text-ink-500">
               <a
-                href={`https://www.wikidata.org/wiki/${data.org.wikidataId}`}
+                href={`https://www.wikidata.org/wiki/${data.wikidataId}`}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="inline-flex items-center gap-1 rounded-full bg-ink-100 px-2 py-0.5 text-[11px] text-ink-700 hover:bg-ink-200 dark:bg-ink-800 dark:text-ink-200 dark:hover:bg-ink-700"
-                title={`Wikidata canonical entry · resolver confidence ${Math.round((data.org.wikidataConfidence ?? 0) * 100)}%`}
+                title={`Wikidata canonical entry · resolver confidence ${Math.round((data.wikidataConfidence ?? 0) * 100)}%`}
               >
-                Wikidata: <code>{data.org.wikidataId}</code>
-                {(data.org.wikidataConfidence ?? 0) < 0.9 && (
+                Wikidata: <code>{data.wikidataId}</code>
+                {(data.wikidataConfidence ?? 0) < 0.9 && (
                   <span className="text-[10px] italic">unverified</span>
                 )}
               </a>

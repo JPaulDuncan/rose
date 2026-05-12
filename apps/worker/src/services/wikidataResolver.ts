@@ -1,8 +1,12 @@
 import { createHash } from 'node:crypto';
-import { Organization, Product } from '@rose/db';
+import type { Types } from 'mongoose';
+import { Entity, Organization, Product } from '@rose/db';
 import { redis } from '../lib/redis.js';
 import { logger } from '../lib/logger.js';
-import { enrichOrganizationRelations } from './wikidataRelations.js';
+import {
+  enrichOrganizationRelations,
+  enrichEntityRelations,
+} from './wikidataRelations.js';
 
 /**
  * Wikidata Q-ID resolver. Maps a free-text name + a hint of
@@ -20,9 +24,11 @@ import { enrichOrganizationRelations } from './wikidataRelations.js';
  *   0.5   non-exact label match on top hit
  *   0.0   no match
  *
- * Phase 1 only resolves Organizations + Products. Person / place
- * entities are per-user today (see EntityRelation header for the
- * planned migration); they can be added in a follow-up.
+ * Phase 1 resolved Organizations + Products only. Phase 2 (this
+ * file) added Person + Place entities — they still live in the
+ * per-user Entity collection but the Q-ID + confidence are stored
+ * on the row so /n/<key> can render the Wikidata badge and the
+ * relation enricher can fan out person/place SPARQL queries.
  */
 
 const WIKIDATA_API = 'https://www.wikidata.org/w/api.php';
@@ -44,7 +50,9 @@ type WikidataSearchResponse = {
   search?: WikidataSearchHit[];
 };
 
-function cacheKey(kind: 'organization' | 'product', name: string): string {
+export type ResolverKind = 'organization' | 'product' | 'person' | 'place';
+
+function cacheKey(kind: ResolverKind, name: string): string {
   // Hash because names can contain colons / slashes / punctuation
   // that Redis tolerates but is awkward to escape. The kind is
   // namespaced separately so an org "Apple" and a product "Apple"
@@ -65,7 +73,7 @@ type ResolveResult = {
  * the miss so the next caller doesn't re-pay.
  */
 export async function resolveWikidata(
-  kind: 'organization' | 'product',
+  kind: ResolverKind,
   name: string,
 ): Promise<ResolveResult> {
   const cleaned = name.trim();
@@ -128,9 +136,20 @@ export async function resolveWikidata(
       ? /(compan|business|corporation|nonprofit|organ[iz]ation|enterprise|firm|agency|institution|brand)/.test(
           desc,
         )
-      : /(product|appliance|device|software|application|consumer good|brand)/.test(
-          desc,
-        );
+      : kind === 'product'
+        ? /(product|appliance|device|software|application|consumer good|brand)/.test(
+            desc,
+          )
+        : kind === 'person'
+          ? // Person descriptions tend to be a role/profession ±
+            // a nationality adjective. Cast a wide net.
+            /(actor|actress|author|writer|musician|singer|composer|director|producer|painter|sculptor|architect|engineer|scientist|physicist|chemist|biologist|mathematician|economist|philosopher|politician|president|prime minister|senator|journalist|broadcaster|athlete|footballer|player|founder|ceo|entrepreneur|activist|historian|poet|novelist|critic|comedian|game developer|programmer|designer)/.test(
+              desc,
+            )
+          : // 'place' — countries, cities, regions, neighbourhoods.
+            /(city|town|country|state|province|region|capital|county|municipality|island|district|village|borough|prefecture|territory|metropolitan|neighborhood|neighbourhood|continent|community)/.test(
+              desc,
+            );
 
   let confidence = 0.5;
   if (labelExact && kindMatch) confidence = 1;
@@ -190,6 +209,57 @@ export async function enrichOrganizationWikidata(key: string): Promise<void> {
     logger.debug(
       { err, key },
       'wikidata: organization enrich failed (continuing)',
+    );
+  }
+}
+
+/**
+ * Resolve a Q-ID for a person/place Entity row and persist the
+ * verdict. Mirrors `enrichOrganizationWikidata` but writes to the
+ * per-user Entity collection (Person + place entities aren't
+ * shared globally — yet — so the Q-ID lives where the user can
+ * see it without leaking another user's archive's existence).
+ *
+ * Chains into `enrichEntityRelations` on success so the relation
+ * panel gets populated in the same idle pass.
+ */
+export async function enrichEntityWikidata(
+  userId: Types.ObjectId,
+  key: string,
+): Promise<void> {
+  if (!key) return;
+  const entity = await Entity.findOne({ userId, key })
+    .select('key displayName type wikidataId wikidataResolvedAt')
+    .lean();
+  if (!entity) return;
+  const type = entity.type as string | undefined;
+  if (type !== 'person' && type !== 'place') return;
+  const last = entity.wikidataResolvedAt
+    ? new Date(entity.wikidataResolvedAt as Date).getTime()
+    : 0;
+  if (Date.now() - last < REFRESH_MS) return;
+  const name = (entity.displayName as string | undefined)?.trim() || key;
+  try {
+    const r = await resolveWikidata(type as 'person' | 'place', name);
+    await Entity.updateOne(
+      { userId, key },
+      {
+        $set: {
+          wikidataId: r.wikidataId,
+          wikidataConfidence: r.confidence,
+          wikidataResolvedAt: new Date(),
+        },
+      },
+    );
+    if (r.wikidataId && r.confidence >= 0.7) {
+      void enrichEntityRelations(userId, key).catch((err) =>
+        logger.debug({ err, key }, 'wikidata: entity relation enrich failed'),
+      );
+    }
+  } catch (err) {
+    logger.debug(
+      { err, key },
+      'wikidata: entity enrich failed (continuing)',
     );
   }
 }

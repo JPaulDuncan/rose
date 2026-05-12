@@ -56,6 +56,19 @@ const entitySchema = new Schema(
      *  best-effort signal for sorting in the directory UI. */
     pageCount: { type: Number, default: 0 },
     lastSeenAt: { type: Date, default: () => new Date() },
+    /** Wikidata Q-ID minted by the resolver. Person + place
+     *  entities resolve against Wikidata in the same way orgs +
+     *  products do; the field is null until the next pass runs
+     *  (extractEntities) or skips (low-confidence top hit). */
+    wikidataId: { type: String, default: null, index: true, sparse: true },
+    /** Resolver verdict, 0..1. 1.0 = exact label + type match;
+     *  0.7 = label match only; 0.5 = partial match. < 0.7 is
+     *  treated as unresolved by relation enrichment. */
+    wikidataConfidence: { type: Number, default: 0 },
+    /** Last time the resolver fired for this row. Throttle gate —
+     *  90 days between attempts so a transient API failure doesn't
+     *  re-pay every page write. */
+    wikidataResolvedAt: { type: Date, default: null },
   },
   { timestamps: true },
 );

@@ -11,6 +11,7 @@ import {
 import { EntityExtraction } from '@rose/shared';
 import { renderTemplate, SYSTEM_PROMPT_BASE, extractJson } from '@rose/llm';
 import { resolveProviderForUser } from '../lib/providers.js';
+import { enrichEntityWikidata } from './wikidataResolver.js';
 import { logger } from '../lib/logger.js';
 
 export type ExtractedEntity = {
@@ -149,6 +150,21 @@ export async function extractEntitiesFromPage(
       // subsequent extractions don't clobber. Aliases use
       // $addToSet so every user contributes to the global alias
       // list without overwriting each other.
+      // Person entities: chain into the Wikidata resolver so
+      // /n/<key> can render the Q-ID badge and the relation panel
+      // can pull in canonical facts (birthplace, employer) without
+      // an LLM call. Place entities are upserted via the separate
+      // `runPlacesExtraction` path in generatePage, which does its
+      // own enrichEntityWikidata call there. Fire-and-forget —
+      // the resolver throttles to one fetch per row per 90 days.
+      if (e.type === 'person') {
+        void enrichEntityWikidata(userId, normKey).catch((err) =>
+          logger.debug(
+            { err, key: normKey, type: e.type },
+            'extract-entities: entity wikidata enrich failed',
+          ),
+        );
+      }
       if (e.type === 'organization') {
         try {
           await Organization.updateOne(
