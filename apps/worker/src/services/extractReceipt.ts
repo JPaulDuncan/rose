@@ -1,5 +1,6 @@
 import { Types } from 'mongoose';
 import {
+  Email,
   Product,
   ProductPurchase,
   normalizeTagKey,
@@ -7,9 +8,15 @@ import {
 } from '@rose/db';
 import { ReceiptExtraction } from '@rose/shared';
 import { SYSTEM_PROMPT_BASE, extractJson } from '@rose/llm';
-import { senderDomainTag } from '@rose/email-parser';
+import {
+  parseStructuredReceipt,
+  senderDomainTag,
+  tryVendorReceipt,
+  type StructuredReceipt,
+} from '@rose/email-parser';
 import { resolveProviderForUser } from '../lib/providers.js';
 import { logger } from '../lib/logger.js';
+import { enrichProductWikidata } from './wikidataResolver.js';
 
 /**
  * Pages that should run through the receipt extractor. Heuristic
@@ -128,6 +135,9 @@ async function upsertProduct(
     { $setOnInsert: setOnInsert },
     { upsert: true, new: true },
   );
+  // Ontology — best-effort Wikidata Q-ID resolution. Fire and
+  // forget; the resolver throttles per row (90-day refresh).
+  void enrichProductWikidata(slugKey).catch(() => null);
   return row?._id ?? null;
 }
 
@@ -138,6 +148,149 @@ async function upsertProduct(
  * duplicates. Best-effort: any LLM / network failure logs and
  * returns 0 so receipts don't block page persistence.
  */
+/**
+ * Try the deterministic structured-data parser against the email's
+ * HTML body. Schema.org JSON-LD or Microdata produces the same
+ * shape the LLM emits, so we can short-circuit the LLM call when
+ * the parser returns a confident result.
+ *
+ * Returns null when the source email has no HTML, has no
+ * structured data, or the parser's confidence is too low to trust
+ * over a fresh LLM pass.
+ */
+async function tryStructuredReceipt(
+  userId: Types.ObjectId,
+  page: PageDoc,
+): Promise<StructuredReceipt | null> {
+  const emailIds = (page.sourceEmailIds as Types.ObjectId[] | undefined) ?? [];
+  if (emailIds.length === 0) return null;
+  // The triggering email is most likely to carry the receipt
+  // markup; in practice receipts are single-email pages anyway.
+  const email = await Email.findOne({ userId, _id: emailIds[0] })
+    .select('+html')
+    .lean();
+  const html = (email?.html as string | undefined) ?? '';
+  if (!html) return null;
+  const r = parseStructuredReceipt(html);
+  if (!r) return null;
+  // 0.7 is the fast-path threshold — below that the structured
+  // data was too partial (e.g. Microdata products with no Order
+  // wrapper) and the LLM is likely to fill in more of the shape.
+  if (r.confidence < 0.7) return null;
+  return r;
+}
+
+/**
+ * Tier 2 fast path: per-vendor parser. Resolves the sender's
+ * brandKey from the triggering email and delegates to the vendor
+ * registry. Same html-fetch + confidence-gate shape as the
+ * structured pass; returns null when no parser matched or its
+ * confidence was below the 0.7 LLM-bypass threshold.
+ */
+async function tryVendorReceiptForPage(
+  userId: Types.ObjectId,
+  page: PageDoc,
+): Promise<StructuredReceipt | null> {
+  const emailIds = (page.sourceEmailIds as Types.ObjectId[] | undefined) ?? [];
+  if (emailIds.length === 0) return null;
+  const email = await Email.findOne({ userId, _id: emailIds[0] })
+    .select('+html')
+    .lean();
+  const html = (email?.html as string | undefined) ?? '';
+  if (!html) return null;
+  // Derive the vendor brandKey from the sender address. Same
+  // normalisation as Sender.brandKey so the registry keys match.
+  const fromAddress = (email?.from as { address?: string } | undefined)
+    ?.address;
+  const brandKey = fromAddress
+    ? senderDomainTag(fromAddress)?.toLowerCase() ?? null
+    : null;
+  if (!brandKey) return null;
+  const subject = (email?.subject as string | undefined) ?? page.title ?? '';
+  const r = tryVendorReceipt(brandKey, html, subject);
+  if (!r) return null;
+  if (r.confidence < 0.7) return null;
+  return r;
+}
+
+/**
+ * Upsert the receipt data (whether from the structured parser or
+ * the LLM) into Product + ProductPurchase. Single helper so both
+ * paths share the persistence semantics — confidence + idempotency
+ * + brand-key resolution — and we don't drift over time.
+ */
+async function upsertReceipt(
+  userId: Types.ObjectId,
+  page: PageDoc,
+  data: ReceiptExtraction,
+  source: 'structured' | 'vendor' | 'llm',
+): Promise<{ products: number; purchases: number }> {
+  const senderAddresses = (page.senderAddresses as string[] | undefined) ?? [];
+  const merchantBrandKey =
+    senderAddresses
+      .map((a) => senderDomainTag(a)?.toLowerCase() ?? null)
+      .filter((b): b is string => !!b)[0] ?? null;
+  const purchasedAt =
+    parsePurchasedAt(data.purchasedAt) ??
+    (page.articleDate ? new Date(page.articleDate as Date) : null);
+  const currency = data.currency ? data.currency.toUpperCase() : null;
+
+  let productCount = 0;
+  let purchaseCount = 0;
+  for (const item of data.products) {
+    if (!item.name?.trim()) continue;
+    const productId = await upsertProduct(userId, {
+      name: item.name,
+      modelNumber: item.modelNumber,
+      manufacturer: item.manufacturer,
+      category: item.category,
+    });
+    if (!productId) continue;
+    productCount += 1;
+
+    // Per-user purchase row. setOnInsert preserves the original
+    // capture time across re-extractions; $set keeps amount /
+    // currency / purchasedAt + extractedBy fresh in case a later
+    // pass revises them (e.g. structured-after-llm upgrade).
+    await ProductPurchase.updateOne(
+      { userId, productId, pageId: page._id as Types.ObjectId },
+      {
+        $setOnInsert: {
+          userId,
+          productId,
+          pageId: page._id,
+          emailId:
+            (page.sourceEmailIds as Types.ObjectId[] | undefined)?.[0] ??
+            null,
+        },
+        $set: {
+          merchantBrandKey,
+          amount: item.amount,
+          currency,
+          quantity: item.quantity ?? 1,
+          purchasedAt,
+          extractedBy: source,
+        },
+      },
+      { upsert: true },
+    );
+    purchaseCount += 1;
+  }
+  return { products: productCount, purchases: purchaseCount };
+}
+
+/**
+ * Run the receipt extractor for one Page. Two-tier:
+ *   1. Try the deterministic structured parser against the
+ *      source email's HTML body. Schema.org JSON-LD or Microdata
+ *      hits → skip the LLM call entirely (free + faster).
+ *   2. Fall through to the LLM extractor when no usable
+ *      structured data was found.
+ *
+ * Idempotent via the unique `(userId, productId, pageId)` index
+ * on ProductPurchase. Best-effort: any LLM / network failure
+ * logs and returns 0 so receipts don't block page persistence.
+ */
 export async function extractReceiptFromPage(
   userId: Types.ObjectId,
   page: PageDoc,
@@ -145,6 +298,59 @@ export async function extractReceiptFromPage(
   const body = (page.contentMd ?? '').trim();
   if (body.length < 40) return { products: 0, purchases: 0 };
 
+  // ── Fast path 1: structured data in the HTML (schema.org).
+  const structured = await tryStructuredReceipt(userId, page);
+  if (structured) {
+    const data: ReceiptExtraction = {
+      merchant: structured.merchant,
+      purchasedAt: structured.purchasedAt,
+      currency: structured.currency,
+      totalAmount: structured.totalAmount,
+      products: structured.products,
+    };
+    const r = await upsertReceipt(userId, page, data, 'structured');
+    if (r.purchases > 0) {
+      logger.info(
+        {
+          pageId: String(page._id),
+          ...r,
+          confidence: structured.confidence,
+        },
+        'extract-receipt: structured (no LLM)',
+      );
+    }
+    return r;
+  }
+
+  // ── Fast path 2: per-vendor parser. Schema.org caught everyone
+  // who emits it; the registry handles the long tail of vendors
+  // who don't (Amazon, Apple receipts, shipment notifications)
+  // via templated-HTML pattern matching. Confidence-gated inside
+  // the parser; null → fall through.
+  const vendor = await tryVendorReceiptForPage(userId, page);
+  if (vendor) {
+    const data: ReceiptExtraction = {
+      merchant: vendor.merchant,
+      purchasedAt: vendor.purchasedAt,
+      currency: vendor.currency,
+      totalAmount: vendor.totalAmount,
+      products: vendor.products,
+    };
+    const r = await upsertReceipt(userId, page, data, 'vendor');
+    if (r.purchases > 0) {
+      logger.info(
+        {
+          pageId: String(page._id),
+          ...r,
+          confidence: vendor.confidence,
+        },
+        'extract-receipt: vendor (no LLM)',
+      );
+    }
+    return r;
+  }
+
+  // ── Slow path: LLM extractor.
   let resolved;
   try {
     resolved = await resolveProviderForUser(userId, 'generation');
@@ -182,60 +388,7 @@ export async function extractReceiptFromPage(
     return { products: 0, purchases: 0 };
   }
 
-  // Resolve the merchant. Prefer the LLM's verbatim merchant name
-  // but fall back to the page's sender brand for the brand chip.
-  const senderAddresses = (page.senderAddresses as string[] | undefined) ?? [];
-  const merchantBrandKey =
-    senderAddresses
-      .map((a) => senderDomainTag(a)?.toLowerCase() ?? null)
-      .filter((b): b is string => !!b)[0] ?? null;
-
-  const purchasedAt =
-    parsePurchasedAt(parsed.purchasedAt) ??
-    (page.articleDate ? new Date(page.articleDate as Date) : null);
-  const currency = parsed.currency ? parsed.currency.toUpperCase() : null;
-
-  let productCount = 0;
-  let purchaseCount = 0;
-  for (const item of parsed.products) {
-    if (!item.name?.trim()) continue;
-    const productId = await upsertProduct(userId, {
-      name: item.name,
-      modelNumber: item.modelNumber,
-      manufacturer: item.manufacturer,
-      category: item.category,
-    });
-    if (!productId) continue;
-    productCount += 1;
-
-    // Per-user purchase row. setOnInsert preserves the original
-    // capture time across re-extractions; $set keeps amount /
-    // currency / purchasedAt fresh in case the LLM revises them
-    // on a regen.
-    await ProductPurchase.updateOne(
-      { userId, productId, pageId: page._id as Types.ObjectId },
-      {
-        $setOnInsert: {
-          userId,
-          productId,
-          pageId: page._id,
-          emailId:
-            (page.sourceEmailIds as Types.ObjectId[] | undefined)?.[0] ??
-            null,
-        },
-        $set: {
-          merchantBrandKey,
-          amount: item.amount,
-          currency,
-          quantity: item.quantity ?? 1,
-          purchasedAt,
-        },
-      },
-      { upsert: true },
-    );
-    purchaseCount += 1;
-  }
-  return { products: productCount, purchases: purchaseCount };
+  return upsertReceipt(userId, page, parsed, 'llm');
 }
 
 /**

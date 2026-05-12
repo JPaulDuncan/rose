@@ -19,6 +19,7 @@ import {
   OutboundMessage,
   Page,
   PageRevision,
+  ProductPurchase,
   PushSubscription,
   Rule,
   RuleAuditLog,
@@ -26,12 +27,40 @@ import {
   SenderBrand,
   ShareLink,
   Source,
+  Subscription,
   TagCanonical,
   TagDigest,
+  EntityRelation,
   User,
   UserPageState,
   WebhookSubscription,
 } from '@rose/db';
+import {
+  backfillQueue,
+  parseEmailQueue,
+  generatePageQueue,
+  embedPageQueue,
+  imapSyncQueue,
+  gmailSyncQueue,
+  rssSyncQueue,
+  websiteSyncQueue,
+  daydreamQueue,
+  topicResearchQueue,
+  postWriteHooksQueue,
+  recipesQueue,
+  briefingQueue,
+  webhookDeliverQueue,
+  sendOutboundQueue,
+  digestEmailQueue,
+  summarizeSenderQueue,
+  fetchAndParseQueue,
+  slackSyncQueue,
+  discordSyncQueue,
+  gcalSyncQueue,
+  librarySyncQueue,
+  libraryEmbedQueue,
+  tagDigestQueue,
+} from '../lib/queues.js';
 import { redis } from '../lib/redis.js';
 import { logger } from '../lib/logger.js';
 import { isAdminRequest, requireAdmin } from '../middleware/admin.js';
@@ -377,6 +406,367 @@ const SCOPE_BY_ID = new Map(SCOPES.map((s) => [s.id, s]));
  * Includes the same descriptions surfaced inline so the SPA
  * doesn't have to re-state them.
  */
+/**
+ * Extraction coverage stats. Aggregates structured-vs-LLM ratios
+ * across the four extractors that gained fast paths (receipts,
+ * subscriptions, daydream notes, entity relations) so the admin
+ * can see where the LLM is still firing and prioritise backfills.
+ *
+ * Counts are global (cross-user) because the underlying
+ * collections are global (Product / DaydreamNote / EntityRelation)
+ * and because the cost-saving question is deployment-wide rather
+ * than per-user.
+ */
+adminRouter.get('/extraction-stats', requireAdmin, async (_req, res, next) => {
+  try {
+    const [
+      purchaseTotal,
+      purchaseStructured,
+      purchaseVendor,
+      subTotal,
+      subStructured,
+      noteTotal,
+      noteWikipedia,
+      relTotal,
+      relWikidata,
+      pageTotal,
+      pagesWithRelations,
+      receiptPages,
+    ] = await Promise.all([
+      ProductPurchase.countDocuments({}),
+      ProductPurchase.countDocuments({ extractedBy: 'structured' }),
+      ProductPurchase.countDocuments({ extractedBy: 'vendor' }),
+      Subscription.countDocuments({}),
+      Subscription.countDocuments({ extractedBy: 'structured' }),
+      DaydreamNote.countDocuments({}),
+      DaydreamNote.countDocuments({ model: 'wikipedia:verbatim' }),
+      EntityRelation.countDocuments({}),
+      EntityRelation.countDocuments({ wikidataConfirmed: true }),
+      Page.countDocuments({}),
+      Page.countDocuments({ relationsExtractedFromHash: { $ne: null } }),
+      Page.countDocuments({
+        $or: [
+          { tags: { $in: ['receipt', 'receipts', 'invoice', 'invoices', 'order'] } },
+          { topics: { $in: ['receipt', 'receipts', 'invoice', 'invoices', 'order'] } },
+        ],
+      }),
+    ]);
+    function ratio(n: number, d: number): number {
+      return d > 0 ? Math.round((n / d) * 1000) / 1000 : 0;
+    }
+    res.json({
+      purchases: {
+        total: purchaseTotal,
+        structured: purchaseStructured,
+        vendor: purchaseVendor,
+        llm: purchaseTotal - purchaseStructured - purchaseVendor,
+        // Combined fast-path ratio — anything not LLM is a win.
+        // The UI splits structured / vendor into two stacked bars
+        // so the admin can see vendor-parser coverage separately.
+        structuredRatio: ratio(
+          purchaseStructured + purchaseVendor,
+          purchaseTotal,
+        ),
+        candidatePages: receiptPages,
+      },
+      subscriptions: {
+        total: subTotal,
+        structured: subStructured,
+        llm: subTotal - subStructured,
+        structuredRatio: ratio(subStructured, subTotal),
+      },
+      daydream: {
+        total: noteTotal,
+        wikipediaVerbatim: noteWikipedia,
+        llm: noteTotal - noteWikipedia,
+        verbatimRatio: ratio(noteWikipedia, noteTotal),
+      },
+      relations: {
+        total: relTotal,
+        wikidataConfirmed: relWikidata,
+        archiveOnly: relTotal - relWikidata,
+        wikidataRatio: ratio(relWikidata, relTotal),
+      },
+      pages: {
+        total: pageTotal,
+        withRelationsExtracted: pagesWithRelations,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Per-queue depth snapshot. The admin UI polls this on a 5s timer
+ * to render a small status pill ("12 jobs in flight" + colour
+ * cue). Reads job counts directly from BullMQ — cheap (Redis hash
+ * lookups), no Mongo touch.
+ *
+ * Response shape:
+ *   {
+ *     totals: { waiting, active, delayed, failed },
+ *     queues: [{ name, waiting, active, delayed, completed?, failed }, ...]
+ *   }
+ * Totals collapse the per-queue numbers into one row so the
+ * polling pill can render without iterating client-side.
+ */
+adminRouter.get('/queue-stats', requireAdmin, async (_req, res, next) => {
+  try {
+    const queueList = [
+      { name: 'parse-email', q: parseEmailQueue },
+      { name: 'generate-page', q: generatePageQueue },
+      { name: 'embed-page', q: embedPageQueue },
+      { name: 'imap-sync', q: imapSyncQueue },
+      { name: 'gmail-sync', q: gmailSyncQueue },
+      { name: 'rss-sync', q: rssSyncQueue },
+      { name: 'website-sync', q: websiteSyncQueue },
+      { name: 'daydream', q: daydreamQueue },
+      { name: 'topic-research', q: topicResearchQueue },
+      { name: 'post-write-hooks', q: postWriteHooksQueue },
+      { name: 'recipes', q: recipesQueue },
+      { name: 'backfill', q: backfillQueue },
+      { name: 'briefing', q: briefingQueue },
+      { name: 'webhook-deliver', q: webhookDeliverQueue },
+      { name: 'send-outbound', q: sendOutboundQueue },
+      { name: 'digest-email', q: digestEmailQueue },
+      { name: 'summarize-sender', q: summarizeSenderQueue },
+      { name: 'fetch-and-parse', q: fetchAndParseQueue },
+      { name: 'slack-sync', q: slackSyncQueue },
+      { name: 'discord-sync', q: discordSyncQueue },
+      { name: 'gcal-sync', q: gcalSyncQueue },
+      { name: 'library-sync', q: librarySyncQueue },
+      { name: 'library-embed', q: libraryEmbedQueue },
+      { name: 'tag-digest', q: tagDigestQueue },
+    ];
+    const rows = await Promise.all(
+      queueList.map(async ({ name, q }) => {
+        try {
+          const counts = await q.getJobCounts(
+            'waiting',
+            'active',
+            'delayed',
+            'failed',
+          );
+          return {
+            name,
+            waiting: counts.waiting ?? 0,
+            active: counts.active ?? 0,
+            delayed: counts.delayed ?? 0,
+            failed: counts.failed ?? 0,
+          };
+        } catch (err) {
+          // A single dead queue shouldn't fail the whole panel.
+          // Log + emit zeros so the UI can still render the rest.
+          logger.warn({ err, name }, 'queue-stats: getJobCounts failed');
+          return { name, waiting: 0, active: 0, delayed: 0, failed: 0 };
+        }
+      }),
+    );
+    const totals = rows.reduce(
+      (acc, r) => ({
+        waiting: acc.waiting + r.waiting,
+        active: acc.active + r.active,
+        delayed: acc.delayed + r.delayed,
+        failed: acc.failed + r.failed,
+      }),
+      { waiting: 0, active: 0, delayed: 0, failed: 0 },
+    );
+    res.json({ totals, queues: rows });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Trigger a backfill — re-run an extractor across pages it hasn't
+ * touched yet. Idempotent: every extractor short-circuits via its
+ * own content-hash gate, so re-running on already-extracted pages
+ * is a no-op. The point is to give pages from BEFORE an extractor
+ * existed a chance to upgrade.
+ *
+ * Body:
+ *   { kind: 'receipt' | 'subscription' | 'relations' | 'daydream' | 'all',
+ *     sinceDays?: number }
+ *
+ * Pages are enqueued onto the `rose.backfill` queue and processed
+ * by the dedicated worker; this endpoint returns immediately with
+ * the enqueue count so the admin can move on. Cap of 10_000 pages
+ * per request to keep one backfill from monopolising the queue.
+ */
+adminRouter.post('/backfill', requireAdmin, async (req, res, next) => {
+  try {
+    const body = (req.body ?? {}) as { kind?: string; sinceDays?: number };
+    const validKinds = new Set([
+      'receipt',
+      'subscription',
+      'relations',
+      'daydream',
+      'outbound-links',
+      'all',
+    ]);
+    if (!body.kind || !validKinds.has(body.kind)) {
+      res.status(400).json({
+        error: 'invalid_request',
+        message:
+          'kind must be one of receipt, subscription, relations, daydream, outbound-links, all',
+      });
+      return;
+    }
+    const since = body.sinceDays
+      ? new Date(
+          Date.now() -
+            Math.min(3650, Math.max(1, body.sinceDays)) *
+              24 *
+              60 *
+              60 *
+              1000,
+        )
+      : null;
+    const filter: Record<string, unknown> = {};
+    if (since) filter.updatedAt = { $gte: since };
+
+    // Narrow the candidate set per kind so we don't enqueue pages
+    // the extractor wouldn't touch anyway. Receipts + subscriptions
+    // look only at pages tagged accordingly; relations + daydream
+    // run on every page with substantive body content.
+    if (body.kind === 'receipt') {
+      filter.$or = [
+        {
+          tags: {
+            $in: ['receipt', 'receipts', 'invoice', 'invoices', 'order'],
+          },
+        },
+        {
+          topics: {
+            $in: ['receipt', 'receipts', 'invoice', 'invoices', 'order'],
+          },
+        },
+      ];
+    } else if (body.kind === 'subscription') {
+      filter.$or = [
+        {
+          tags: {
+            $in: ['subscription', 'subscriptions', 'renewal', 'membership'],
+          },
+        },
+        {
+          topics: {
+            $in: ['subscription', 'subscriptions', 'renewal', 'membership'],
+          },
+        },
+      ];
+    }
+
+    const pages = await Page.find(filter)
+      .select('_id userId')
+      .sort({ updatedAt: -1 })
+      .limit(10_000)
+      .lean();
+
+    let enqueued = 0;
+    for (const p of pages) {
+      try {
+        await backfillQueue.add(
+          'backfill',
+          {
+            kind: body.kind,
+            userId: String(p.userId),
+            pageId: String(p._id),
+          },
+          {
+            // jobId collision = collapse to one job for same
+            // (page, kind) pair so a double-click doesn't fan out.
+            jobId: `backfill__${body.kind}__${String(p._id)}`,
+            attempts: 1,
+            removeOnComplete: 500,
+            removeOnFail: 500,
+            // Backfills run BEHIND real-time work — generation
+            // jobs queue at priority 0, this at 100.
+            priority: 100,
+          },
+        );
+        enqueued += 1;
+      } catch {
+        // Same-jobId rejections are expected and counted as
+        // already-enqueued.
+      }
+    }
+    res.status(202).json({
+      ok: true,
+      kind: body.kind,
+      candidatePages: pages.length,
+      enqueued,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Sister endpoint to /backfill for entity-shaped jobs. Walks the
+ * Entity collection across every user, picks rows of type
+ * person/place that haven't been resolved yet (or whose last
+ * resolve attempt was over 90 days ago), and enqueues one
+ * `kind: 'entity-wikidata'` job each. The backfill processor runs
+ * the existing `enrichEntityWikidata` helper, which fans out to
+ * the SPARQL relation enricher on success.
+ *
+ * Cap of 5_000 entities per request — Wikidata is rate-limited and
+ * each resolve does a fetch on cache miss, so a single sweep
+ * trades latency for politeness.
+ */
+adminRouter.post('/backfill-entities', requireAdmin, async (_req, res, next) => {
+  try {
+    const REFRESH_MS = 90 * 24 * 3600 * 1000;
+    const cutoff = new Date(Date.now() - REFRESH_MS);
+    const rows = await Entity.find({
+      type: { $in: ['person', 'place'] },
+      $or: [
+        { wikidataId: { $in: [null, undefined] } },
+        { wikidataResolvedAt: { $in: [null, undefined] } },
+        { wikidataResolvedAt: { $lt: cutoff } },
+      ],
+    })
+      .select('_id userId key type wikidataResolvedAt')
+      .sort({ pageCount: -1, updatedAt: -1 })
+      .limit(5000)
+      .lean();
+
+    let enqueued = 0;
+    for (const r of rows) {
+      try {
+        await backfillQueue.add(
+          'backfill',
+          {
+            kind: 'entity-wikidata',
+            userId: String(r.userId),
+            entityKey: r.key as string,
+          },
+          {
+            jobId: `backfill-entity__${String(r.userId)}__${r.key}`,
+            attempts: 1,
+            removeOnComplete: 500,
+            removeOnFail: 500,
+            priority: 100,
+          },
+        );
+        enqueued += 1;
+      } catch {
+        // Same-jobId rejection = already queued; count as enqueued
+        // so the response number reflects total work in flight.
+      }
+    }
+    res.status(202).json({
+      ok: true,
+      candidateEntities: rows.length,
+      enqueued,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 adminRouter.get('/reset/scopes', requireAdmin, (_req, res) => {
   res.json({
     scopes: SCOPES.map((s) => ({

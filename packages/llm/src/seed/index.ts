@@ -90,7 +90,7 @@ EXISTING CATEGORIES (name<TAB>page-count, one per line, may be empty):
 ADDITIONAL INSTRUCTIONS FROM USER:
 {{extra_instructions}}
 
-EMAIL THREADS (each thread is presented oldest-first; the LAST message in each thread is the most recent and should anchor your lede):
+EMAIL THREADS (each thread is presented oldest-first; the LAST message in each thread is the most recent and should anchor your lede). When a message has META-TITLE / META-DESCRIPTION / ARTICLE-HEADLINE / ARTICLE-DESCRIPTION lines, those came verbatim from the email's own HTML metadata — strong priors for the page title and summary. Prefer reusing them verbatim or with minimal edits over rewriting from scratch; only deviate when they're misleading or off-topic for the page as a whole:
 {{labeled_threads}}
 
 Respond with JSON only, matching exactly:
@@ -193,7 +193,7 @@ CURRENT PAGE
 {{existing_content}}
 """
 
-NEW EMAILS (each labeled e<n>; these are the ONLY new sources you may cite):
+NEW EMAILS (each labeled e<n>; these are the ONLY new sources you may cite). When a message has META-TITLE / META-DESCRIPTION / ARTICLE-HEADLINE / ARTICLE-DESCRIPTION lines, they came verbatim from the email's own HTML metadata — use them as priors for any title/summary updates you make:
 {{new_labeled_threads}}
 
 MERGE RULES — these are the differences from a fresh-write

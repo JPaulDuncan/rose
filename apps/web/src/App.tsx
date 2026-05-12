@@ -24,6 +24,9 @@ const MapPage = lazy(() => import('./routes/Map'));
 const ProductsPage = lazy(() => import('./routes/Products'));
 const ProductPage = lazy(() => import('./routes/Product'));
 const MagazinePage = lazy(() => import('./routes/Magazine'));
+const TriagePage = lazy(() => import('./routes/Triage'));
+const LineagePage = lazy(() => import('./routes/Lineage'));
+const SubscriptionsPage = lazy(() => import('./routes/Subscriptions'));
 const CodexPage = lazy(() => import('./routes/Codex'));
 const TagPage = lazy(() => import('./routes/Tag'));
 const EntityPage = lazy(() => import('./routes/Entity'));
@@ -113,6 +116,8 @@ export default function App() {
             by redirecting to the new home under Settings → Ingest. */}
         <Route path="/inbox" element={<Navigate to="/settings/ingest" replace />} />
         <Route path="/p/:slug" element={<PageView />} />
+        <Route path="/p/:slug/lineage" element={<LineagePage />} />
+        <Route path="/subscriptions" element={<SubscriptionsPage />} />
         <Route path="/e/:id" element={<EmailView />} />
         <Route path="/t/:tag" element={<TagPage />} />
         <Route path="/n/:key" element={<EntityPage />} />
@@ -124,6 +129,7 @@ export default function App() {
         <Route path="/products" element={<ProductsPage />} />
         <Route path="/products/:slug" element={<ProductPage />} />
         <Route path="/magazine" element={<MagazinePage />} />
+        <Route path="/triage" element={<TriagePage />} />
         <Route path="/codex" element={<CodexPage />} />
         {/* Old discovery surfaces folded into /codex — keep redirects so
             existing bookmarks land on the right tab. */}

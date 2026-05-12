@@ -96,6 +96,10 @@ export { Product } from './models/Product.js';
 export type { ProductDoc } from './models/Product.js';
 export { ProductPurchase } from './models/ProductPurchase.js';
 export type { ProductPurchaseDoc } from './models/ProductPurchase.js';
+export { EntityRelation } from './models/EntityRelation.js';
+export type { EntityRelationDoc } from './models/EntityRelation.js';
+export { Subscription } from './models/Subscription.js';
+export type { SubscriptionDoc } from './models/Subscription.js';
 export { uniqueSlug } from './util/uniqueSlug.js';
 export {
   applyRetentionForUser,

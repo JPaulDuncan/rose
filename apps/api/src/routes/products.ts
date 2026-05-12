@@ -201,6 +201,9 @@ productsRouter.get('/:slug', async (req, res) => {
       category: product.category,
       summary: product.summary,
       imageUrl: product.imageUrl,
+      wikidataId: (product.wikidataId as string | null | undefined) ?? null,
+      wikidataConfidence:
+        (product.wikidataConfidence as number | undefined) ?? 0,
     },
     summary: {
       totalAmount: total,
@@ -229,6 +232,13 @@ productsRouter.get('/:slug', async (req, res) => {
         purchasedAt: p.purchasedAt
           ? new Date(p.purchasedAt as Date).toISOString()
           : null,
+        // 'structured' = read straight from the email's schema.org
+        // JSON-LD/Microdata; 'llm' = inferred from prose. The UI
+        // surfaces this so the user knows which rows have higher
+        // fidelity. Defaults to 'llm' for rows extracted before
+        // the structured fast-path landed.
+        extractedBy:
+          (p.extractedBy as 'structured' | 'llm' | undefined) ?? 'llm',
         merchant: brand
           ? { brandKey: brand.brandKey, name: brand.name, logoUrl: brand.logoUrl ?? null }
           : null,

@@ -184,6 +184,12 @@ const emailSchema = new Schema(
      *  by default (data is preserved and reachable via the archive view).
      *  Set by the email.archive recipe action and the manual archive UI. */
     archivedAt: { type: Date, default: null, index: true },
+    /** Triage defer marker — keyboard-driven triage lets the user
+     *  snooze an email for N hours. List views in the triage queue
+     *  filter out rows where `deferredUntil > now`; once the
+     *  timestamp passes the row reappears. Manual unarchive / set
+     *  to null clears the defer. */
+    deferredUntil: { type: Date, default: null, index: true },
   },
   { timestamps: true },
 );

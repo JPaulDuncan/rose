@@ -67,6 +67,21 @@ const organizationSchema = new Schema(
     forgottenBriefBy: { type: [Schema.Types.ObjectId], default: [], index: true },
     /** Audit-only: first user whose pages surfaced this org. */
     firstSeenBy: { type: Schema.Types.ObjectId, ref: 'User', default: null },
+    /**
+     * Wikidata Q-ID, when the ontology resolver has pinned this
+     * org to a canonical external entry. Lets cross-user
+     * "Anthropic" / "Anthropic, PBC" / "anthropic-ai" collapse
+     * onto one knowledge-graph node, lets Daydream hydrate from
+     * Wikidata's structured data, and gives federated page-beam
+     * a verifiable identity to ship with. Null = unresolved.
+     */
+    wikidataId: { type: String, default: null, index: true, maxlength: 16 },
+    /** Resolver's confidence (0..1). Below ~0.6 means the resolver
+     *  found a candidate but couldn't disambiguate strongly. */
+    wikidataConfidence: { type: Number, default: 0 },
+    /** When the resolver last touched this row. Throttles
+     *  re-resolution; resolved rows re-check every 90 days. */
+    wikidataResolvedAt: { type: Date, default: null },
   },
   { timestamps: true },
 );

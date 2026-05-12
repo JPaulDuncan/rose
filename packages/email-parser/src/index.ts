@@ -3,6 +3,24 @@ import { createHash } from 'node:crypto';
 
 export { formatImapError } from './imapErrors.js';
 export {
+  extractJsonLd,
+  parseStructuredReceipt,
+  parseStructuredSubscription,
+  extractHtmlMetadata,
+  type StructuredReceipt,
+  type StructuredSubscription,
+  type StructuredProduct,
+  type HtmlMetadata,
+} from './structured.js';
+export {
+  tryVendorReceipt,
+  vendorParserNames,
+  parseAmazonReceipt,
+  parseAppleReceipt,
+  parseUspsShipment,
+  type VendorParser,
+} from './vendors/index.js';
+export {
   extractEmailMetadata,
   senderDomainTag,
   compileSenderBlocklist,

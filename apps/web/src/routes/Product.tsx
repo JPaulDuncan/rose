@@ -14,6 +14,8 @@ type ProductDetail = {
     category: string | null;
     summary: string;
     imageUrl: string | null;
+    wikidataId: string | null;
+    wikidataConfidence: number;
   };
   summary: {
     totalAmount: number;
@@ -29,6 +31,11 @@ type ProductDetail = {
     currency: string | null;
     quantity: number;
     purchasedAt: string | null;
+    /** Where this purchase row came from:
+     *    'structured' = schema.org JSON-LD in the email HTML
+     *    'vendor'     = per-vendor regex parser (Amazon / Apple / USPS / …)
+     *    'llm'        = LLM extractor over prose (fallback) */
+    extractedBy: 'structured' | 'vendor' | 'llm';
     merchant: { brandKey: string; name: string; logoUrl: string | null } | null;
     page: { slug: string; title: string } | null;
   }[];
@@ -133,6 +140,22 @@ export default function ProductPage() {
             {product.modelNumber ? ` · ${product.modelNumber}` : ''}
             {product.category ? ` · ${product.category}` : ''}
           </p>
+          {product.wikidataId && (
+            <p className="mt-1 text-xs">
+              <a
+                href={`https://www.wikidata.org/wiki/${product.wikidataId}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 rounded-full bg-ink-100 px-2 py-0.5 text-[11px] text-ink-700 hover:bg-ink-200 dark:bg-ink-800 dark:text-ink-200 dark:hover:bg-ink-700"
+                title={`Wikidata canonical entry · resolver confidence ${Math.round((product.wikidataConfidence ?? 0) * 100)}%`}
+              >
+                Wikidata: <code>{product.wikidataId}</code>
+                {(product.wikidataConfidence ?? 0) < 0.9 && (
+                  <span className="text-[10px] italic">unverified</span>
+                )}
+              </a>
+            </p>
+          )}
         </div>
       </div>
 
@@ -183,21 +206,48 @@ export default function ProductPage() {
                         </Link>
                       )}
                     </div>
-                    <div className="mt-0.5 text-xs text-ink-500">
-                      {p.purchasedAt
-                        ? new Date(p.purchasedAt).toLocaleDateString()
-                        : '—'}
+                    <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-ink-500">
+                      <span>
+                        {p.purchasedAt
+                          ? new Date(p.purchasedAt).toLocaleDateString()
+                          : '—'}
+                      </span>
                       {p.page && (
-                        <>
-                          {' · '}
-                          <Link
-                            to={`/p/${p.page.slug}`}
-                            className="hover:underline"
-                          >
-                            see receipt
-                          </Link>
-                        </>
+                        <Link
+                          to={`/p/${p.page.slug}`}
+                          className="hover:underline"
+                        >
+                          see receipt
+                        </Link>
                       )}
+                      {(() => {
+                        const isFast =
+                          p.extractedBy === 'structured' ||
+                          p.extractedBy === 'vendor';
+                        return (
+                          <span
+                            className={
+                              'rounded-full px-1.5 py-0.5 text-[10px] uppercase tracking-widest ' +
+                              (isFast
+                                ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200'
+                                : 'bg-ink-100 text-ink-600 dark:bg-ink-800 dark:text-ink-300')
+                            }
+                            title={
+                              p.extractedBy === 'structured'
+                                ? 'Read directly from the email’s schema.org markup — zero LLM cost.'
+                                : p.extractedBy === 'vendor'
+                                  ? 'Read from a per-vendor template (Amazon / Apple / USPS / …) — zero LLM cost.'
+                                  : 'Inferred by the LLM from the email’s prose.'
+                            }
+                          >
+                            {p.extractedBy === 'structured'
+                              ? 'schema.org'
+                              : p.extractedBy === 'vendor'
+                                ? 'vendor'
+                                : 'llm'}
+                          </span>
+                        );
+                      })()}
                     </div>
                   </div>
                   <button

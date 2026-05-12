@@ -58,6 +58,20 @@ const TRIGGERS: {
       'Fires on a cron schedule. Useful for daily / weekly recipes that run regardless of mail.',
     defaultConfig: { cron: '0 8 * * *', timezone: 'UTC' },
   },
+  {
+    kind: 'subscription.created',
+    label: 'When a new subscription is detected',
+    description:
+      'Fires the first time the extractor sees a recurring charge for a service.',
+    defaultConfig: {},
+  },
+  {
+    kind: 'subscription.renewed',
+    label: 'When a subscription renews',
+    description:
+      'Fires when an existing subscription receives fresh evidence (renewal receipt).',
+    defaultConfig: {},
+  },
 ];
 
 const CONDITIONS: {

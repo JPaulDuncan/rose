@@ -32,6 +32,7 @@ import {
 import { startLibraryEmbedWorker } from './processors/libraryEmbed.js';
 import { startTagDigestWorker, startTagDigestSweeper } from './processors/tagDigest.js';
 import { startPostWriteHooksWorker } from './processors/postWriteHooks.js';
+import { startBackfillWorker } from './processors/backfill.js';
 import { startRecipesWorker } from './processors/recipes.js';
 import { startCleanupWorker, scheduleCleanupSweeper } from './processors/cleanup.js';
 import { startTopicResearchWorker } from './processors/topicResearch.js';
@@ -247,6 +248,10 @@ async function bootstrap() {
     startEmbedPageWorker();
     startLibraryEmbedWorker();
     startPostWriteHooksWorker();
+    // Backfill runs alongside post-write hooks — same workload
+    // shape (an extractor pass per page) so it makes sense on the
+    // same process. Low concurrency, low priority.
+    startBackfillWorker();
   }
 
   // -----------------------------------------------------------------

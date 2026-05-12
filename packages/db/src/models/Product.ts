@@ -53,6 +53,12 @@ const productSchema = new Schema(
     imageUrl: { type: String, default: null },
     /** Audit — first user whose receipt minted the row. */
     firstSeenBy: { type: Schema.Types.ObjectId, ref: 'User', default: null },
+    /** Wikidata Q-ID when the ontology resolver pinned this
+     *  product to a canonical external entry. Same shape as on
+     *  Organization. */
+    wikidataId: { type: String, default: null, index: true, maxlength: 16 },
+    wikidataConfidence: { type: Number, default: 0 },
+    wikidataResolvedAt: { type: Date, default: null },
   },
   { timestamps: true },
 );

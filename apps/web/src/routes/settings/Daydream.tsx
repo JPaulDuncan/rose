@@ -812,6 +812,14 @@ export default function DaydreamSettings() {
                       {n.generatedAt && (
                         <span>· {new Date(n.generatedAt).toLocaleString()}</span>
                       )}
+                      {n.model === 'wikipedia:verbatim' && (
+                        <span
+                          className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] uppercase tracking-widest text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200"
+                          title="Rendered verbatim from Wikipedia — no LLM synthesis, no hallucination risk."
+                        >
+                          verbatim
+                        </span>
+                      )}
                       {n.contributedBy && (
                         <span
                           className="italic"

@@ -43,6 +43,17 @@ function subjectKeyOf(event: RecipeEvent): string | null {
   if (event.kind === 'page.created' || event.kind === 'tag.applied')
     return `page:${event.pageId}`;
   if (event.kind === 'time.scheduled') return `cron:${event.recipeId}`;
+  if (
+    event.kind === 'subscription.created' ||
+    event.kind === 'subscription.renewed'
+  ) {
+    // Subscription dedup key = (subscription, event-kind). A
+    // creation and a renewal can both fire for the same row over
+    // its lifetime, but the same renewal should never double-fire
+    // — the extractor's per-cycle hash gate already prevents that
+    // upstream.
+    return `sub:${event.subscriptionId}:${event.kind}`;
+  }
   return null;
 }
 
@@ -118,6 +129,22 @@ function derivePushPayload(
       title: cfg.title ?? (event.kind === 'tag.applied' ? `#${event.tag}` : 'New page'),
       body: cfg.message ?? event.title,
       url: `/p/${event.slug}`,
+    };
+  }
+  if (
+    event.kind === 'subscription.created' ||
+    event.kind === 'subscription.renewed'
+  ) {
+    const verb =
+      event.kind === 'subscription.created' ? 'New subscription' : 'Renewed';
+    const price =
+      event.amount != null
+        ? ` · ${event.amount}${event.currency ? ` ${event.currency}` : ''}`
+        : '';
+    return {
+      title: cfg.title ?? `${verb}: ${event.serviceName}`,
+      body: cfg.message ?? `${event.cadence}${price}`,
+      url: event.slug ? `/p/${event.slug}` : '/subscriptions',
     };
   }
   return {
@@ -315,6 +342,20 @@ async function buildLlmContext(
       body: (page?.contentMd ?? '').slice(0, 8000),
       tag: 'tag' in event ? event.tag : '',
       tags: event.tags.join(', '),
+    };
+  }
+  if (
+    event.kind === 'subscription.created' ||
+    event.kind === 'subscription.renewed'
+  ) {
+    return {
+      service: event.serviceName,
+      amount: event.amount != null ? event.amount.toFixed(2) : '',
+      currency: event.currency ?? '',
+      cadence: event.cadence,
+      category: event.category ?? '',
+      brand: event.brandKey ?? '',
+      title: event.title ?? '',
     };
   }
   return {};
@@ -746,7 +787,12 @@ async function runLlmAction(
           ? `/e/${event.emailId}`
           : event.kind === 'page.created' || event.kind === 'tag.applied'
             ? `/p/${event.slug}`
-            : undefined,
+            : event.kind === 'subscription.created' ||
+                event.kind === 'subscription.renewed'
+              ? event.slug
+                ? `/p/${event.slug}`
+                : '/subscriptions'
+              : undefined,
     });
   } else if (config.output === 'tag') {
     if (event.kind !== 'page.created' && event.kind !== 'tag.applied') {

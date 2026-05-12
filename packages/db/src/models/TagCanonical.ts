@@ -77,12 +77,16 @@ const tagCanonicalSchema = new Schema(
      *  from Page.tags aggregation, not from this field. */
     pageCount: { type: Number, default: 0 },
     /**
-     * Optional embedding of the canonical (for future use by a
-     * settings-side merge tool that wants to surface
-     * "tags-that-look-similar"). Not consulted on the hot path —
-     * canonicalisation is LLM-driven, not embedding-driven, because
-     * the LLM is the only thing that reliably distinguishes
-     * "remote-work" from "remote-controlled-toys".
+     * Embedding of the canonical's display name + a few aliases.
+     * Used by the canonicaliser's embedding rung — between edit-
+     * distance and the LLM — to fold near-synonyms ("auth" /
+     * "authentication", "ml" / "machine-learning") without paying
+     * an LLM call. Threshold is intentionally tight (cosine ≥
+     * 0.92) so distinct concepts ("python" / "ruby") stay distinct.
+     * Lazily computed on first canonicalisation pass that touches
+     * the row; `embeddingModel` records which provider/model the
+     * vector was minted with so a provider switch invalidates the
+     * cache automatically.
      */
     embedding: { type: [Number], default: null, select: false },
     embeddingModel: { type: String, default: null },

@@ -67,6 +67,20 @@ infra/
   Mongo layer.
 - **Multi-source** — manual upload, IMAP polling, inbound webhook (Bearer-token), and
   Gmail OAuth (refresh-token, encrypted at rest).
+- **Structured-data fast paths** — receipts parse schema.org JSON-LD or hit a per-vendor
+  registry (Amazon, Apple, USPS) before the LLM. Subscriptions and entity relations
+  follow the same cascade. The admin's Extraction Coverage panel tracks the LLM-free
+  ratio per extractor.
+- **Wikidata-backed ontology** — organisations, products, persons, and places resolve
+  to canonical Q-IDs. SPARQL relation enrichment (`employer`, `spouse`, `birthplace`,
+  `headquartered-in`, …) lands triples into `EntityRelation` with `wikidataConfirmed`.
+- **Recipes (IFTTT-style)** — wire trigger events to actions. Triggers include
+  `email.ingested`, `page.created`, `tag.applied`, `time.scheduled`,
+  `subscription.created`, and `subscription.renewed`.
+- **Triage mode** — `j/k` walk the inbox, single-letter verbs act (archive / spam /
+  page / defer / reply), `u` undoes the last reversible action.
+- **Live worker queue stats** — Settings → Admin polls every five seconds, surfaces
+  green/amber/red bands and per-queue depth for incident response.
 
 See `.devlogs/` for design docs and ADRs.
 

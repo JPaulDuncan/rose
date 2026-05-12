@@ -108,6 +108,13 @@ const webDocumentSchema = new Schema(
 webDocumentSchema.index({ userId: 1, urlHash: 1 }, { unique: true });
 webDocumentSchema.index({ userId: 1, triggeringPageId: 1 }, { sparse: true });
 webDocumentSchema.index({ userId: 1, topicLabel: 1 });
+// Web-research fetch path checks `(userId, hostKey, expiresAt > now)`
+// to decide whether to re-fetch a host. The standalone hostKey
+// index was a collscan on userId before this compound landed —
+// the doc-comment near the top claimed the index existed but the
+// schema.index() call was missing. Sparse on expiresAt because
+// the TTL index below will drop rows once it expires anyway.
+webDocumentSchema.index({ userId: 1, hostKey: 1, expiresAt: 1 });
 // TTL index — Mongo evicts when expiresAt is in the past. Set
 // `expireAfterSeconds: 0` so the index reads `expiresAt` literally
 // rather than offsetting from it.

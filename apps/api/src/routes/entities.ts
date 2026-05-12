@@ -267,10 +267,14 @@ entitiesRouter.get('/:key', async (req, res) => {
     websites?: string[];
     logoUrl?: string | null;
     summary?: string;
+    wikidataId?: string | null;
+    wikidataConfidence?: number;
   } = {};
   if (inferredType === 'organization') {
     const org = await Organization.findOne({ key: canonicalKey })
-      .select('displayName aliases websites logoUrl summary forgottenBriefBy')
+      .select(
+        'displayName aliases websites logoUrl summary forgottenBriefBy wikidataId wikidataConfidence',
+      )
       .lean();
     if (org) {
       const muted = (
@@ -282,6 +286,9 @@ entitiesRouter.get('/:key', async (req, res) => {
         websites: (org.websites as string[] | undefined) ?? [],
         logoUrl: (org.logoUrl as string | null | undefined) ?? null,
         summary: muted ? '' : ((org.summary as string | undefined) ?? ''),
+        wikidataId: (org.wikidataId as string | null | undefined) ?? null,
+        wikidataConfidence:
+          (org.wikidataConfidence as number | undefined) ?? 0,
       };
     }
   }
@@ -291,6 +298,20 @@ entitiesRouter.get('/:key', async (req, res) => {
     ...(((entity?.aliases as string[] | undefined) ?? [])),
     ...(orgFacts.aliases ?? []),
   ]);
+
+  // Wikidata Q-ID — for organizations the canonical source is the
+  // global Organization row (already surfaced in `org` below). For
+  // person + place the resolver writes directly to Entity. We
+  // surface both shapes at the top level so the web client doesn't
+  // have to special-case per-type.
+  const topLevelWikidataId =
+    inferredType === 'organization'
+      ? (orgFacts.wikidataId ?? null)
+      : ((entity?.wikidataId as string | null | undefined) ?? null);
+  const topLevelWikidataConfidence =
+    inferredType === 'organization'
+      ? (orgFacts.wikidataConfidence ?? 0)
+      : ((entity?.wikidataConfidence as number | undefined) ?? 0);
 
   res.json({
     key: canonicalKey,
@@ -304,12 +325,16 @@ entitiesRouter.get('/:key', async (req, res) => {
     placeCoords,
     pages,
     related: relatedList,
+    wikidataId: topLevelWikidataId,
+    wikidataConfidence: topLevelWikidataConfidence,
     org: inferredType === 'organization'
       ? {
           displayName: orgFacts.displayName ?? null,
           websites: orgFacts.websites ?? [],
           logoUrl: orgFacts.logoUrl ?? null,
           summary: orgFacts.summary ?? '',
+          wikidataId: orgFacts.wikidataId ?? null,
+          wikidataConfidence: orgFacts.wikidataConfidence ?? 0,
         }
       : null,
   });
