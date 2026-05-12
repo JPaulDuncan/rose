@@ -29,12 +29,20 @@ import { useApi } from '../lib/api';
  *   d         defer 24 hours
  *   D         defer 1 week
  *   r         open reply composer
+ *   u         undo the last reversible action
  *
  * Actions are optimistic: the row disappears from the list
  * immediately, the cursor stays at the same index so the next
  * email slides into focus, and a toast confirms the side-effect
  * with an undo hint where appropriate.
- */
+ *
+ * Undo: the last action's reverse-instructions are kept in a
+ * small in-memory stack. Pressing `u` pops the top entry, calls
+ * the server-side reverse endpoint (unarchive / un-defer /
+ * DELETE spam / DELETE block), and refetches the triage list so
+ * the row reappears in its original slot. `page` and `reply`
+ * have no clean reversal — those entries are recorded as
+ * "not-undoable" and the keystroke toasts a friendly note. */
 
 type TriageEmail = {
   _id: string;
@@ -54,6 +62,17 @@ type TriageEmail = {
   pageSlug?: string | null;
 };
 
+/**
+ * Undo stack entries describe how to reverse one action. Kept
+ * outside React state (a ref) because we don't need re-renders on
+ * every push — only the `u` key reads from it.
+ */
+type UndoEntry =
+  | { verb: 'archive'; emailId: string; subject: string }
+  | { verb: 'defer'; emailId: string; subject: string }
+  | { verb: 'spam'; emailId: string; subject: string; address: string }
+  | { verb: 'block'; emailId: string; subject: string; address: string };
+
 export default function TriagePage() {
   const api = useApi();
   const navigate = useNavigate();
@@ -63,6 +82,17 @@ export default function TriagePage() {
   // the UI doesn't pause between keystrokes. We track in-flight
   // ids so a fast-typing user doesn't double-act on the same row.
   const inFlightRef = useRef<Set<string>>(new Set());
+  // Tail-of-stack history for `u`. Bounded so a long triage
+  // session doesn't leak memory. The last entry is the most
+  // recent action and the first one popped by undo.
+  const undoRef = useRef<UndoEntry[]>([]);
+  const UNDO_LIMIT = 10;
+
+  function pushUndo(entry: UndoEntry): void {
+    const stack = undoRef.current;
+    stack.push(entry);
+    if (stack.length > UNDO_LIMIT) stack.shift();
+  }
 
   const { data, isLoading } = useQuery({
     queryKey: ['triage'],
@@ -131,38 +161,48 @@ export default function TriagePage() {
         // the same: optimistic remove, server call, on-error
         // re-invalidate. We split the routing inside the switch.
         removeOne(id);
+        const subject = current.subject || '(no subject)';
         if (verb === 'archive') {
           await api.post(`/api/emails/${id}/archive`, {});
-          toast.success('Archived');
+          pushUndo({ verb: 'archive', emailId: id, subject });
+          toast.success('Archived  ·  press u to undo');
         } else if (verb === 'spam') {
           if (!fromAddr) {
             toast.error('No sender address — archived instead.');
             await api.post(`/api/emails/${id}/archive`, {});
+            pushUndo({ verb: 'archive', emailId: id, subject });
           } else {
             await api.post('/api/spam/sender', { address: fromAddr });
             await api.post(`/api/emails/${id}/archive`, {});
-            toast.success(`Marked ${fromAddr} as spam`);
+            pushUndo({ verb: 'spam', emailId: id, subject, address: fromAddr });
+            toast.success(`Marked ${fromAddr} as spam  ·  press u to undo`);
           }
         } else if (verb === 'block') {
           if (!fromAddr) {
             toast.error('No sender address — archived instead.');
             await api.post(`/api/emails/${id}/archive`, {});
+            pushUndo({ verb: 'archive', emailId: id, subject });
           } else {
             await api.post('/api/spam/block', {
               address: fromAddr,
               removeExisting: true,
             });
-            toast.success(`Blocked ${fromAddr}`);
+            pushUndo({ verb: 'block', emailId: id, subject, address: fromAddr });
+            toast.success(`Blocked ${fromAddr}  ·  press u to undo`);
           }
         } else if (verb === 'page') {
           await api.post(`/api/emails/${id}/regenerate`, {});
+          // Page generation isn't reversible — the worker can't be
+          // un-queued from here. Skip the undo record entirely.
           toast.success('Queued for page generation');
         } else if (verb === 'defer') {
           await api.post(`/api/emails/${id}/defer`, { hours: 24 });
-          toast.success('Deferred for 24 hours');
+          pushUndo({ verb: 'defer', emailId: id, subject });
+          toast.success('Deferred for 24 hours  ·  press u to undo');
         } else if (verb === 'defer-long') {
           await api.post(`/api/emails/${id}/defer`, { hours: 24 * 7 });
-          toast.success('Deferred for 1 week');
+          pushUndo({ verb: 'defer', emailId: id, subject });
+          toast.success('Deferred for 1 week  ·  press u to undo');
         }
       } catch (err) {
         // Roll back the optimistic remove on failure.
@@ -174,6 +214,47 @@ export default function TriagePage() {
     },
     [api, current, navigate, qc, removeOne],
   );
+
+  // Pop the most recent action and reverse it. Each verb has its
+  // own reverse: archive → unarchive, defer → defer with hours=0,
+  // spam → DELETE the sender entry, block → DELETE the block. On
+  // success we refetch the triage list so the row reappears.
+  const undo = useCallback(async () => {
+    const entry = undoRef.current.pop();
+    if (!entry) {
+      toast('Nothing to undo');
+      return;
+    }
+    try {
+      if (entry.verb === 'archive') {
+        await api.post(`/api/emails/${entry.emailId}/unarchive`, {});
+      } else if (entry.verb === 'defer') {
+        await api.post(`/api/emails/${entry.emailId}/defer`, { hours: 0 });
+      } else if (entry.verb === 'spam') {
+        await api.del(
+          `/api/spam/sender/${encodeURIComponent(entry.address)}`,
+        );
+        await api.post(`/api/emails/${entry.emailId}/unarchive`, {});
+      } else if (entry.verb === 'block') {
+        await api.del(
+          `/api/spam/block/${encodeURIComponent(entry.address)}`,
+        );
+        // Blocked emails get archived alongside the block; restore them.
+        await api.post(`/api/emails/${entry.emailId}/unarchive`, {});
+      }
+      toast.success(`Undid: ${entry.verb} — ${entry.subject.slice(0, 60)}`);
+      // Bring the row back into the queue + refresh downstream
+      // counters. We invalidate ['triage'] specifically so the row
+      // reappears in its original slot once Mongo confirms.
+      qc.invalidateQueries({ queryKey: ['triage'] });
+      qc.invalidateQueries({ queryKey: ['emails'] });
+      qc.invalidateQueries({ queryKey: ['digest'] });
+    } catch (err) {
+      // Push it back so a second `u` can retry.
+      undoRef.current.push(entry);
+      toast.error((err as Error).message);
+    }
+  }, [api, qc]);
 
   // Keyboard handler — capture-phase + stopImmediatePropagation so
   // we run before the global Shell hotkey handler AND prevent it
@@ -225,13 +306,16 @@ export default function TriagePage() {
         case 'r':
           handled(() => void act('reply'));
           break;
+        case 'u':
+          handled(() => void undo());
+          break;
         default:
           break;
       }
     }
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
-  }, [emails.length, act]);
+  }, [emails.length, act, undo]);
 
   return (
     <div className="mx-auto w-full max-w-7xl px-6 py-8">
@@ -356,6 +440,7 @@ function Keymap() {
     { key: 'p', label: 'page it', icon: FileText },
     { key: 'd / D', label: 'defer 24h / 1wk', icon: Clock },
     { key: 'r', label: 'reply', icon: Reply },
+    { key: 'u', label: 'undo' },
   ];
   return (
     <div className="fixed inset-x-0 bottom-0 z-10 border-t border-ink-200 bg-white/95 px-4 py-1.5 backdrop-blur dark:border-ink-800 dark:bg-ink-900/95">
