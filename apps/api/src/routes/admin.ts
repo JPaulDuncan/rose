@@ -496,13 +496,14 @@ adminRouter.post('/backfill', requireAdmin, async (req, res, next) => {
       'subscription',
       'relations',
       'daydream',
+      'outbound-links',
       'all',
     ]);
     if (!body.kind || !validKinds.has(body.kind)) {
       res.status(400).json({
         error: 'invalid_request',
         message:
-          'kind must be one of receipt, subscription, relations, daydream, all',
+          'kind must be one of receipt, subscription, relations, daydream, outbound-links, all',
       });
       return;
     }

@@ -391,6 +391,18 @@ const pageSchema = new Schema(
       default: [],
       ref: 'WebDocument',
     },
+    /**
+     * Slugs of other pages this page's contentMd links to via
+     * `/p/<slug>` references. Populated at write time so the
+     * lineage endpoint can answer "what pages cite this one?" via
+     * an indexed `$in` lookup instead of a contentMd regex scan
+     * across every page (the old hot-path that motivated this
+     * field). Stored sparse — most pages cite zero other pages.
+     */
+    outboundLinks: {
+      type: [String],
+      default: [],
+    },
   },
   { timestamps: true },
 );
@@ -415,6 +427,10 @@ pageSchema.index(
 pageSchema.index({ userId: 1, senderAddresses: 1 });
 // Tag-page lookups (Tag.tsx, recipe page-find by tag).
 pageSchema.index({ userId: 1, tags: 1 });
+// Lineage "cited-by" lookups — the previous regex over contentMd
+// is now `outboundLinks: <slug>`, which this multikey index
+// covers.
+pageSchema.index({ userId: 1, outboundLinks: 1 });
 pageSchema.index(
   { title: 'text', summary: 'text', contentMd: 'text', tags: 'text' },
   { weights: { title: 10, summary: 5, tags: 3, contentMd: 1 }, name: 'PageTextIndex' },

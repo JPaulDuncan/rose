@@ -6,6 +6,7 @@ import { logger } from '../lib/logger.js';
 import { runPostWriteReceiptExtraction } from '../services/extractReceipt.js';
 import { runPostWriteRelationExtraction } from '../services/extractRelations.js';
 import { runPostWriteSubscriptionExtraction } from '../services/extractSubscription.js';
+import { extractOutboundLinks } from '../services/outboundLinks.js';
 
 /**
  * Backfill worker. Replays the four post-write extractors against
@@ -49,7 +50,13 @@ const QUEUE = 'rose.backfill';
 const daydreamQueue = new Queue('rose.daydream', { connection: redis });
 
 export type BackfillJobData = {
-  kind: 'receipt' | 'subscription' | 'relations' | 'daydream' | 'all';
+  kind:
+    | 'receipt'
+    | 'subscription'
+    | 'relations'
+    | 'daydream'
+    | 'outbound-links'
+    | 'all';
   userId: string;
   pageId: string;
 };
@@ -75,6 +82,29 @@ async function processJob(job: Job<BackfillJobData>): Promise<unknown> {
   if (kind === 'relations' || kind === 'all') {
     await runPostWriteRelationExtraction(userId, page);
     ran.push('relations');
+  }
+  if (kind === 'outbound-links' || kind === 'all') {
+    // Populate / refresh Page.outboundLinks. Cheap — runs the same
+    // regex `extractOutboundLinks` does at write time. Idempotent;
+    // if the cache is already up to date, the write is a no-op.
+    const slug = (page.slug as string | undefined) ?? null;
+    const body = (page.contentMd as string | undefined) ?? '';
+    const next = extractOutboundLinks(body, slug);
+    const prev = (page.outboundLinks as string[] | undefined) ?? [];
+    const same =
+      prev.length === next.length && prev.every((s, i) => s === next[i]);
+    if (!same) {
+      page.outboundLinks = next;
+      try {
+        await page.save();
+      } catch (err) {
+        logger.debug(
+          { err, pageId },
+          'backfill: outbound-links save failed (continuing)',
+        );
+      }
+    }
+    ran.push('outbound-links');
   }
   // Daydream backfill — enqueue a per-page daydream job. The
   // daydream worker walks the page's `daydreamSubjects[]` array,

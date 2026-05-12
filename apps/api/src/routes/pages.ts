@@ -751,11 +751,13 @@ pagesRouter.get('/:id/lineage', async (req, res) => {
   }
 
   // 2. Inbound — other pages whose body links to THIS page.
-  const inboundRegex = `/p/${escapeLineageRegex(page.slug)}(?![a-z0-9-])`;
+  // Backed by `Page.outboundLinks`, an indexed multikey field
+  // populated at write time. Drops what used to be a regex collscan
+  // over every contentMd to an O(log n) $in over the index.
   const incoming = (await Page.find({
     userId,
     _id: { $ne: page._id },
-    contentMd: { $regex: inboundRegex, $options: 'i' },
+    outboundLinks: page.slug,
   })
     .select('_id slug title summary articleDate updatedAt')
     .limit(40)
@@ -854,10 +856,6 @@ pagesRouter.get('/:id/lineage', async (req, res) => {
     downstream: shapeBucket(downstream.values()),
   });
 });
-
-function escapeLineageRegex(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
 
 pagesRouter.get('/:id/revisions', async (req, res) => {
   const userId = new Types.ObjectId(userIdOf(req));

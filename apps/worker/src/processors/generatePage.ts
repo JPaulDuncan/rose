@@ -55,6 +55,7 @@ import { describePageImages } from '../services/describeImages.js';
 import { extractPlacesFromPage, hashContent } from '../services/extractPlaces.js';
 import { runPostWriteEntityExtraction } from '../services/extractEntities.js';
 import { enrichEntityWikidata } from '../services/wikidataResolver.js';
+import { extractOutboundLinks } from '../services/outboundLinks.js';
 import { runPostWriteReceiptExtraction } from '../services/extractReceipt.js';
 import { runPostWriteRelationExtraction } from '../services/extractRelations.js';
 import { runPostWriteSubscriptionExtraction } from '../services/extractSubscription.js';
@@ -1510,6 +1511,9 @@ export function startGeneratePageWorker() {
           page.primaryTopic = candidate ? candidate.toLowerCase() : null;
         }
         page.topicCentroid = await recomputeCentroid(page);
+        // Refresh the outbound-link cache so the lineage "cited-by"
+        // query (Page.outboundLinks: this.slug) stays current.
+        page.outboundLinks = extractOutboundLinks(page.contentMd, page.slug);
         await page.save();
         pageId = page._id;
         slug = page.slug;
@@ -1574,6 +1578,7 @@ export function startGeneratePageWorker() {
           // incremental once the page is in topic mode.
           generationMode: newGroupingMode === 'topic' ? 'incremental' : 'rebuild',
           lastGeneratedFromEmailIds: sourceEmailIds,
+          outboundLinks: extractOutboundLinks(draft.contentMd, slug),
         });
         pageId = created._id;
         created.topicCentroid = await recomputeCentroid(created);
