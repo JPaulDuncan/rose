@@ -36,6 +36,28 @@ export function triggerMatches(trigger: Trigger, event: RecipeEvent): boolean {
   if (trigger.kind === 'tag.applied' && event.kind === 'tag.applied') {
     return trigger.config.tag.toLowerCase() === event.tag.toLowerCase();
   }
+  if (
+    (trigger.kind === 'subscription.created' &&
+      event.kind === 'subscription.created') ||
+    (trigger.kind === 'subscription.renewed' &&
+      event.kind === 'subscription.renewed')
+  ) {
+    const cfg = trigger.config;
+    if (
+      cfg.serviceContains &&
+      !event.serviceName
+        .toLowerCase()
+        .includes(cfg.serviceContains.toLowerCase())
+    ) {
+      return false;
+    }
+    if (cfg.categories && cfg.categories.length > 0) {
+      if (!event.category || !cfg.categories.includes(event.category)) {
+        return false;
+      }
+    }
+    return true;
+  }
   return true;
 }
 

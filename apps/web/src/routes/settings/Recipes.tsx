@@ -145,9 +145,9 @@ export default function RecipesSettings() {
         <p className="text-sm text-ink-500">
           IFTTT-style automations: pick a trigger, optionally narrow with
           conditions, then pick the actions Rose should take. Phase 1
-          covers email-arrives / page-created / tag-applied / scheduled
-          triggers and the four most common actions (push, tag, category,
-          webhook).
+          covers email-arrives / page-created / tag-applied / scheduled /
+          subscription triggers and the four most common actions (push,
+          tag, category, webhook).
         </p>
         {isAdmin && (
           <div className="mt-3 inline-flex rounded-md border border-ink-200 p-0.5 text-xs dark:border-ink-800">

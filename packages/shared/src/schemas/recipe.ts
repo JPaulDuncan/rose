@@ -19,6 +19,8 @@ export const TriggerKind = z.enum([
   'page.created',
   'tag.applied',
   'time.scheduled',
+  'subscription.created',
+  'subscription.renewed',
 ]);
 export type TriggerKind = z.infer<typeof TriggerKind>;
 
@@ -62,11 +64,67 @@ const TimeScheduledTrigger = z.object({
   }),
 });
 
+const SubscriptionCreatedTrigger = z.object({
+  kind: z.literal('subscription.created'),
+  config: z
+    .object({
+      /** Optional service-name substring match. Lower-case; empty
+       *  matches every newly-detected subscription. */
+      serviceContains: z.string().max(120).optional(),
+      /** Optional category filter — only fire for subscriptions
+       *  the extractor classified into one of these categories. */
+      categories: z
+        .array(
+          z.enum([
+            'media',
+            'software',
+            'utility',
+            'fitness',
+            'news',
+            'insurance',
+            'cloud',
+            'other',
+          ]),
+        )
+        .max(8)
+        .optional(),
+    })
+    .default({}),
+});
+
+const SubscriptionRenewedTrigger = z.object({
+  kind: z.literal('subscription.renewed'),
+  config: z
+    .object({
+      /** Same shape as the created trigger — narrow by service name
+       *  or category when only some renewals matter. */
+      serviceContains: z.string().max(120).optional(),
+      categories: z
+        .array(
+          z.enum([
+            'media',
+            'software',
+            'utility',
+            'fitness',
+            'news',
+            'insurance',
+            'cloud',
+            'other',
+          ]),
+        )
+        .max(8)
+        .optional(),
+    })
+    .default({}),
+});
+
 export const TriggerSchema = z.discriminatedUnion('kind', [
   EmailIngestedTrigger,
   PageCreatedTrigger,
   TagAppliedTrigger,
   TimeScheduledTrigger,
+  SubscriptionCreatedTrigger,
+  SubscriptionRenewedTrigger,
 ]);
 export type Trigger = z.infer<typeof TriggerSchema>;
 
@@ -451,6 +509,8 @@ export const RecipeEventKind = z.enum([
   'page.created',
   'tag.applied',
   'time.scheduled',
+  'subscription.created',
+  'subscription.renewed',
 ]);
 export type RecipeEventKind = z.infer<typeof RecipeEventKind>;
 
@@ -493,4 +553,67 @@ export type RecipeEvent =
       kind: 'time.scheduled';
       userId: string;
       recipeId: string;
+    }
+  | {
+      /**
+       * Emitted by the subscription extractor the first time a
+       * Subscription row is inserted for a given serviceKey. Lets
+       * recipes notify on signup, tag the receipt page, or kick off
+       * a budget-check chain.
+       */
+      kind: 'subscription.created';
+      userId: string;
+      subscriptionId: string;
+      serviceKey: string;
+      serviceName: string;
+      brandKey: string | null;
+      amount: number | null;
+      currency: string | null;
+      cadence: 'monthly' | 'yearly' | 'quarterly' | 'weekly' | 'other';
+      category:
+        | 'media'
+        | 'software'
+        | 'utility'
+        | 'fitness'
+        | 'news'
+        | 'insurance'
+        | 'cloud'
+        | 'other'
+        | null;
+      /** Page that surfaced the receipt — useful for `notify.push`
+       *  deep-links into the source. */
+      pageId: string | null;
+      slug: string | null;
+      title: string | null;
+    }
+  | {
+      /**
+       * Same shape as `subscription.created` but fired when an
+       * existing Subscription row received fresh evidence — i.e.
+       * the renewal cadence triggered. The dispatcher's dedup key
+       * uses `subscriptionId + extractedAt` so two receipts in the
+       * same cycle don't fire twice.
+       */
+      kind: 'subscription.renewed';
+      userId: string;
+      subscriptionId: string;
+      serviceKey: string;
+      serviceName: string;
+      brandKey: string | null;
+      amount: number | null;
+      currency: string | null;
+      cadence: 'monthly' | 'yearly' | 'quarterly' | 'weekly' | 'other';
+      category:
+        | 'media'
+        | 'software'
+        | 'utility'
+        | 'fitness'
+        | 'news'
+        | 'insurance'
+        | 'cloud'
+        | 'other'
+        | null;
+      pageId: string | null;
+      slug: string | null;
+      title: string | null;
     };

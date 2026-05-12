@@ -9,6 +9,7 @@ import {
   type StructuredSubscription,
 } from '@rose/email-parser';
 import { resolveProviderForUser } from '../lib/providers.js';
+import { emitRecipeEvent } from '../lib/recipeEmit.js';
 import { logger } from '../lib/logger.js';
 
 /**
@@ -175,7 +176,7 @@ async function upsertSubscription(
     extractedAt: new Date(),
   };
 
-  await Subscription.updateOne(
+  const upsertResult = await Subscription.updateOne(
     { userId, serviceKey },
     {
       $setOnInsert: {
@@ -206,12 +207,46 @@ async function upsertSubscription(
       },
     },
   );
+
+  // Detect created-vs-renewed for the recipe event. `upsertedCount`
+  // is 1 only when the row was just inserted; on any subsequent
+  // extraction the row already exists so we treat it as a renewal.
+  // Renewal events are gated on the content-hash upstream
+  // (subscriptionExtractedFromHash) so the same receipt doesn't
+  // double-fire.
+  const wasCreated = (upsertResult.upsertedCount ?? 0) > 0;
+  const subscriptionDoc = await Subscription.findOne({ userId, serviceKey })
+    .select('_id')
+    .lean();
+  const subscriptionId = subscriptionDoc?._id
+    ? String(subscriptionDoc._id)
+    : '';
+
+  if (subscriptionId) {
+    await emitRecipeEvent({
+      kind: wasCreated ? 'subscription.created' : 'subscription.renewed',
+      userId: String(userId),
+      subscriptionId,
+      serviceKey,
+      serviceName,
+      brandKey,
+      amount: data.amount,
+      currency,
+      cadence: data.cadence,
+      category: data.category,
+      pageId: String(page._id),
+      slug: (page.slug as string | undefined) ?? null,
+      title: (page.title as string | undefined) ?? null,
+    });
+  }
+
   logger.info(
     {
       pageId: String(page._id),
       serviceKey,
       status: data.status,
       source,
+      kind: wasCreated ? 'created' : 'renewed',
     },
     'extract-subscription: stored',
   );
