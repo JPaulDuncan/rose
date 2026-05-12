@@ -49,6 +49,9 @@ subscriptionsRouter.get('/', async (req, res) => {
         serviceName: s.serviceName,
         serviceKey: s.serviceKey,
         brandKey: s.brandKey,
+        // See ProductPurchase.extractedBy for the rationale.
+        extractedBy:
+          (s.extractedBy as 'structured' | 'llm' | undefined) ?? 'llm',
         merchant: brand
           ? {
               name: brand.name,

@@ -35,6 +35,24 @@ const purchaseSchema = new Schema(
     /** When the purchase was made. May differ from the email date
      *  (e.g. a shipping confirmation arrives days later). */
     purchasedAt: { type: Date, default: null, index: true },
+    /**
+     * How this row was extracted:
+     *   • 'structured' — the email's HTML carried schema.org JSON-LD
+     *     or Microdata; we read the fields directly. Highest
+     *     fidelity, zero LLM cost.
+     *   • 'llm'        — fell through to the LLM extractor because
+     *     no structured data was present (or it was too partial
+     *     to trust).
+     *
+     * Drives the audit badge on /products/<slug> and lets us
+     * measure how often the deterministic fast path fires.
+     */
+    extractedBy: {
+      type: String,
+      enum: ['structured', 'llm'],
+      default: 'llm',
+      index: true,
+    },
   },
   { timestamps: true },
 );

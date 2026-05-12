@@ -75,6 +75,14 @@ const subscriptionSchema = new Schema(
     firstSeenAt: { type: Date, default: () => new Date() },
     /** Last time any field changed. Auto-updated by timestamps. */
     evidence: { type: [subscriptionEvidenceSchema], default: [] },
+    /** How the most recent extraction was sourced — see
+     *  ProductPurchase.extractedBy. */
+    extractedBy: {
+      type: String,
+      enum: ['structured', 'llm'],
+      default: 'llm',
+      index: true,
+    },
   },
   { timestamps: true },
 );

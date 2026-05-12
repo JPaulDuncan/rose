@@ -10,6 +10,8 @@ type Subscription = {
   serviceName: string;
   serviceKey: string;
   brandKey: string | null;
+  /** 'structured' = read straight from JSON-LD; 'llm' = inferred. */
+  extractedBy: 'structured' | 'llm';
   merchant: { name: string; logoUrl: string | null } | null;
   amount: number | null;
   currency: string | null;
@@ -233,6 +235,21 @@ export default function SubscriptionsPage() {
                       {CATEGORY_LABEL[s.category] ?? s.category}
                     </span>
                   )}
+                  <span
+                    className={
+                      'rounded-full px-1.5 py-0.5 text-[10px] uppercase tracking-widest ' +
+                      (s.extractedBy === 'structured'
+                        ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200'
+                        : 'bg-ink-100 text-ink-600 dark:bg-ink-800 dark:text-ink-300')
+                    }
+                    title={
+                      s.extractedBy === 'structured'
+                        ? 'Read directly from the email’s schema.org markup — zero LLM cost.'
+                        : 'Inferred by the LLM from the email’s prose.'
+                    }
+                  >
+                    {s.extractedBy === 'structured' ? 'schema.org' : 'llm'}
+                  </span>
                 </div>
                 <div className="mt-0.5 text-xs text-ink-500">
                   {s.amount != null

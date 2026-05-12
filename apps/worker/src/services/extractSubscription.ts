@@ -1,9 +1,13 @@
 import { createHash } from 'node:crypto';
-import type { Types } from 'mongoose';
-import { Subscription, type PageDoc } from '@rose/db';
+import { Types } from 'mongoose';
+import { Email, Subscription, type PageDoc } from '@rose/db';
 import { SubscriptionExtraction } from '@rose/shared';
 import { SYSTEM_PROMPT_BASE, extractJson } from '@rose/llm';
-import { senderDomainTag } from '@rose/email-parser';
+import {
+  parseStructuredSubscription,
+  senderDomainTag,
+  type StructuredSubscription,
+} from '@rose/email-parser';
 import { resolveProviderForUser } from '../lib/providers.js';
 import { logger } from '../lib/logger.js';
 
@@ -100,6 +104,120 @@ function parseRenewalDate(raw: string | null | undefined): Date | null {
   return Number.isFinite(ts) ? new Date(ts) : null;
 }
 
+/**
+ * Try the structured parser against the source email's HTML.
+ * schema.org Invoice / Order with renewal wording maps cleanly
+ * onto the SubscriptionExtraction shape. Returns null when no
+ * usable structured data is present.
+ */
+async function tryStructuredSubscription(
+  userId: Types.ObjectId,
+  page: PageDoc,
+): Promise<StructuredSubscription | null> {
+  const emailIds = (page.sourceEmailIds as Types.ObjectId[] | undefined) ?? [];
+  if (emailIds.length === 0) return null;
+  const email = await Email.findOne({ userId, _id: emailIds[0] })
+    .select('+html')
+    .lean();
+  const html = (email?.html as string | undefined) ?? '';
+  if (!html) return null;
+  const r = parseStructuredSubscription(html);
+  if (!r) return null;
+  if (r.confidence < 0.7) return null;
+  return r;
+}
+
+/**
+ * Upsert a Subscription row from either the structured parser or
+ * the LLM. Same persistence semantics either way — the `source`
+ * arg lands on `extractedBy` so the audit panel can show "Rose
+ * read this from the email's JSON-LD" vs "LLM inferred from prose."
+ */
+async function upsertSubscription(
+  userId: Types.ObjectId,
+  page: PageDoc,
+  data: {
+    serviceName: string;
+    amount: number | null;
+    currency: string | null;
+    cadence: 'monthly' | 'yearly' | 'quarterly' | 'weekly' | 'other';
+    nextRenewalAt: Date | null;
+    status: 'active' | 'cancelled' | 'expired';
+    category:
+      | 'media'
+      | 'software'
+      | 'utility'
+      | 'fitness'
+      | 'news'
+      | 'insurance'
+      | 'cloud'
+      | 'other'
+      | null;
+  },
+  source: 'structured' | 'llm',
+): Promise<boolean> {
+  const serviceName = data.serviceName.trim();
+  const serviceKey = serviceName.toLowerCase().replace(/\s+/g, ' ').trim();
+  if (!serviceKey) return false;
+
+  const senderAddresses = (page.senderAddresses as string[] | undefined) ?? [];
+  const brandKey =
+    senderAddresses
+      .map((a) => senderDomainTag(a)?.toLowerCase() ?? null)
+      .filter((b): b is string => !!b)[0] ?? null;
+  const currency = data.currency ? data.currency.toUpperCase() : null;
+  const emailId =
+    (page.sourceEmailIds as Types.ObjectId[] | undefined)?.[0] ?? null;
+  const evidenceEntry = {
+    pageId: page._id as Types.ObjectId,
+    emailId,
+    snippet: '',
+    extractedAt: new Date(),
+  };
+
+  await Subscription.updateOne(
+    { userId, serviceKey },
+    {
+      $setOnInsert: {
+        userId,
+        serviceKey,
+        serviceName,
+        firstSeenAt: new Date(),
+      },
+      $set: {
+        serviceName,
+        brandKey,
+        amount: data.amount,
+        currency,
+        cadence: data.cadence,
+        nextRenewalAt: data.nextRenewalAt,
+        status: data.status,
+        category: data.category,
+        extractedBy: source,
+      },
+    },
+    { upsert: true },
+  );
+  await Subscription.updateOne(
+    { userId, serviceKey },
+    {
+      $push: {
+        evidence: { $each: [evidenceEntry], $slice: -20 },
+      },
+    },
+  );
+  logger.info(
+    {
+      pageId: String(page._id),
+      serviceKey,
+      status: data.status,
+      source,
+    },
+    'extract-subscription: stored',
+  );
+  return true;
+}
+
 export async function extractSubscriptionFromPage(
   userId: Types.ObjectId,
   page: PageDoc,
@@ -112,6 +230,35 @@ export async function extractSubscriptionFromPage(
   ).subscriptionExtractedFromHash;
   if (cachedHash === hash) return false;
 
+  // ── Fast path: structured data in the HTML.
+  const structured = await tryStructuredSubscription(userId, page);
+  if (structured) {
+    try {
+      (
+        page as unknown as { subscriptionExtractedFromHash?: string }
+      ).subscriptionExtractedFromHash = hash;
+      page.markModified?.('subscriptionExtractedFromHash');
+      await page.save?.();
+    } catch (err) {
+      logger.debug({ err }, 'extract-subscription: hash stamp failed (ignored)');
+    }
+    return upsertSubscription(
+      userId,
+      page,
+      {
+        serviceName: structured.serviceName,
+        amount: structured.amount,
+        currency: structured.currency,
+        cadence: structured.cadence,
+        nextRenewalAt: parseRenewalDate(structured.nextRenewalAt),
+        status: structured.status,
+        category: structured.category,
+      },
+      'structured',
+    );
+  }
+
+  // ── Slow path: LLM extractor.
   let resolved;
   try {
     resolved = await resolveProviderForUser(userId, 'generation');
@@ -161,72 +308,20 @@ export async function extractSubscriptionFromPage(
   }
 
   if (parsed.skip) return false;
-
-  const serviceName = parsed.serviceName.trim();
-  const serviceKey = serviceName.toLowerCase().replace(/\s+/g, ' ').trim();
-  if (!serviceKey) return false;
-
-  // Resolve merchant brand-key from the page's senderAddresses for
-  // the brand chip on the row.
-  const senderAddresses = (page.senderAddresses as string[] | undefined) ?? [];
-  const brandKey =
-    senderAddresses
-      .map((a) => senderDomainTag(a)?.toLowerCase() ?? null)
-      .filter((b): b is string => !!b)[0] ?? null;
-
-  const nextRenewalAt = parseRenewalDate(parsed.nextRenewalAt);
-  const currency = parsed.currency ? parsed.currency.toUpperCase() : null;
-  const emailId =
-    (page.sourceEmailIds as Types.ObjectId[] | undefined)?.[0] ?? null;
-
-  const evidenceEntry = {
-    pageId: page._id as Types.ObjectId,
-    emailId,
-    snippet: '',
-    extractedAt: new Date(),
-  };
-
-  // Idempotent upsert. setOnInsert preserves the user's first
-  // capture time across re-extractions; $set keeps the dynamic
-  // fields fresh; $push to evidence with $slice bounds growth.
-  await Subscription.updateOne(
-    { userId, serviceKey },
+  return upsertSubscription(
+    userId,
+    page,
     {
-      $setOnInsert: {
-        userId,
-        serviceKey,
-        serviceName,
-        firstSeenAt: new Date(),
-      },
-      $set: {
-        serviceName,
-        brandKey,
-        amount: parsed.amount,
-        currency,
-        cadence: parsed.cadence,
-        nextRenewalAt,
-        status: parsed.status,
-        category: parsed.category,
-      },
+      serviceName: parsed.serviceName,
+      amount: parsed.amount,
+      currency: parsed.currency,
+      cadence: parsed.cadence,
+      nextRenewalAt: parseRenewalDate(parsed.nextRenewalAt),
+      status: parsed.status,
+      category: parsed.category,
     },
-    { upsert: true },
+    'llm',
   );
-  // Push evidence and cap at 20 entries — re-pushing the same
-  // (pageId, emailId) pair is fine; the audit shows every time
-  // this email was re-processed.
-  await Subscription.updateOne(
-    { userId, serviceKey },
-    {
-      $push: {
-        evidence: { $each: [evidenceEntry], $slice: -20 },
-      },
-    },
-  );
-  logger.info(
-    { pageId: String(page._id), serviceKey, status: parsed.status },
-    'extract-subscription: stored',
-  );
-  return true;
 }
 
 export async function runPostWriteSubscriptionExtraction(
