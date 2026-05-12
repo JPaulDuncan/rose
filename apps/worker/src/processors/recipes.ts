@@ -54,6 +54,23 @@ function subjectKeyOf(event: RecipeEvent): string | null {
     // upstream.
     return `sub:${event.subscriptionId}:${event.kind}`;
   }
+  // Attachment / shipment / promo events are per-email; the cooldown
+  // is keyed on (email, event-kind) so a per-email detection-pass
+  // fires once even if a single message somehow re-triggers
+  // detection (would only happen across two distinct ingest runs).
+  if (
+    event.kind === 'attachment.received' ||
+    event.kind === 'shipment.detected' ||
+    event.kind === 'promo.detected'
+  ) {
+    return `email:${event.emailId}:${event.kind}`;
+  }
+  if (event.kind === 'sender.blocked') {
+    return `sender:${event.address}`;
+  }
+  if (event.kind === 'website.fetched') {
+    return `source:${event.sourceId}`;
+  }
   return null;
 }
 

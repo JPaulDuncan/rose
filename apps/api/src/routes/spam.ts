@@ -14,6 +14,7 @@ import {
   trainBayesForEmails,
   untrainBayesForEmails,
 } from '../lib/bayesStore.js';
+import { emitRecipeEvent } from '../lib/recipeEmit.js';
 
 export const spamRouter: Router = Router();
 
@@ -551,6 +552,20 @@ spamRouter.post('/block', validateBody(BlockSenderRequest), async (req, res) => 
     const r = await Email.deleteMany({ userId, ...addrFilter });
     emailsDeleted = r.deletedCount ?? 0;
   }
+
+  // Pipeline event — fire-and-forget. Lets users hook a webhook /
+  // notification on every block ("just blocked notices@x; 47 emails
+  // purged"). The brandKey carries through so recipes can filter on
+  // "only fire for marketing brands, ignore personal addresses."
+  const eventBrand = senderDomainTag(address)?.toLowerCase() ?? null;
+  await emitRecipeEvent({
+    kind: 'sender.blocked',
+    userId: String(userId),
+    address,
+    brandKey: eventBrand,
+    emailsDeleted,
+    pagesDeleted,
+  });
 
   res.json({
     ok: true,

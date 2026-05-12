@@ -139,23 +139,66 @@ export async function flushPendingEmails(
     );
     const recipeFromAddr = p.cleaned.from?.address ?? null;
     const recipeBrandKey = recipeFromAddr ? senderDomainTag(recipeFromAddr) : null;
+    const brandKeyLower = recipeBrandKey ? recipeBrandKey.toLowerCase() : null;
     await emitRecipeEvent({
       kind: 'email.ingested',
       userId: String(ctx.userId),
       emailId: idStr,
       from: recipeFromAddr,
       subject: p.cleaned.subject ?? '',
-      brandKey: recipeBrandKey ? recipeBrandKey.toLowerCase() : null,
+      brandKey: brandKeyLower,
       priority: p.cleaned.metadata.priority ?? null,
       tags: p.cleaned.metadata.topics ?? [],
     });
+    // Pipeline visibility: emit one `attachment.received` per
+    // attachment-bearing email so recipes can react without polling
+    // Email.find. The detector events (shipment / promo) fire below
+    // *only* when their respective detectors found something — this
+    // mirrors the user's mental model: "tell me when something
+    // happened," not "tell me every time we looked."
+    if (p.cleaned.attachments.length > 0) {
+      await emitRecipeEvent({
+        kind: 'attachment.received',
+        userId: String(ctx.userId),
+        emailId: idStr,
+        from: recipeFromAddr,
+        subject: p.cleaned.subject ?? '',
+        brandKey: brandKeyLower,
+        attachmentCount: p.cleaned.attachments.length,
+        contentTypes: p.cleaned.attachments.map((a) => a.contentType).slice(0, 20),
+        filenames: p.cleaned.attachments.map((a) => a.filename).slice(0, 20),
+        totalBytes: p.cleaned.attachments.reduce((n, a) => n + (a.size || 0), 0),
+      });
+    }
     try {
-      await detectShipmentsForEmail(idStr);
+      const shipmentCount = await detectShipmentsForEmail(idStr);
+      if (shipmentCount > 0) {
+        await emitRecipeEvent({
+          kind: 'shipment.detected',
+          userId: String(ctx.userId),
+          emailId: idStr,
+          count: shipmentCount,
+          from: recipeFromAddr,
+          subject: p.cleaned.subject ?? '',
+          brandKey: brandKeyLower,
+        });
+      }
     } catch (err) {
       logger.warn({ err, emailId: idStr }, 'shipment detection failed');
     }
     try {
-      await detectPromoCodesForEmail(idStr);
+      const promoCount = await detectPromoCodesForEmail(idStr);
+      if (promoCount > 0) {
+        await emitRecipeEvent({
+          kind: 'promo.detected',
+          userId: String(ctx.userId),
+          emailId: idStr,
+          count: promoCount,
+          from: recipeFromAddr,
+          subject: p.cleaned.subject ?? '',
+          brandKey: brandKeyLower,
+        });
+      }
     } catch (err) {
       logger.warn({ err, emailId: idStr }, 'promo-code detection failed');
     }

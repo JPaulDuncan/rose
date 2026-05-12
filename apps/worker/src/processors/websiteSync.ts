@@ -550,8 +550,22 @@ export function startWebsiteSyncWorker() {
       source.status = 'active';
       await source.save();
 
+      // Pipeline event — fires once per fresh snapshot, carrying
+      // the resilient-fetch `via` so recipes can react when the
+      // origin starts failing over (sky pill in the UI = same
+      // signal). Wayback fallbacks in particular are worth a
+      // notification: the live page is unreachable.
+      await emitRecipeEvent({
+        kind: 'website.fetched',
+        userId: String(userId),
+        sourceId: String(source._id),
+        url: outcome.finalUrl,
+        title,
+        via: outcome.via,
+      });
+
       logger.info(
-        { sourceId: String(source._id), emailId: String(created._id), title },
+        { sourceId: String(source._id), emailId: String(created._id), title, via: outcome.via },
         'website-sync: ingested updated snapshot',
       );
     },

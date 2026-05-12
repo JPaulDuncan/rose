@@ -11,6 +11,9 @@ import {
   type Condition,
   evaluateRecipe,
   actionsRequireAdmin,
+  PIPELINE_CATALOG,
+  type PipelineStage,
+  type RecipeEventKind,
 } from '@rose/shared';
 import { userIdOf } from '../middleware/auth.js';
 import { isAdminRequest } from '../middleware/admin.js';
@@ -133,6 +136,76 @@ function virtualSpamRecipe(
  */
 recipesRouter.get('/templates', async (_req, res) => {
   res.json({ templates: RECIPE_TEMPLATES });
+});
+
+/**
+ * Pipeline catalog with per-user reach numbers. Drives the read-only
+ * "Pipeline" tab in the Recipes settings page so users can see —
+ * without scrolling through the wizard's trigger dropdown — every
+ * event Rose emits, what stage of the ingest pipeline produces it,
+ * which internal handlers consume it, and how many of their own
+ * recipes currently listen for it.
+ *
+ * The counts come from a single grouped Mongo aggregate against the
+ * Recipe collection, keyed on `trigger.kind`. User and global
+ * recipes counted separately so the UI can distinguish "this is a
+ * Rose-shipped automation" from "this is something I built."
+ */
+recipesRouter.get('/pipeline', async (req, res) => {
+  const userId = new Types.ObjectId(userIdOf(req));
+  type RawRecipeRow = {
+    _id: { kind: RecipeEventKind; scope: 'user' | 'global' };
+    count: number;
+    enabledCount: number;
+  };
+  const grouped = (await Recipe.aggregate([
+    {
+      $match: {
+        $or: [{ userId }, { scope: 'global' }],
+      },
+    },
+    {
+      $group: {
+        _id: { kind: '$trigger.kind', scope: '$scope' },
+        count: { $sum: 1 },
+        enabledCount: { $sum: { $cond: ['$enabled', 1, 0] } },
+      },
+    },
+  ])) as RawRecipeRow[];
+  type StageCounts = {
+    userRecipes: number;
+    userRecipesEnabled: number;
+    globalRecipes: number;
+    globalRecipesEnabled: number;
+  };
+  const counts = new Map<RecipeEventKind, StageCounts>();
+  for (const row of grouped) {
+    const k = row._id.kind;
+    const slot = counts.get(k) ?? {
+      userRecipes: 0,
+      userRecipesEnabled: 0,
+      globalRecipes: 0,
+      globalRecipesEnabled: 0,
+    };
+    if (row._id.scope === 'global') {
+      slot.globalRecipes += row.count;
+      slot.globalRecipesEnabled += row.enabledCount;
+    } else {
+      slot.userRecipes += row.count;
+      slot.userRecipesEnabled += row.enabledCount;
+    }
+    counts.set(k, slot);
+  }
+  const stages = PIPELINE_CATALOG.map((stage: PipelineStage) => {
+    const c = counts.get(stage.kind) ?? {
+      userRecipes: 0,
+      userRecipesEnabled: 0,
+      globalRecipes: 0,
+      globalRecipesEnabled: 0,
+    };
+    return { ...stage, ...c };
+  });
+  res.json({ stages });
 });
 
 recipesRouter.get('/', async (req, res) => {

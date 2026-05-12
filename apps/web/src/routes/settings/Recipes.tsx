@@ -21,6 +21,7 @@ import {
   ChevronRight,
   PlayCircle,
   XCircle,
+  Workflow,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useApi } from '../../lib/api';
@@ -70,7 +71,7 @@ export default function RecipesSettings() {
     staleTime: 60 * 1000,
   });
   const isAdmin = adminInfo?.isAdmin ?? false;
-  const [tab, setTab] = useState<'mine' | 'global'>('mine');
+  const [tab, setTab] = useState<'mine' | 'global' | 'pipeline'>('mine');
   const queryKey = tab === 'global' ? ['recipes', 'global'] : ['recipes'];
   const { data, isLoading } = useQuery({
     queryKey,
@@ -78,7 +79,7 @@ export default function RecipesSettings() {
       api.get<{ recipes: Recipe[] }>(
         tab === 'global' ? '/api/recipes?scope=global' : '/api/recipes',
       ),
-    enabled: tab === 'mine' || isAdmin,
+    enabled: (tab === 'mine' || tab === 'global') && (tab === 'mine' || isAdmin),
   });
   const [editing, setEditing] = useState<Recipe | null>(null);
   const [creating, setCreating] = useState(false);
@@ -149,24 +150,24 @@ export default function RecipesSettings() {
           subscription triggers and the four most common actions (push,
           tag, category, webhook).
         </p>
-        {isAdmin && (
-          <div className="mt-3 inline-flex rounded-md border border-ink-200 p-0.5 text-xs dark:border-ink-800">
-            <button
-              type="button"
-              className={
-                'rounded px-3 py-1 ' +
-                (tab === 'mine'
-                  ? 'bg-rose-500 text-white'
-                  : 'text-ink-600 dark:text-ink-300')
-              }
-              onClick={() => {
-                setTab('mine');
-                setEditing(null);
-                setCreating(false);
-              }}
-            >
-              My recipes
-            </button>
+        <div className="mt-3 inline-flex rounded-md border border-ink-200 p-0.5 text-xs dark:border-ink-800">
+          <button
+            type="button"
+            className={
+              'rounded px-3 py-1 ' +
+              (tab === 'mine'
+                ? 'bg-rose-500 text-white'
+                : 'text-ink-600 dark:text-ink-300')
+            }
+            onClick={() => {
+              setTab('mine');
+              setEditing(null);
+              setCreating(false);
+            }}
+          >
+            My recipes
+          </button>
+          {isAdmin && (
             <button
               type="button"
               className={
@@ -184,11 +185,30 @@ export default function RecipesSettings() {
             >
               Global (admin)
             </button>
-          </div>
-        )}
+          )}
+          <button
+            type="button"
+            className={
+              'inline-flex items-center gap-1 rounded px-3 py-1 ' +
+              (tab === 'pipeline'
+                ? 'bg-rose-500 text-white'
+                : 'text-ink-600 dark:text-ink-300')
+            }
+            onClick={() => {
+              setTab('pipeline');
+              setEditing(null);
+              setCreating(false);
+            }}
+            title="Read-only view of every event Rose emits + which handlers consume each one"
+          >
+            <Workflow className="h-3 w-3" /> Pipeline
+          </button>
+        </div>
       </div>
 
-      {!creating && !editing && !browsingTemplates && (
+      {tab === 'pipeline' && <PipelineView />}
+
+      {tab !== 'pipeline' && !creating && !editing && !browsingTemplates && (
         <div className="flex flex-wrap gap-2">
           <button
             type="button"
@@ -210,7 +230,7 @@ export default function RecipesSettings() {
         </div>
       )}
 
-      {browsingTemplates && (
+      {tab !== 'pipeline' && browsingTemplates && (
         <TemplatesGallery
           onCancel={() => setBrowsingTemplates(false)}
           onPick={(values) => {
@@ -221,7 +241,7 @@ export default function RecipesSettings() {
         />
       )}
 
-      {creating && (
+      {tab !== 'pipeline' && creating && (
         <RecipeWizard
           initial={
             templateInitial
@@ -237,7 +257,7 @@ export default function RecipesSettings() {
           submitting={create.isPending}
         />
       )}
-      {editing && (
+      {tab !== 'pipeline' && editing && (
         <RecipeWizard
           initial={editing}
           isAdmin={isAdmin}
@@ -247,7 +267,7 @@ export default function RecipesSettings() {
         />
       )}
 
-      {!creating && !editing && (
+      {tab !== 'pipeline' && !creating && !editing && (
         <div className="card">
           {isLoading ? (
             <div className="text-sm text-ink-500">Loading…</div>
@@ -432,6 +452,131 @@ type Template = {
   icon: string;
   recipe: RecipeFormValues;
 };
+
+/**
+ * Read-only pipeline view. Lists every event Rose's recipe
+ * dispatcher knows about, what stage of the ingest pipeline emits
+ * it, which internal handlers consume it (separate from user
+ * recipes), and how many of the requesting user's recipes are
+ * currently listening for it. Driven by GET /api/recipes/pipeline,
+ * which decorates the static PIPELINE_CATALOG with per-user counts.
+ */
+type PipelineStage = {
+  kind: string;
+  label: string;
+  description: string;
+  emittedBy: string[];
+  internalConsumers: { name: string; description: string }[];
+  shipped: 'phase-1' | 'phase-2';
+  userRecipes: number;
+  userRecipesEnabled: number;
+  globalRecipes: number;
+  globalRecipesEnabled: number;
+};
+
+function PipelineView() {
+  const api = useApi();
+  const { data, isLoading } = useQuery({
+    queryKey: ['recipes', 'pipeline'],
+    queryFn: () => api.get<{ stages: PipelineStage[] }>('/api/recipes/pipeline'),
+    staleTime: 30 * 1000,
+  });
+  if (isLoading) {
+    return (
+      <div className="card text-sm text-ink-500">Loading pipeline…</div>
+    );
+  }
+  const stages = data?.stages ?? [];
+  return (
+    <div className="space-y-3">
+      <div className="card">
+        <p className="text-sm text-ink-500">
+          Every step in Rose's ingest pipeline that emits a recipe
+          event. The internal consumers run unconditionally — your
+          recipes layer on top, they don't replace them. Counts on
+          the right reflect <em>your</em> recipes (plus any
+          enabled-by-default global recipes that ship with Rose).
+        </p>
+      </div>
+      <ul className="space-y-2">
+        {stages.map((s) => (
+          <li
+            key={s.kind}
+            className="card flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between"
+          >
+            <div className="min-w-0 flex-1 space-y-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-mono text-xs text-rose-600 dark:text-rose-400">
+                  {s.kind}
+                </span>
+                <span className="font-semibold">{s.label}</span>
+                {s.shipped === 'phase-2' && (
+                  <span className="inline-flex items-center rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-medium text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200">
+                    new
+                  </span>
+                )}
+              </div>
+              <p className="text-xs text-ink-600 dark:text-ink-400">
+                {s.description}
+              </p>
+              <div className="grid gap-2 text-xs sm:grid-cols-2">
+                <div>
+                  <div className="mb-0.5 text-[10px] uppercase tracking-widest text-ink-500">
+                    Emitted by
+                  </div>
+                  <ul className="space-y-0.5 text-ink-700 dark:text-ink-300">
+                    {s.emittedBy.map((e) => (
+                      <li key={e}>• {e}</li>
+                    ))}
+                  </ul>
+                </div>
+                <div>
+                  <div className="mb-0.5 text-[10px] uppercase tracking-widest text-ink-500">
+                    Internal consumers
+                  </div>
+                  {s.internalConsumers.length === 0 ? (
+                    <div className="text-ink-400 dark:text-ink-500">
+                      None — your recipes are the only listener.
+                    </div>
+                  ) : (
+                    <ul className="space-y-1">
+                      {s.internalConsumers.map((c) => (
+                        <li key={c.name}>
+                          <span className="font-medium text-ink-700 dark:text-ink-300">
+                            {c.name}
+                          </span>
+                          <span className="text-ink-500"> — {c.description}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              </div>
+            </div>
+            <div className="shrink-0 text-right text-xs">
+              <div className="font-semibold text-ink-700 dark:text-ink-300">
+                {s.userRecipesEnabled}
+                {s.userRecipes > s.userRecipesEnabled && (
+                  <span className="text-ink-400">/{s.userRecipes}</span>
+                )}{' '}
+                <span className="font-normal text-ink-500">your recipes</span>
+              </div>
+              {s.globalRecipes > 0 && (
+                <div className="text-ink-500">
+                  {s.globalRecipesEnabled}
+                  {s.globalRecipes > s.globalRecipesEnabled && (
+                    <span className="text-ink-400">/{s.globalRecipes}</span>
+                  )}{' '}
+                  global
+                </div>
+              )}
+            </div>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
 
 function TemplatesGallery({
   onCancel,
