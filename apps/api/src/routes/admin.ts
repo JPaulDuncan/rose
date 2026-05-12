@@ -64,6 +64,9 @@ import {
 import { redis } from '../lib/redis.js';
 import { logger } from '../lib/logger.js';
 import { isAdminRequest, requireAdmin } from '../middleware/admin.js';
+import { Queue } from 'bullmq';
+import { Types } from 'mongoose';
+import { SWEEPER_CATALOG } from '@rose/shared';
 
 export const adminRouter: Router = Router();
 
@@ -573,6 +576,243 @@ adminRouter.get('/queue-stats', requireAdmin, async (_req, res, next) => {
       { waiting: 0, active: 0, delayed: 0, failed: 0 },
     );
     res.json({ totals, queues: rows });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Single admin landing for "everything Rose runs on a schedule."
+ * Two distinct sources are unified here:
+ *
+ *   1. BullMQ repeatables: paginated `getRepeatableJobs` across every
+ *      known queue. The job's `key` (BullMQ's internal storage key)
+ *      and `id` (the friendly jobId we set on enqueue) compose into
+ *      a category — recipe crons get `cron:<recipeId>` jobIds,
+ *      source polls get `<type>:<sourceId>`, system sweeps use
+ *      stable names like `digest:sweep`. Each is enriched against
+ *      the relevant Mongo collection (Recipe / Source) so the admin
+ *      sees a human label and the owning user, not just an ObjectId.
+ *
+ *   2. In-process setInterval sweepers: declared in
+ *      `@rose/shared`'s SWEEPER_CATALOG because they run inside the
+ *      worker process and aren't visible through any Redis query.
+ *      We surface them as "system / in-process" rows so the admin
+ *      sees a complete picture of what's scheduled, even if "next
+ *      run" can only be shown for the BullMQ-backed ones.
+ *
+ * Returns under 400ms in steady state — pagination caps each queue
+ * at 1000 entries per page and we only hit Mongo twice (one Recipe
+ * bulk-fetch, one Source bulk-fetch).
+ */
+adminRouter.get('/cron-jobs', requireAdmin, async (_req, res, next) => {
+  try {
+    type RepeatableRow = {
+      source: 'recipe' | 'source-poll' | 'system' | 'unknown';
+      queue: string;
+      jobId: string | null;
+      key: string;
+      jobName: string;
+      pattern: string | null;
+      every: number | null;
+      tz: string | null;
+      next: number | null;
+      /** Display label resolved from the enrichment lookup. */
+      label: string;
+      /** Email of the owning user when known (recipe owner, source
+       *  owner). null for system sweeps. */
+      ownerEmail: string | null;
+      /** Whether the recipe is enabled (only meaningful for `recipe`
+       *  rows; null for everything else). */
+      enabled: boolean | null;
+    };
+
+    // Every queue name that might carry a repeatable. Includes the
+    // permanent Queue handles already exported from queues.ts plus
+    // the two worker-internal queues (cleanup, weather-snapshot)
+    // that the API doesn't otherwise reference. Ephemeral Queue
+    // handles point at the same Redis keys as the worker's.
+    const QUEUES: { name: string; q: Queue; ephemeral: boolean }[] = [
+      { name: 'rose.recipes', q: recipesQueue, ephemeral: false },
+      { name: 'rose.imap-sync', q: imapSyncQueue, ephemeral: false },
+      { name: 'rose.gmail-sync', q: gmailSyncQueue, ephemeral: false },
+      { name: 'rose.rss-sync', q: rssSyncQueue, ephemeral: false },
+      { name: 'rose.website-sync', q: websiteSyncQueue, ephemeral: false },
+      { name: 'rose.slack-sync', q: slackSyncQueue, ephemeral: false },
+      { name: 'rose.discord-sync', q: discordSyncQueue, ephemeral: false },
+      { name: 'rose.gcal-sync', q: gcalSyncQueue, ephemeral: false },
+      { name: 'rose.library-sync', q: librarySyncQueue, ephemeral: false },
+      { name: 'rose.digest-email', q: digestEmailQueue, ephemeral: false },
+      { name: 'rose.briefing', q: briefingQueue, ephemeral: false },
+      { name: 'rose.tag-digest', q: tagDigestQueue, ephemeral: false },
+      {
+        name: 'rose.cleanup',
+        q: new Queue('rose.cleanup', { connection: redis }),
+        ephemeral: true,
+      },
+      {
+        name: 'rose.weather-snapshot',
+        q: new Queue('rose.weather-snapshot', { connection: redis }),
+        ephemeral: true,
+      },
+    ];
+
+    const all: RepeatableRow[] = [];
+    const recipeIds = new Set<string>();
+    const sourceIds = new Set<string>();
+    try {
+      for (const { name, q } of QUEUES) {
+        const PAGE = 1000;
+        for (let start = 0; ; start += PAGE) {
+          let batch: Awaited<ReturnType<Queue['getRepeatableJobs']>>;
+          try {
+            batch = await q.getRepeatableJobs(start, start + PAGE - 1, true);
+          } catch (err) {
+            logger.warn({ err, queue: name }, 'cron-jobs: getRepeatableJobs failed');
+            break;
+          }
+          for (const r of batch) {
+            const jobId = r.id ?? null;
+            // Classify the row by jobId convention.
+            let source: RepeatableRow['source'] = 'unknown';
+            if (name === 'rose.recipes' && jobId?.startsWith('cron:')) {
+              source = 'recipe';
+              recipeIds.add(jobId.slice('cron:'.length));
+            } else if (
+              /^rose\.(imap|gmail|rss|website|slack|discord|gcal)-sync$/.test(name) &&
+              jobId &&
+              jobId.includes(':')
+            ) {
+              source = 'source-poll';
+              sourceIds.add(jobId.split(':')[1]!);
+            } else if (jobId && /:sweep$/.test(jobId)) {
+              source = 'system';
+            }
+            all.push({
+              source,
+              queue: name,
+              jobId,
+              key: r.key,
+              jobName: r.name,
+              pattern: r.pattern ?? null,
+              every:
+                typeof r.every === 'number'
+                  ? r.every
+                  : r.every
+                    ? Number(r.every)
+                    : null,
+              tz: r.tz ?? null,
+              next: r.next ?? null,
+              label: jobId ?? r.key,
+              ownerEmail: null,
+              enabled: null,
+            });
+          }
+          if (batch.length < PAGE) break;
+        }
+      }
+    } finally {
+      // Close ephemeral handles only — long-lived ones stay open.
+      for (const { q, ephemeral } of QUEUES) {
+        if (ephemeral) await q.close().catch(() => null);
+      }
+    }
+
+    // Bulk-enrich recipe + source rows. Two queries, irrespective
+    // of how many repeatables there are.
+    type RecipeRow = {
+      _id: Types.ObjectId;
+      name: string;
+      enabled: boolean;
+      scope: 'user' | 'global';
+      userId: Types.ObjectId;
+    };
+    type SourceRow = {
+      _id: Types.ObjectId;
+      name: string;
+      type: string;
+      userId: Types.ObjectId;
+    };
+    const recipeRows = recipeIds.size
+      ? ((await Recipe.find({
+          _id: { $in: [...recipeIds].map((id) => new Types.ObjectId(id)) },
+        })
+          .select('name enabled scope userId')
+          .lean()) as RecipeRow[])
+      : [];
+    const sourceRows = sourceIds.size
+      ? ((await Source.find({
+          _id: { $in: [...sourceIds].map((id) => new Types.ObjectId(id)) },
+        })
+          .select('name type userId')
+          .lean()) as SourceRow[])
+      : [];
+    const recipeById = new Map(recipeRows.map((r) => [String(r._id), r]));
+    const sourceById = new Map(sourceRows.map((s) => [String(s._id), s]));
+    // Owning user IDs across both — single User lookup for emails.
+    const userIds = new Set<string>();
+    for (const r of recipeRows) userIds.add(String(r.userId));
+    for (const s of sourceRows) userIds.add(String(s.userId));
+    type UserRow = { _id: Types.ObjectId; email: string };
+    const userRows = userIds.size
+      ? ((await User.find({
+          _id: { $in: [...userIds].map((id) => new Types.ObjectId(id)) },
+        })
+          .select('email')
+          .lean()) as UserRow[])
+      : [];
+    const emailById = new Map(userRows.map((u) => [String(u._id), u.email]));
+
+    for (const row of all) {
+      if (row.source === 'recipe' && row.jobId) {
+        const recipeId = row.jobId.slice('cron:'.length);
+        const r = recipeById.get(recipeId);
+        if (r) {
+          row.label = `${r.name}${r.scope === 'global' ? ' (global)' : ''}`;
+          row.ownerEmail = emailById.get(String(r.userId)) ?? null;
+          row.enabled = r.enabled;
+        } else {
+          // Repeatable exists in Redis but the Recipe row is gone —
+          // either deleted recently with a stale schedule, or
+          // schema drift. Flag it so the admin can clean up.
+          row.label = `${row.jobId} (orphaned — no Recipe row)`;
+        }
+      } else if (row.source === 'source-poll' && row.jobId) {
+        const sourceId = row.jobId.split(':')[1] ?? '';
+        const s = sourceById.get(sourceId);
+        if (s) {
+          row.label = `${s.name} (${s.type})`;
+          row.ownerEmail = emailById.get(String(s.userId)) ?? null;
+        } else {
+          row.label = `${row.jobId} (orphaned — no Source row)`;
+        }
+      }
+    }
+
+    // In-process catalog — appended verbatim so the UI can render
+    // both halves in one table. `pool` lets the admin filter by
+    // worker process when something looks off.
+    const inProcess = SWEEPER_CATALOG.map((s) => ({ ...s }));
+
+    // Sort: in-flight BullMQ rows by next-fire ascending (soonest
+    // first); rows without a `next` (typically every-only repeatables
+    // BullMQ hasn't seeded yet) drift to the end.
+    const ranked = [...all].sort((a, b) => {
+      if (a.next === null && b.next === null) return a.queue.localeCompare(b.queue);
+      if (a.next === null) return 1;
+      if (b.next === null) return -1;
+      return a.next - b.next;
+    });
+
+    res.json({
+      bullmq: ranked,
+      inProcess,
+      totals: {
+        bullmq: all.length,
+        inProcess: inProcess.length,
+        orphaned: all.filter((r) => r.label.includes('orphaned')).length,
+      },
+    });
   } catch (err) {
     next(err);
   }

@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Activity, ShieldAlert, Trash2 } from 'lucide-react';
+import { Activity, ShieldAlert, Trash2, Clock } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useApi } from '../../lib/api';
 
@@ -109,6 +109,7 @@ export default function AdminSettingsPage() {
   return (
     <div className="space-y-4">
       <QueueStats />
+      <CronJobs />
       <ExtractionCoverage />
 
       <div className="card border-red-300 bg-red-50 dark:border-red-900/40 dark:bg-red-950/20">
@@ -409,6 +410,259 @@ function QueueStats() {
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * All-cron-jobs admin view. One table for BullMQ repeatables (recipe
+ * crons, source polls, system sweeps stored in Redis), one for the
+ * setInterval-based in-process sweepers that the API can't poll
+ * directly. The Bull rows show next-fire timestamp + owning user
+ * email when known; the in-process rows show declared cadence + the
+ * worker pool they run in.
+ *
+ * Refreshes every 30s — fast enough to spot a scheduling drift but
+ * slow enough that we're not constantly paginating through
+ * `getRepeatableJobs` on every queue.
+ */
+type CronRow = {
+  source: 'recipe' | 'source-poll' | 'system' | 'unknown';
+  queue: string;
+  jobId: string | null;
+  key: string;
+  jobName: string;
+  pattern: string | null;
+  every: number | null;
+  tz: string | null;
+  next: number | null;
+  label: string;
+  ownerEmail: string | null;
+  enabled: boolean | null;
+};
+
+type SweeperRow = {
+  id: string;
+  label: string;
+  description: string;
+  intervalMs: number;
+  pool: 'bg' | 'io' | 'llm' | 'all';
+  definedAt: string;
+};
+
+type CronJobsResponse = {
+  bullmq: CronRow[];
+  inProcess: SweeperRow[];
+  totals: { bullmq: number; inProcess: number; orphaned: number };
+};
+
+function formatEvery(ms: number | null): string {
+  if (!ms || ms <= 0) return '—';
+  if (ms < 60_000) return `${Math.round(ms / 1000)}s`;
+  if (ms < 60 * 60_000) return `${Math.round(ms / 60_000)}m`;
+  if (ms < 24 * 60 * 60_000) {
+    const h = ms / (60 * 60_000);
+    return Number.isInteger(h) ? `${h}h` : `${h.toFixed(1)}h`;
+  }
+  return `${Math.round(ms / (24 * 60 * 60_000))}d`;
+}
+
+function formatNext(next: number | null): string {
+  if (!next) return '—';
+  const ms = next - Date.now();
+  if (ms <= 0) return 'imminent';
+  if (ms < 60_000) return `in ${Math.round(ms / 1000)}s`;
+  if (ms < 60 * 60_000) return `in ${Math.round(ms / 60_000)}m`;
+  if (ms < 24 * 60 * 60_000) {
+    const h = ms / (60 * 60_000);
+    return `in ${Number.isInteger(h) ? h : h.toFixed(1)}h`;
+  }
+  return `in ${Math.round(ms / (24 * 60 * 60_000))}d`;
+}
+
+function CronJobs() {
+  const api = useApi();
+  const [open, setOpen] = useState(false);
+  const [filter, setFilter] = useState<'all' | 'recipe' | 'source-poll' | 'system' | 'in-process'>(
+    'all',
+  );
+  const { data } = useQuery({
+    queryKey: ['admin-cron-jobs'],
+    queryFn: () => api.get<CronJobsResponse>('/api/admin/cron-jobs'),
+    refetchInterval: 30_000,
+    refetchIntervalInBackground: false,
+  });
+  if (!data) {
+    return (
+      <div className="card flex items-center gap-2 text-sm text-ink-500">
+        <Clock className="h-4 w-4" /> Cron jobs loading…
+      </div>
+    );
+  }
+  const counts = {
+    recipe: data.bullmq.filter((r) => r.source === 'recipe').length,
+    'source-poll': data.bullmq.filter((r) => r.source === 'source-poll').length,
+    system: data.bullmq.filter((r) => r.source === 'system' || r.source === 'unknown').length,
+    'in-process': data.inProcess.length,
+  };
+  const filteredBull = data.bullmq.filter((r) => {
+    if (filter === 'all') return true;
+    if (filter === 'recipe' || filter === 'source-poll') return r.source === filter;
+    if (filter === 'system') return r.source === 'system' || r.source === 'unknown';
+    return false;
+  });
+  const showInProcess = filter === 'all' || filter === 'in-process';
+  return (
+    <div className="card">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center gap-3"
+        title="Every scheduled task in the system (refreshes every 30s)"
+      >
+        <Clock className="h-4 w-4 text-rose-500" />
+        <h2 className="font-semibold">Cron jobs</h2>
+        <span className="ml-auto rounded-full bg-ink-100 px-2 py-0.5 font-mono text-xs dark:bg-ink-800">
+          {data.totals.bullmq} scheduled · {data.totals.inProcess} in-process
+          {data.totals.orphaned > 0 && (
+            <span className="ml-1 text-amber-700 dark:text-amber-400">
+              · {data.totals.orphaned} orphan
+            </span>
+          )}
+        </span>
+        <span className="text-xs text-ink-500">{open ? 'hide' : 'show'}</span>
+      </button>
+      {open && (
+        <div className="mt-3 space-y-3">
+          <div className="flex flex-wrap gap-1 text-xs">
+            {(
+              [
+                ['all', `All (${data.bullmq.length + data.inProcess.length})`],
+                ['recipe', `Recipes (${counts.recipe})`],
+                ['source-poll', `Source polls (${counts['source-poll']})`],
+                ['system', `System sweeps (${counts.system})`],
+                ['in-process', `In-process (${counts['in-process']})`],
+              ] as const
+            ).map(([k, label]) => (
+              <button
+                key={k}
+                type="button"
+                onClick={() => setFilter(k)}
+                className={
+                  'rounded-full border px-2.5 py-0.5 ' +
+                  (filter === k
+                    ? 'border-rose-300 bg-rose-100 text-rose-800 dark:border-rose-700 dark:bg-rose-950/40 dark:text-rose-200'
+                    : 'border-ink-200 text-ink-600 hover:bg-ink-50 dark:border-ink-800 dark:text-ink-300 dark:hover:bg-ink-900')
+                }
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          {filteredBull.length === 0 && filter !== 'in-process' && (
+            <div className="text-xs text-ink-500">No scheduled jobs in this category.</div>
+          )}
+          {filteredBull.length > 0 && (
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-xs">
+                <thead className="text-[10px] uppercase tracking-widest text-ink-500">
+                  <tr>
+                    <th className="px-2 py-1 text-left">Source</th>
+                    <th className="px-2 py-1 text-left">Label</th>
+                    <th className="px-2 py-1 text-left">Owner</th>
+                    <th className="px-2 py-1 text-left">Cadence</th>
+                    <th className="px-2 py-1 text-left">Next</th>
+                    <th className="px-2 py-1 text-left">Queue</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredBull.map((r) => (
+                    <tr
+                      key={`${r.queue}:${r.key}`}
+                      className="border-t border-ink-100 align-top dark:border-ink-800"
+                    >
+                      <td className="px-2 py-1">
+                        <span
+                          className={
+                            'rounded px-1.5 py-0.5 text-[10px] font-medium ' +
+                            (r.source === 'recipe'
+                              ? 'bg-sky-100 text-sky-800 dark:bg-sky-950/40 dark:text-sky-300'
+                              : r.source === 'source-poll'
+                                ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300'
+                                : r.source === 'system'
+                                  ? 'bg-violet-100 text-violet-800 dark:bg-violet-950/40 dark:text-violet-300'
+                                  : 'bg-ink-100 text-ink-700 dark:bg-ink-800 dark:text-ink-300')
+                          }
+                        >
+                          {r.source}
+                        </span>
+                      </td>
+                      <td className="px-2 py-1">
+                        <div className="font-medium">{r.label}</div>
+                        {r.enabled === false && (
+                          <div className="text-[10px] text-amber-700 dark:text-amber-400">
+                            disabled
+                          </div>
+                        )}
+                        {r.label.includes('orphaned') && (
+                          <div className="text-[10px] text-amber-700 dark:text-amber-400">
+                            stale repeatable
+                          </div>
+                        )}
+                      </td>
+                      <td className="px-2 py-1 text-ink-500">{r.ownerEmail ?? '—'}</td>
+                      <td className="px-2 py-1 font-mono">
+                        {r.pattern ? r.pattern : formatEvery(r.every)}
+                        {r.tz && r.tz !== 'UTC' && (
+                          <span className="ml-1 text-[10px] text-ink-500">({r.tz})</span>
+                        )}
+                      </td>
+                      <td className="px-2 py-1 text-ink-500">{formatNext(r.next)}</td>
+                      <td className="px-2 py-1 font-mono text-[10px] text-ink-500">
+                        {r.queue}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {showInProcess && data.inProcess.length > 0 && (
+            <div>
+              <div className="mb-1 mt-3 text-[10px] uppercase tracking-widest text-ink-500">
+                In-process sweepers (setInterval, run inside the worker process)
+              </div>
+              <table className="min-w-full text-xs">
+                <thead className="text-[10px] uppercase tracking-widest text-ink-500">
+                  <tr>
+                    <th className="px-2 py-1 text-left">Sweeper</th>
+                    <th className="px-2 py-1 text-left">Cadence</th>
+                    <th className="px-2 py-1 text-left">Pool</th>
+                    <th className="px-2 py-1 text-left">Does</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.inProcess.map((s) => (
+                    <tr
+                      key={s.id}
+                      className="border-t border-ink-100 align-top dark:border-ink-800"
+                    >
+                      <td className="px-2 py-1 font-medium">{s.label}</td>
+                      <td className="px-2 py-1 font-mono">{formatEvery(s.intervalMs)}</td>
+                      <td className="px-2 py-1 font-mono text-[10px] text-ink-500">
+                        {s.pool}
+                      </td>
+                      <td className="px-2 py-1 text-ink-600 dark:text-ink-300">
+                        {s.description}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       )}
     </div>
