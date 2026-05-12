@@ -28,6 +28,7 @@ import {
   compileSenderBlocklist,
   isSenderWhitelisted,
   senderDomainTag,
+  extractHtmlMetadata,
 } from '@rose/email-parser';
 import { redis, bullConnection } from '../lib/redis.js';
 import { logger } from '../lib/logger.js';
@@ -169,7 +170,53 @@ function renderLabeledThreads(
           text = stripAdSectionsStrict(text).cleaned;
         }
         text = text.slice(0, 6000);
-        return `  [${label}] From: ${from} | Date: ${date} | Subject: ${subj}\n  """\n  ${text.replace(/\n/g, '\n  ')}\n  """`;
+
+        // HTML-metadata scaffold. When the email body's HTML carries
+        // a quality title / description / Article headline, surface
+        // them as priors so the LLM can reuse the human-authored text
+        // verbatim instead of rewriting from scratch. Drops the
+        // metadata block when every field is missing or redundant
+        // with the subject — no point in spending prompt tokens to
+        // tell the LLM "the title is what you already see".
+        const html = (e.html as string | undefined) ?? '';
+        const meta = html ? extractHtmlMetadata(html) : null;
+        const metaLines: string[] = [];
+        const subjLc = subj.trim().toLowerCase();
+        function metaIsNovel(s: string | null): boolean {
+          if (!s) return false;
+          const t = s.trim().toLowerCase();
+          if (!t) return false;
+          // Heuristic dedup: skip when the metadata is a substring of
+          // the subject or vice-versa. Most templated mail repeats
+          // the subject in og:title, which would just bloat the
+          // prompt.
+          return !(t === subjLc || t.includes(subjLc) || subjLc.includes(t));
+        }
+        if (meta) {
+          if (metaIsNovel(meta.title)) {
+            metaLines.push(`  META-TITLE: ${meta.title!.slice(0, 200)}`);
+          }
+          if (metaIsNovel(meta.description)) {
+            metaLines.push(
+              `  META-DESCRIPTION: ${meta.description!.slice(0, 400)}`,
+            );
+          }
+          if (meta.articleHeadline && meta.articleHeadline !== meta.title) {
+            metaLines.push(
+              `  ARTICLE-HEADLINE: ${meta.articleHeadline.slice(0, 200)}`,
+            );
+          }
+          if (
+            meta.articleDescription &&
+            meta.articleDescription !== meta.description
+          ) {
+            metaLines.push(
+              `  ARTICLE-DESCRIPTION: ${meta.articleDescription.slice(0, 400)}`,
+            );
+          }
+        }
+        const metaBlock = metaLines.length > 0 ? `\n${metaLines.join('\n')}` : '';
+        return `  [${label}] From: ${from} | Date: ${date} | Subject: ${subj}${metaBlock}\n  """\n  ${text.replace(/\n/g, '\n  ')}\n  """`;
       })
       .join('\n');
     blocks.push(`${head}\n${body}`);

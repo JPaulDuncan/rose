@@ -6,9 +6,11 @@ export {
   extractJsonLd,
   parseStructuredReceipt,
   parseStructuredSubscription,
+  extractHtmlMetadata,
   type StructuredReceipt,
   type StructuredSubscription,
   type StructuredProduct,
+  type HtmlMetadata,
 } from './structured.js';
 export {
   extractEmailMetadata,

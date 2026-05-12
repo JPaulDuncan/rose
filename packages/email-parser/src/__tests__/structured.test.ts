@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   extractJsonLd,
+  extractHtmlMetadata,
   parseStructuredReceipt,
   parseStructuredSubscription,
 } from '../structured.js';
@@ -228,5 +229,90 @@ describe('parseStructuredSubscription', () => {
 
   it('returns null when there is no structured data', () => {
     expect(parseStructuredSubscription(NO_STRUCTURED_DATA)).toBeNull();
+  });
+});
+
+describe('extractHtmlMetadata', () => {
+  it('reads og:title and og:description when both are present', () => {
+    const html = `
+      <html><head>
+        <meta property="og:title" content="Welcome to Acme" />
+        <meta property="og:description" content="Sign up for our newsletter and stay informed." />
+        <title>Acme — Email</title>
+      </head><body></body></html>
+    `;
+    const m = extractHtmlMetadata(html);
+    expect(m.title).toBe('Welcome to Acme');
+    expect(m.description).toBe(
+      'Sign up for our newsletter and stay informed.',
+    );
+  });
+
+  it('tolerates attribute order — content-before-property', () => {
+    const html = `
+      <meta content="Order Confirmation" property="og:title">
+      <meta content="Your order is on the way." name="og:description">
+    `;
+    const m = extractHtmlMetadata(html);
+    expect(m.title).toBe('Order Confirmation');
+    expect(m.description).toBe('Your order is on the way.');
+  });
+
+  it('falls back through <title> then <h1> when og:title is absent', () => {
+    const m1 = extractHtmlMetadata('<title>Hello World</title>');
+    expect(m1.title).toBe('Hello World');
+    const m2 = extractHtmlMetadata('<h1>Big <em>News</em> Today</h1>');
+    expect(m2.title).toBe('Big News Today');
+  });
+
+  it('reads twitter:description / meta name=description as description fallbacks', () => {
+    const m1 = extractHtmlMetadata(
+      '<meta name="twitter:description" content="Tweet preview." />',
+    );
+    expect(m1.description).toBe('Tweet preview.');
+    const m2 = extractHtmlMetadata(
+      '<meta name="description" content="Default desc." />',
+    );
+    expect(m2.description).toBe('Default desc.');
+  });
+
+  it('reads schema.org Article headline + description', () => {
+    const html = `
+      <script type="application/ld+json">
+        {
+          "@type": "NewsArticle",
+          "headline": "Big news from the lab",
+          "description": "Researchers published a paper today."
+        }
+      </script>
+    `;
+    const m = extractHtmlMetadata(html);
+    expect(m.articleHeadline).toBe('Big news from the lab');
+    expect(m.articleDescription).toBe('Researchers published a paper today.');
+  });
+
+  it('decodes the common HTML entities', () => {
+    const html = `
+      <meta property="og:title" content="Tom &amp; Jerry &#39;Tales&#39;" />
+    `;
+    const m = extractHtmlMetadata(html);
+    expect(m.title).toBe("Tom & Jerry 'Tales'");
+  });
+
+  it('returns all-nulls for empty / unstructured HTML', () => {
+    const m = extractHtmlMetadata('<html><body><p>just text</p></body></html>');
+    expect(m).toEqual({
+      title: null,
+      description: null,
+      articleHeadline: null,
+      articleDescription: null,
+    });
+  });
+
+  it('collapses whitespace inside titles', () => {
+    const m = extractHtmlMetadata(
+      '<title>Some\n  long\t title  with    spaces</title>',
+    );
+    expect(m.title).toBe('Some long title with spaces');
   });
 });
