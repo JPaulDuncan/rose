@@ -108,6 +108,8 @@ export default function AdminSettingsPage() {
 
   return (
     <div className="space-y-4">
+      <ExtractionCoverage />
+
       <div className="card border-red-300 bg-red-50 dark:border-red-900/40 dark:bg-red-950/20">
         <div className="mb-2 flex items-center gap-2">
           <ShieldAlert className="h-5 w-5 text-red-600" />
@@ -269,6 +271,199 @@ export default function AdminSettingsPage() {
           </ul>
         </div>
       )}
+    </div>
+  );
+}
+
+/* ─── Extraction coverage + backfill ──────────────────────────── */
+
+type ExtractionStats = {
+  purchases: {
+    total: number;
+    structured: number;
+    llm: number;
+    structuredRatio: number;
+    candidatePages: number;
+  };
+  subscriptions: {
+    total: number;
+    structured: number;
+    llm: number;
+    structuredRatio: number;
+  };
+  daydream: {
+    total: number;
+    wikipediaVerbatim: number;
+    llm: number;
+    verbatimRatio: number;
+  };
+  relations: {
+    total: number;
+    wikidataConfirmed: number;
+    archiveOnly: number;
+    wikidataRatio: number;
+  };
+  pages: {
+    total: number;
+    withRelationsExtracted: number;
+  };
+};
+
+/**
+ * Coverage panel for the four extractors that gained
+ * deterministic / structured-data fast paths. Shows what
+ * percentage of each collection is on the LLM-free path; lets the
+ * admin trigger a backfill that re-runs the extractors against
+ * historical pages so they can upgrade.
+ *
+ * Idempotent: extractors short-circuit on unchanged contentMd, so
+ * re-running the backfill at any time is safe.
+ */
+function ExtractionCoverage() {
+  const api = useApi();
+  const qc = useQueryClient();
+  const { data: stats } = useQuery({
+    queryKey: ['admin-extraction-stats'],
+    queryFn: () => api.get<ExtractionStats>('/api/admin/extraction-stats'),
+    refetchInterval: 60_000,
+  });
+  const backfill = useMutation({
+    mutationFn: async (kind: string) =>
+      api.post<{ kind: string; candidatePages: number; enqueued: number }>(
+        '/api/admin/backfill',
+        { kind },
+      ),
+    onSuccess: (r) => {
+      toast.success(
+        `Backfill enqueued: ${r.enqueued.toLocaleString()} ${r.kind} pages`,
+      );
+      qc.invalidateQueries({ queryKey: ['admin-extraction-stats'] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+  if (!stats) {
+    return (
+      <div className="card text-sm text-ink-500">Loading coverage…</div>
+    );
+  }
+  const rows: {
+    label: string;
+    kind: string;
+    fastPath: string;
+    fast: number;
+    total: number;
+    ratio: number;
+  }[] = [
+    {
+      label: 'Receipts → product purchases',
+      kind: 'receipt',
+      fastPath: 'schema.org JSON-LD',
+      fast: stats.purchases.structured,
+      total: stats.purchases.total,
+      ratio: stats.purchases.structuredRatio,
+    },
+    {
+      label: 'Subscriptions',
+      kind: 'subscription',
+      fastPath: 'schema.org JSON-LD',
+      fast: stats.subscriptions.structured,
+      total: stats.subscriptions.total,
+      ratio: stats.subscriptions.structuredRatio,
+    },
+    {
+      label: 'Daydream notes',
+      kind: 'daydream',
+      fastPath: 'Wikipedia verbatim',
+      fast: stats.daydream.wikipediaVerbatim,
+      total: stats.daydream.total,
+      ratio: stats.daydream.verbatimRatio,
+    },
+    {
+      label: 'Entity relations',
+      kind: 'relations',
+      fastPath: 'Wikidata SPARQL',
+      fast: stats.relations.wikidataConfirmed,
+      total: stats.relations.total,
+      ratio: stats.relations.wikidataRatio,
+    },
+  ];
+  return (
+    <div className="card">
+      <div className="mb-3 flex items-center gap-2">
+        <ShieldAlert className="h-4 w-4 text-rose-500" />
+        <h2 className="font-semibold">Extraction coverage</h2>
+        <button
+          type="button"
+          className="ml-auto btn-secondary text-xs"
+          onClick={() => backfill.mutate('all')}
+          disabled={backfill.isPending}
+          title="Re-run every extractor across every page"
+        >
+          Backfill all
+        </button>
+      </div>
+      <p className="mb-3 text-xs text-ink-500">
+        Each row shows what fraction of the collection is on the
+        deterministic / structured-data fast path (lower LLM cost,
+        higher fidelity). Backfill replays the extractor against
+        historical pages so they can upgrade in place. Idempotent —
+        unchanged pages short-circuit.
+      </p>
+      <ul className="space-y-3 text-sm">
+        {rows.map((r) => {
+          const pct = Math.round(r.ratio * 100);
+          return (
+            <li
+              key={r.kind}
+              className="rounded-lg border border-ink-200 px-3 py-2 dark:border-ink-800"
+            >
+              <div className="flex items-baseline gap-3">
+                <span className="font-medium">{r.label}</span>
+                <span className="text-xs text-ink-500">
+                  ({r.fastPath})
+                </span>
+                <span className="ml-auto text-xs text-ink-500">
+                  {r.fast.toLocaleString()} of {r.total.toLocaleString()} —{' '}
+                  <strong
+                    className={
+                      pct >= 60
+                        ? 'text-emerald-700 dark:text-emerald-300'
+                        : pct >= 25
+                          ? 'text-amber-700 dark:text-amber-300'
+                          : 'text-red-700 dark:text-red-300'
+                    }
+                  >
+                    {pct}%
+                  </strong>{' '}
+                  fast path
+                </span>
+                <button
+                  type="button"
+                  className="btn-ghost text-xs"
+                  onClick={() => backfill.mutate(r.kind)}
+                  disabled={backfill.isPending}
+                  title={`Replay the ${r.kind} extractor across historical pages`}
+                >
+                  Backfill
+                </button>
+              </div>
+              <div className="mt-2 h-1 overflow-hidden rounded bg-ink-100 dark:bg-ink-800">
+                <div
+                  className={
+                    'h-full ' +
+                    (pct >= 60
+                      ? 'bg-emerald-500'
+                      : pct >= 25
+                        ? 'bg-amber-500'
+                        : 'bg-red-500')
+                  }
+                  style={{ width: `${pct}%` }}
+                />
+              </div>
+            </li>
+          );
+        })}
+      </ul>
     </div>
   );
 }

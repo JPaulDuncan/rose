@@ -43,6 +43,14 @@ export const QUEUE_NAMES = {
    * updates the Page back to researchState='idle' on completion.
    */
   topicResearch: 'rose.topic-research',
+  /**
+   * Extraction backfill — replays the receipt / subscription /
+   * relations / daydream extractors against pages that pre-date
+   * the extractor or that were processed by an earlier (LLM-only)
+   * version of it. Idempotent: every extractor short-circuits via
+   * its own content-hash gate.
+   */
+  backfill: 'rose.backfill',
 } as const;
 
 export type QueueName = (typeof QUEUE_NAMES)[keyof typeof QUEUE_NAMES];
@@ -72,5 +80,6 @@ export const tagDigestQueue = new Queue(QUEUE_NAMES.tagDigest, connection);
 export const postWriteHooksQueue = new Queue(QUEUE_NAMES.postWriteHooks, connection);
 export const recipesQueue = new Queue(QUEUE_NAMES.recipes, connection);
 export const topicResearchQueue = new Queue(QUEUE_NAMES.topicResearch, connection);
+export const backfillQueue = new Queue(QUEUE_NAMES.backfill, connection);
 
 export const generatePageEvents = new QueueEvents(QUEUE_NAMES.generatePage, connection);
