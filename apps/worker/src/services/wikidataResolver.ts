@@ -67,6 +67,47 @@ type ResolveResult = {
 };
 
 /**
+ * Pure scoring helper extracted from `resolveWikidata` so the
+ * label-exactness + type-match math is unit-testable without
+ * mocking fetch. Returns the same confidence the resolver would
+ * persist for a given top hit; the resolver still treats < 0.5
+ * as NO_MATCH.
+ *
+ * Confidence tiers:
+ *   1.0  label exact AND description matches the kind hint
+ *   0.7  label exact, description doesn't match (or is missing)
+ *   0.5  label not exact (caller treats as NO_MATCH downstream)
+ */
+export function scoreWikidataHit(
+  query: string,
+  kind: ResolverKind,
+  hit: { label?: string; description?: string },
+): number {
+  const labelExact =
+    (hit.label ?? '').trim().toLowerCase() === query.trim().toLowerCase();
+  const desc = (hit.description ?? '').toLowerCase();
+  const kindMatch =
+    kind === 'organization'
+      ? /(compan|business|corporation|nonprofit|organ[iz]ation|enterprise|firm|agency|institution|brand)/.test(
+          desc,
+        )
+      : kind === 'product'
+        ? /(product|appliance|device|software|application|consumer good|brand)/.test(
+            desc,
+          )
+        : kind === 'person'
+          ? /(actor|actress|author|writer|musician|singer|composer|director|producer|painter|sculptor|architect|engineer|scientist|physicist|chemist|biologist|mathematician|economist|philosopher|politician|president|prime minister|senator|journalist|broadcaster|athlete|footballer|player|founder|ceo|entrepreneur|activist|historian|poet|novelist|critic|comedian|game developer|programmer|designer)/.test(
+              desc,
+            )
+          : /(city|town|country|state|province|region|capital|county|municipality|island|district|village|borough|prefecture|territory|metropolitan|neighborhood|neighbourhood|continent|community)/.test(
+              desc,
+            );
+  if (labelExact && kindMatch) return 1;
+  if (labelExact) return 0.7;
+  return 0.5;
+}
+
+/**
  * Query the Wikidata search API for `name`, scoring the top result
  * against `kind` to produce a confidence score. Best-effort: any
  * failure returns `{ wikidataId: null, confidence: 0 }` and caches
@@ -128,34 +169,10 @@ export async function resolveWikidata(
     return { wikidataId: null, confidence: 0 };
   }
   const top = hits[0]!;
-  const labelExact =
-    (top.label ?? '').trim().toLowerCase() === cleaned.toLowerCase();
-  const desc = (top.description ?? '').toLowerCase();
-  const kindMatch =
-    kind === 'organization'
-      ? /(compan|business|corporation|nonprofit|organ[iz]ation|enterprise|firm|agency|institution|brand)/.test(
-          desc,
-        )
-      : kind === 'product'
-        ? /(product|appliance|device|software|application|consumer good|brand)/.test(
-            desc,
-          )
-        : kind === 'person'
-          ? // Person descriptions tend to be a role/profession ±
-            // a nationality adjective. Cast a wide net.
-            /(actor|actress|author|writer|musician|singer|composer|director|producer|painter|sculptor|architect|engineer|scientist|physicist|chemist|biologist|mathematician|economist|philosopher|politician|president|prime minister|senator|journalist|broadcaster|athlete|footballer|player|founder|ceo|entrepreneur|activist|historian|poet|novelist|critic|comedian|game developer|programmer|designer)/.test(
-              desc,
-            )
-          : // 'place' — countries, cities, regions, neighbourhoods.
-            /(city|town|country|state|province|region|capital|county|municipality|island|district|village|borough|prefecture|territory|metropolitan|neighborhood|neighbourhood|continent|community)/.test(
-              desc,
-            );
-
-  let confidence = 0.5;
-  if (labelExact && kindMatch) confidence = 1;
-  else if (labelExact) confidence = 0.7;
+  const confidence = scoreWikidataHit(cleaned, kind, top);
   // Below 0.5 we treat as unresolved — the top match's label
-  // didn't even agree, so guessing carries more risk than value.
+  // didn't even agree at all. The 0.5 floor preserves the
+  // original "non-exact label match on top hit" tier.
   if (confidence < 0.5) {
     await redis.set(key, 'NO_MATCH', 'EX', CACHE_TTL_SEC).catch(() => null);
     return { wikidataId: null, confidence: 0 };
