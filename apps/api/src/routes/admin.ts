@@ -35,7 +35,32 @@ import {
   UserPageState,
   WebhookSubscription,
 } from '@rose/db';
-import { backfillQueue } from '../lib/queues.js';
+import {
+  backfillQueue,
+  parseEmailQueue,
+  generatePageQueue,
+  embedPageQueue,
+  imapSyncQueue,
+  gmailSyncQueue,
+  rssSyncQueue,
+  websiteSyncQueue,
+  daydreamQueue,
+  topicResearchQueue,
+  postWriteHooksQueue,
+  recipesQueue,
+  briefingQueue,
+  webhookDeliverQueue,
+  sendOutboundQueue,
+  digestEmailQueue,
+  summarizeSenderQueue,
+  fetchAndParseQueue,
+  slackSyncQueue,
+  discordSyncQueue,
+  gcalSyncQueue,
+  librarySyncQueue,
+  libraryEmbedQueue,
+  tagDigestQueue,
+} from '../lib/queues.js';
 import { redis } from '../lib/redis.js';
 import { logger } from '../lib/logger.js';
 import { isAdminRequest, requireAdmin } from '../middleware/admin.js';
@@ -467,6 +492,87 @@ adminRouter.get('/extraction-stats', requireAdmin, async (_req, res, next) => {
         withRelationsExtracted: pagesWithRelations,
       },
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Per-queue depth snapshot. The admin UI polls this on a 5s timer
+ * to render a small status pill ("12 jobs in flight" + colour
+ * cue). Reads job counts directly from BullMQ — cheap (Redis hash
+ * lookups), no Mongo touch.
+ *
+ * Response shape:
+ *   {
+ *     totals: { waiting, active, delayed, failed },
+ *     queues: [{ name, waiting, active, delayed, completed?, failed }, ...]
+ *   }
+ * Totals collapse the per-queue numbers into one row so the
+ * polling pill can render without iterating client-side.
+ */
+adminRouter.get('/queue-stats', requireAdmin, async (_req, res, next) => {
+  try {
+    const queueList = [
+      { name: 'parse-email', q: parseEmailQueue },
+      { name: 'generate-page', q: generatePageQueue },
+      { name: 'embed-page', q: embedPageQueue },
+      { name: 'imap-sync', q: imapSyncQueue },
+      { name: 'gmail-sync', q: gmailSyncQueue },
+      { name: 'rss-sync', q: rssSyncQueue },
+      { name: 'website-sync', q: websiteSyncQueue },
+      { name: 'daydream', q: daydreamQueue },
+      { name: 'topic-research', q: topicResearchQueue },
+      { name: 'post-write-hooks', q: postWriteHooksQueue },
+      { name: 'recipes', q: recipesQueue },
+      { name: 'backfill', q: backfillQueue },
+      { name: 'briefing', q: briefingQueue },
+      { name: 'webhook-deliver', q: webhookDeliverQueue },
+      { name: 'send-outbound', q: sendOutboundQueue },
+      { name: 'digest-email', q: digestEmailQueue },
+      { name: 'summarize-sender', q: summarizeSenderQueue },
+      { name: 'fetch-and-parse', q: fetchAndParseQueue },
+      { name: 'slack-sync', q: slackSyncQueue },
+      { name: 'discord-sync', q: discordSyncQueue },
+      { name: 'gcal-sync', q: gcalSyncQueue },
+      { name: 'library-sync', q: librarySyncQueue },
+      { name: 'library-embed', q: libraryEmbedQueue },
+      { name: 'tag-digest', q: tagDigestQueue },
+    ];
+    const rows = await Promise.all(
+      queueList.map(async ({ name, q }) => {
+        try {
+          const counts = await q.getJobCounts(
+            'waiting',
+            'active',
+            'delayed',
+            'failed',
+          );
+          return {
+            name,
+            waiting: counts.waiting ?? 0,
+            active: counts.active ?? 0,
+            delayed: counts.delayed ?? 0,
+            failed: counts.failed ?? 0,
+          };
+        } catch (err) {
+          // A single dead queue shouldn't fail the whole panel.
+          // Log + emit zeros so the UI can still render the rest.
+          logger.warn({ err, name }, 'queue-stats: getJobCounts failed');
+          return { name, waiting: 0, active: 0, delayed: 0, failed: 0 };
+        }
+      }),
+    );
+    const totals = rows.reduce(
+      (acc, r) => ({
+        waiting: acc.waiting + r.waiting,
+        active: acc.active + r.active,
+        delayed: acc.delayed + r.delayed,
+        failed: acc.failed + r.failed,
+      }),
+      { waiting: 0, active: 0, delayed: 0, failed: 0 },
+    );
+    res.json({ totals, queues: rows });
   } catch (err) {
     next(err);
   }

@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ShieldAlert, Trash2 } from 'lucide-react';
+import { Activity, ShieldAlert, Trash2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useApi } from '../../lib/api';
 
@@ -108,6 +108,7 @@ export default function AdminSettingsPage() {
 
   return (
     <div className="space-y-4">
+      <QueueStats />
       <ExtractionCoverage />
 
       <div className="card border-red-300 bg-red-50 dark:border-red-900/40 dark:bg-red-950/20">
@@ -309,6 +310,110 @@ type ExtractionStats = {
     withRelationsExtracted: number;
   };
 };
+
+type QueueStatsResponse = {
+  totals: { waiting: number; active: number; delayed: number; failed: number };
+  queues: Array<{
+    name: string;
+    waiting: number;
+    active: number;
+    delayed: number;
+    failed: number;
+  }>;
+};
+
+/**
+ * Live worker-queue snapshot. Polls /api/admin/queue-stats every
+ * five seconds so the admin can spot a stuck or backlogged queue
+ * without tailing the worker logs. The pill shows the totals in
+ * green / amber / red bands; expanding it surfaces per-queue rows
+ * with the largest backlogs first.
+ */
+function QueueStats() {
+  const api = useApi();
+  const [open, setOpen] = useState(false);
+  const { data } = useQuery({
+    queryKey: ['admin-queue-stats'],
+    queryFn: () => api.get<QueueStatsResponse>('/api/admin/queue-stats'),
+    refetchInterval: 5000,
+    refetchIntervalInBackground: false,
+  });
+  if (!data) {
+    return (
+      <div className="card flex items-center gap-2 text-sm text-ink-500">
+        <Activity className="h-4 w-4" /> Queue stats loading…
+      </div>
+    );
+  }
+  const { totals, queues } = data;
+  const busy = totals.waiting + totals.active + totals.delayed;
+  const band =
+    totals.failed > 0
+      ? 'bg-red-100 text-red-800 dark:bg-red-950/30 dark:text-red-300'
+      : busy > 100
+        ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/30 dark:text-amber-300'
+        : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300';
+  const ranked = [...queues].sort(
+    (a, b) =>
+      b.failed - a.failed ||
+      b.active + b.waiting + b.delayed - (a.active + a.waiting + a.delayed),
+  );
+  return (
+    <div className="card">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center gap-3"
+        title="Live queue depth (refreshed every 5s)"
+      >
+        <Activity className="h-4 w-4 text-rose-500" />
+        <h2 className="font-semibold">Worker queues</h2>
+        <span
+          className={'ml-auto rounded-full px-2 py-0.5 text-xs font-mono ' + band}
+        >
+          {busy} in flight
+          {totals.failed > 0 ? ` · ${totals.failed} failed` : ''}
+        </span>
+        <span className="text-xs text-ink-500">
+          {open ? 'hide' : 'show per-queue'}
+        </span>
+      </button>
+      {open && (
+        <div className="mt-3 overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead className="text-ink-500">
+              <tr>
+                <th className="text-left font-medium">Queue</th>
+                <th className="text-right font-medium">Waiting</th>
+                <th className="text-right font-medium">Active</th>
+                <th className="text-right font-medium">Delayed</th>
+                <th className="text-right font-medium">Failed</th>
+              </tr>
+            </thead>
+            <tbody>
+              {ranked.map((q) => (
+                <tr key={q.name} className="border-t border-ink-100 dark:border-ink-800">
+                  <td className="py-1 font-mono">{q.name}</td>
+                  <td className="text-right">{q.waiting}</td>
+                  <td className="text-right">{q.active}</td>
+                  <td className="text-right">{q.delayed}</td>
+                  <td
+                    className={
+                      'text-right ' +
+                      (q.failed > 0 ? 'font-semibold text-red-600' : '')
+                    }
+                  >
+                    {q.failed}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
 
 /**
  * Coverage panel for the four extractors that gained
