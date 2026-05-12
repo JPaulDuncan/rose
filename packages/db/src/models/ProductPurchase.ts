@@ -37,19 +37,20 @@ const purchaseSchema = new Schema(
     purchasedAt: { type: Date, default: null, index: true },
     /**
      * How this row was extracted:
-     *   • 'structured' — the email's HTML carried schema.org JSON-LD
-     *     or Microdata; we read the fields directly. Highest
-     *     fidelity, zero LLM cost.
-     *   • 'llm'        — fell through to the LLM extractor because
-     *     no structured data was present (or it was too partial
-     *     to trust).
+     *   • 'structured' — schema.org JSON-LD / Microdata in the
+     *     email HTML; highest fidelity, zero LLM cost.
+     *   • 'vendor'     — per-vendor regex parser caught the
+     *     templated HTML for a known sender (Amazon, Apple,
+     *     USPS, …); zero LLM cost.
+     *   • 'llm'        — fell through to the LLM extractor (no
+     *     structured data and no vendor parser matched).
      *
      * Drives the audit badge on /products/<slug> and lets us
-     * measure how often the deterministic fast path fires.
+     * measure how often the deterministic fast paths fire.
      */
     extractedBy: {
       type: String,
-      enum: ['structured', 'llm'],
+      enum: ['structured', 'vendor', 'llm'],
       default: 'llm',
       index: true,
     },

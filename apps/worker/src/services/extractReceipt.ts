@@ -11,6 +11,7 @@ import { SYSTEM_PROMPT_BASE, extractJson } from '@rose/llm';
 import {
   parseStructuredReceipt,
   senderDomainTag,
+  tryVendorReceipt,
   type StructuredReceipt,
 } from '@rose/email-parser';
 import { resolveProviderForUser } from '../lib/providers.js';
@@ -180,6 +181,39 @@ async function tryStructuredReceipt(
 }
 
 /**
+ * Tier 2 fast path: per-vendor parser. Resolves the sender's
+ * brandKey from the triggering email and delegates to the vendor
+ * registry. Same html-fetch + confidence-gate shape as the
+ * structured pass; returns null when no parser matched or its
+ * confidence was below the 0.7 LLM-bypass threshold.
+ */
+async function tryVendorReceiptForPage(
+  userId: Types.ObjectId,
+  page: PageDoc,
+): Promise<StructuredReceipt | null> {
+  const emailIds = (page.sourceEmailIds as Types.ObjectId[] | undefined) ?? [];
+  if (emailIds.length === 0) return null;
+  const email = await Email.findOne({ userId, _id: emailIds[0] })
+    .select('+html')
+    .lean();
+  const html = (email?.html as string | undefined) ?? '';
+  if (!html) return null;
+  // Derive the vendor brandKey from the sender address. Same
+  // normalisation as Sender.brandKey so the registry keys match.
+  const fromAddress = (email?.from as { address?: string } | undefined)
+    ?.address;
+  const brandKey = fromAddress
+    ? senderDomainTag(fromAddress)?.toLowerCase() ?? null
+    : null;
+  if (!brandKey) return null;
+  const subject = (email?.subject as string | undefined) ?? page.title ?? '';
+  const r = tryVendorReceipt(brandKey, html, subject);
+  if (!r) return null;
+  if (r.confidence < 0.7) return null;
+  return r;
+}
+
+/**
  * Upsert the receipt data (whether from the structured parser or
  * the LLM) into Product + ProductPurchase. Single helper so both
  * paths share the persistence semantics — confidence + idempotency
@@ -189,7 +223,7 @@ async function upsertReceipt(
   userId: Types.ObjectId,
   page: PageDoc,
   data: ReceiptExtraction,
-  source: 'structured' | 'llm',
+  source: 'structured' | 'vendor' | 'llm',
 ): Promise<{ products: number; purchases: number }> {
   const senderAddresses = (page.senderAddresses as string[] | undefined) ?? [];
   const merchantBrandKey =
@@ -264,7 +298,7 @@ export async function extractReceiptFromPage(
   const body = (page.contentMd ?? '').trim();
   if (body.length < 40) return { products: 0, purchases: 0 };
 
-  // ── Fast path: structured data in the HTML.
+  // ── Fast path 1: structured data in the HTML (schema.org).
   const structured = await tryStructuredReceipt(userId, page);
   if (structured) {
     const data: ReceiptExtraction = {
@@ -283,6 +317,34 @@ export async function extractReceiptFromPage(
           confidence: structured.confidence,
         },
         'extract-receipt: structured (no LLM)',
+      );
+    }
+    return r;
+  }
+
+  // ── Fast path 2: per-vendor parser. Schema.org caught everyone
+  // who emits it; the registry handles the long tail of vendors
+  // who don't (Amazon, Apple receipts, shipment notifications)
+  // via templated-HTML pattern matching. Confidence-gated inside
+  // the parser; null → fall through.
+  const vendor = await tryVendorReceiptForPage(userId, page);
+  if (vendor) {
+    const data: ReceiptExtraction = {
+      merchant: vendor.merchant,
+      purchasedAt: vendor.purchasedAt,
+      currency: vendor.currency,
+      totalAmount: vendor.totalAmount,
+      products: vendor.products,
+    };
+    const r = await upsertReceipt(userId, page, data, 'vendor');
+    if (r.purchases > 0) {
+      logger.info(
+        {
+          pageId: String(page._id),
+          ...r,
+          confidence: vendor.confidence,
+        },
+        'extract-receipt: vendor (no LLM)',
       );
     }
     return r;

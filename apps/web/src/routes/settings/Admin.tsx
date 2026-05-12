@@ -281,6 +281,7 @@ type ExtractionStats = {
   purchases: {
     total: number;
     structured: number;
+    vendor: number;
     llm: number;
     structuredRatio: number;
     candidatePages: number;
@@ -357,8 +358,11 @@ function ExtractionCoverage() {
     {
       label: 'Receipts → product purchases',
       kind: 'receipt',
-      fastPath: 'schema.org JSON-LD',
-      fast: stats.purchases.structured,
+      // Receipts now have TWO fast-paths: schema.org JSON-LD
+      // catches the well-templated vendors, per-vendor parsers
+      // catch Amazon / Apple / USPS / etc. Combined here.
+      fastPath: `schema.org (${stats.purchases.structured.toLocaleString()}) + vendor (${stats.purchases.vendor.toLocaleString()})`,
+      fast: stats.purchases.structured + stats.purchases.vendor,
       total: stats.purchases.total,
       ratio: stats.purchases.structuredRatio,
     },

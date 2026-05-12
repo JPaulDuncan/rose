@@ -31,10 +31,11 @@ type ProductDetail = {
     currency: string | null;
     quantity: number;
     purchasedAt: string | null;
-    /** Where this purchase row came from — 'structured' means
-     *  read straight from the email's schema.org JSON-LD; 'llm'
-     *  means inferred from prose. */
-    extractedBy: 'structured' | 'llm';
+    /** Where this purchase row came from:
+     *    'structured' = schema.org JSON-LD in the email HTML
+     *    'vendor'     = per-vendor regex parser (Amazon / Apple / USPS / …)
+     *    'llm'        = LLM extractor over prose (fallback) */
+    extractedBy: 'structured' | 'vendor' | 'llm';
     merchant: { brandKey: string; name: string; logoUrl: string | null } | null;
     page: { slug: string; title: string } | null;
   }[];
@@ -219,21 +220,34 @@ export default function ProductPage() {
                           see receipt
                         </Link>
                       )}
-                      <span
-                        className={
-                          'rounded-full px-1.5 py-0.5 text-[10px] uppercase tracking-widest ' +
-                          (p.extractedBy === 'structured'
-                            ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200'
-                            : 'bg-ink-100 text-ink-600 dark:bg-ink-800 dark:text-ink-300')
-                        }
-                        title={
-                          p.extractedBy === 'structured'
-                            ? 'Read directly from the email’s schema.org markup — zero LLM cost.'
-                            : 'Inferred by the LLM from the email’s prose.'
-                        }
-                      >
-                        {p.extractedBy === 'structured' ? 'schema.org' : 'llm'}
-                      </span>
+                      {(() => {
+                        const isFast =
+                          p.extractedBy === 'structured' ||
+                          p.extractedBy === 'vendor';
+                        return (
+                          <span
+                            className={
+                              'rounded-full px-1.5 py-0.5 text-[10px] uppercase tracking-widest ' +
+                              (isFast
+                                ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200'
+                                : 'bg-ink-100 text-ink-600 dark:bg-ink-800 dark:text-ink-300')
+                            }
+                            title={
+                              p.extractedBy === 'structured'
+                                ? 'Read directly from the email’s schema.org markup — zero LLM cost.'
+                                : p.extractedBy === 'vendor'
+                                  ? 'Read from a per-vendor template (Amazon / Apple / USPS / …) — zero LLM cost.'
+                                  : 'Inferred by the LLM from the email’s prose.'
+                            }
+                          >
+                            {p.extractedBy === 'structured'
+                              ? 'schema.org'
+                              : p.extractedBy === 'vendor'
+                                ? 'vendor'
+                                : 'llm'}
+                          </span>
+                        );
+                      })()}
                     </div>
                   </div>
                   <button

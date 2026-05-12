@@ -397,6 +397,7 @@ adminRouter.get('/extraction-stats', requireAdmin, async (_req, res, next) => {
     const [
       purchaseTotal,
       purchaseStructured,
+      purchaseVendor,
       subTotal,
       subStructured,
       noteTotal,
@@ -409,6 +410,7 @@ adminRouter.get('/extraction-stats', requireAdmin, async (_req, res, next) => {
     ] = await Promise.all([
       ProductPurchase.countDocuments({}),
       ProductPurchase.countDocuments({ extractedBy: 'structured' }),
+      ProductPurchase.countDocuments({ extractedBy: 'vendor' }),
       Subscription.countDocuments({}),
       Subscription.countDocuments({ extractedBy: 'structured' }),
       DaydreamNote.countDocuments({}),
@@ -431,8 +433,15 @@ adminRouter.get('/extraction-stats', requireAdmin, async (_req, res, next) => {
       purchases: {
         total: purchaseTotal,
         structured: purchaseStructured,
-        llm: purchaseTotal - purchaseStructured,
-        structuredRatio: ratio(purchaseStructured, purchaseTotal),
+        vendor: purchaseVendor,
+        llm: purchaseTotal - purchaseStructured - purchaseVendor,
+        // Combined fast-path ratio — anything not LLM is a win.
+        // The UI splits structured / vendor into two stacked bars
+        // so the admin can see vendor-parser coverage separately.
+        structuredRatio: ratio(
+          purchaseStructured + purchaseVendor,
+          purchaseTotal,
+        ),
         candidatePages: receiptPages,
       },
       subscriptions: {

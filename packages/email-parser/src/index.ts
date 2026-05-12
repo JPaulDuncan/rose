@@ -13,6 +13,14 @@ export {
   type HtmlMetadata,
 } from './structured.js';
 export {
+  tryVendorReceipt,
+  vendorParserNames,
+  parseAmazonReceipt,
+  parseAppleReceipt,
+  parseUspsShipment,
+  type VendorParser,
+} from './vendors/index.js';
+export {
   extractEmailMetadata,
   senderDomainTag,
   compileSenderBlocklist,
