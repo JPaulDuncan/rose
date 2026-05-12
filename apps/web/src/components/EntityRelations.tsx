@@ -12,6 +12,9 @@ type Relation = {
   otherDisplayName: string;
   otherType: string | null;
   confidence: number;
+  /** 'wikidata' = sourced from Wikidata's SPARQL (public fact);
+   *  'archive' = inferred from the user's own pages by the LLM. */
+  source: 'wikidata' | 'archive';
   evidenceCount: number;
   evidence: {
     pageId: string;
@@ -110,9 +113,23 @@ function RelationRow({ relation }: { relation: Relation }) {
               {relation.otherType}
             </span>
           )}
+          {relation.source === 'wikidata' && (
+            <span
+              className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] uppercase tracking-widest text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200"
+              title="Sourced from Wikidata — public fact, no LLM inference."
+            >
+              wikidata
+            </span>
+          )}
           <span className="ml-auto text-[11px] italic text-ink-500">
-            {Math.round(relation.confidence * 100)}% · {relation.evidenceCount}{' '}
-            mention{relation.evidenceCount === 1 ? '' : 's'}
+            {Math.round(relation.confidence * 100)}%
+            {relation.source === 'archive' && (
+              <>
+                {' · '}
+                {relation.evidenceCount}{' '}
+                mention{relation.evidenceCount === 1 ? '' : 's'}
+              </>
+            )}
           </span>
         </summary>
         {relation.evidence.length > 0 && (

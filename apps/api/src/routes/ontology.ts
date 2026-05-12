@@ -64,15 +64,26 @@ ontologyRouter.get('/relations', async (req, res) => {
   }
   const globalView = req.query.global === '1';
 
-  // Per-user evidence gate. The user only sees relations that
-  // their own archive has surfaced — mirrors the Daydream
-  // alignment pattern.
-  const filter: Record<string, unknown> = {
-    $or: [{ fromKey: entity }, { toKey: entity }],
-  };
-  if (!globalView) {
-    filter['evidence.userId'] = userId;
-  }
+  // Visibility rules:
+  //   • `wikidataConfirmed: true` rows are public knowledge
+  //     (sourced from Wikidata SPARQL) — visible to everyone.
+  //   • Archive-sourced rows show only when this user's own pages
+  //     evidenced them; mirrors the Daydream alignment pattern.
+  //   • `?global=1` (admin path) bypasses the user filter entirely.
+  const endpointFilter = { $or: [{ fromKey: entity }, { toKey: entity }] };
+  const filter: Record<string, unknown> = globalView
+    ? endpointFilter
+    : {
+        $and: [
+          endpointFilter,
+          {
+            $or: [
+              { wikidataConfirmed: true },
+              { 'evidence.userId': userId },
+            ],
+          },
+        ],
+      };
   const rows = await EntityRelation.find(filter)
     .sort({ confidence: -1, updatedAt: -1 })
     .limit(200)
@@ -144,6 +155,14 @@ ontologyRouter.get('/relations', async (req, res) => {
       const otherKey = isSubject ? (r.toKey as string) : (r.fromKey as string);
       const pred = predicateByKey(r.predicate as string);
       const display = displayByKey.get(otherKey);
+      // Display-name fallback chain:
+      //   1. Local Entity row (preferred — honours user's casing)
+      //   2. Wikidata label stored on the relation row when local
+      //      lookup misses (happens when toKey is a Q-ID)
+      //   3. The raw key as a last resort.
+      const storedDisplayName = isSubject
+        ? (r.toDisplayName as string | undefined)
+        : (r.fromDisplayName as string | undefined);
       return {
         _id: String(r._id),
         predicate: r.predicate as string,
@@ -152,9 +171,14 @@ ontologyRouter.get('/relations', async (req, res) => {
           : pred?.inverseLabel ?? pred?.label ?? r.predicate,
         direction: isSubject ? 'outgoing' : 'incoming',
         otherKey,
-        otherDisplayName: display?.displayName ?? otherKey,
+        otherDisplayName:
+          display?.displayName ?? storedDisplayName ?? otherKey,
         otherType: display?.type ?? null,
         confidence: r.confidence,
+        // Source flag — drives the UI badge. 'wikidata' = public
+        // knowledge sourced from SPARQL; 'archive' = surfaced by
+        // an LLM extractor over the user's pages.
+        source: r.wikidataConfirmed ? 'wikidata' : 'archive',
         evidenceCount: ((r.evidence as Array<unknown> | undefined) ?? []).length,
         // Evidence from THIS user only, so we don't leak other
         // users' page slugs across the boundary.

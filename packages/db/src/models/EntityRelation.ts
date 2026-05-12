@@ -55,6 +55,23 @@ const relationSchema = new Schema(
     /** Per-user evidence trail. Capped at 50 entries (FIFO) so a
      *  popular relation doesn't bloat the row indefinitely. */
     evidence: { type: [evidenceSchema], default: [] },
+    /**
+     * When true, this relation was sourced from Wikidata (public
+     * knowledge), so it's visible to every user regardless of
+     * whether their archive has surfaced it. Archive-sourced
+     * relations stay user-scoped via the `evidence.userId` filter.
+     * A relation can be confirmed by BOTH sources — the field
+     * stays true once Wikidata has spoken, and an archive evidence
+     * entry can still accumulate.
+     */
+    wikidataConfirmed: { type: Boolean, default: false, index: true },
+    /** Display name for the subject endpoint when the kebab key
+     *  doesn't resolve to a local Entity (e.g. when the toKey is
+     *  a Q-ID). Stored on the row so the read API doesn't need a
+     *  follow-up Wikidata fetch per request. */
+    fromDisplayName: { type: String, default: null, maxlength: 200 },
+    /** Same as `fromDisplayName`, for the object endpoint. */
+    toDisplayName: { type: String, default: null, maxlength: 200 },
   },
   { timestamps: true },
 );

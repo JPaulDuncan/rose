@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { Organization, Product } from '@rose/db';
 import { redis } from '../lib/redis.js';
 import { logger } from '../lib/logger.js';
+import { enrichOrganizationRelations } from './wikidataRelations.js';
 
 /**
  * Wikidata Q-ID resolver. Maps a free-text name + a hint of
@@ -176,6 +177,15 @@ export async function enrichOrganizationWikidata(key: string): Promise<void> {
         },
       },
     );
+    // Chain into the SPARQL relation enricher when we got a usable
+    // Q-ID. Fire-and-forget — a slow Wikidata query mustn't block
+    // the sender-upsert path. Throttled internally to one fetch
+    // per Q-ID per 90 days.
+    if (r.wikidataId && r.confidence >= 0.7) {
+      void enrichOrganizationRelations(key).catch((err) =>
+        logger.debug({ err, key }, 'wikidata: relation enrich failed'),
+      );
+    }
   } catch (err) {
     logger.debug(
       { err, key },
