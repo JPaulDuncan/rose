@@ -1,11 +1,17 @@
 import { Worker, type Job, Queue } from 'bullmq';
 import { Types } from 'mongoose';
 import { createHash } from 'node:crypto';
-import { Source, Email } from '@rose/db';
+import Parser from 'rss-parser';
+import { Source, Email, type SourceDoc } from '@rose/db';
 import { priorityForDate, type WebsiteConfig } from '@rose/shared';
 import { detectPromoCodesForEmail } from '@rose/promo-codes';
 import { detectShipmentsForEmail } from '@rose/shipments';
 import { senderDomainTag } from '@rose/email-parser';
+import {
+  resilientFetchHtml,
+  browserFeedHeaders,
+  type ResilientFetchOutcome,
+} from '@rose/llm';
 import { decryptJson } from '../lib/crypto.js';
 import { emitRecipeEvent } from '../lib/recipeEmit.js';
 import { assertSafeHttpUrl, UnsafeUrlError } from '../lib/safeFetch.js';
@@ -53,10 +59,7 @@ async function fetchSitemapUrls(
     let resp: Response;
     try {
       resp = await fetch(url, {
-        headers: {
-          'User-Agent': 'Rose/1.0 (+https://rose.local; sitemap)',
-          Accept: 'application/xml, text/xml, */*;q=0.5',
-        },
+        headers: browserFeedHeaders(url),
         signal: ctrl.signal,
       });
     } finally {
@@ -176,85 +179,6 @@ async function syncSitemap(
   return enqueued;
 }
 
-type FetchOutcome =
-  | { kind: 'unchanged' }
-  | {
-      kind: 'fetched';
-      finalUrl: string;
-      bodyHtml: string;
-      etag: string | null;
-      lastModified: string | null;
-    };
-
-/**
- * Fetch with SSRF guard, manual redirect-and-revalidate (mirrors safeFetch),
- * a 5MB cap, and conditional-GET headers. Returns `{kind: 'unchanged'}` on a
- * 304 response so the caller can short-circuit page generation.
- */
-async function conditionalFetchHtml(
-  rawUrl: string,
-  cache: { etag: string | null; lastModified: string | null },
-): Promise<FetchOutcome> {
-  const maxBytes = 5 * 1024 * 1024;
-  const timeoutMs = 15_000;
-  let current = rawUrl;
-  for (let hop = 0; hop < 6; hop += 1) {
-    await assertSafeHttpUrl(current);
-    const headers: Record<string, string> = {
-      'User-Agent': 'Rose/1.0 (+https://rose.local)',
-      Accept: 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.5',
-    };
-    if (cache.etag) headers['If-None-Match'] = cache.etag;
-    if (cache.lastModified) headers['If-Modified-Since'] = cache.lastModified;
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
-    let res: Response;
-    try {
-      res = await fetch(current, { headers, redirect: 'manual', signal: ctrl.signal });
-    } finally {
-      clearTimeout(timer);
-    }
-    if (res.status === 304) return { kind: 'unchanged' };
-    if (res.status >= 300 && res.status < 400) {
-      const loc = res.headers.get('location');
-      if (!loc) throw new UnsafeUrlError('Redirect without Location header');
-      current = new URL(loc, current).toString();
-      continue;
-    }
-    if (!res.ok) {
-      throw new Error(`Upstream responded ${res.status} ${res.statusText}`);
-    }
-    const ct = (res.headers.get('content-type') ?? '').toLowerCase();
-    if (!ct.includes('text/html') && !ct.includes('application/xhtml+xml')) {
-      throw new Error(`Unsupported content-type: ${ct || 'unknown'}`);
-    }
-    const reader = res.body?.getReader();
-    if (!reader) throw new Error('Empty response body');
-    const chunks: Uint8Array[] = [];
-    let total = 0;
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      if (value) {
-        total += value.byteLength;
-        if (total > maxBytes) {
-          ctrl.abort();
-          throw new Error(`Body exceeded ${maxBytes} byte cap`);
-        }
-        chunks.push(value);
-      }
-    }
-    return {
-      kind: 'fetched',
-      finalUrl: current,
-      bodyHtml: Buffer.concat(chunks).toString('utf-8'),
-      etag: res.headers.get('etag'),
-      lastModified: res.headers.get('last-modified'),
-    };
-  }
-  throw new Error('Too many redirects');
-}
-
 function senderForUrl(url: string, siteName: string | null): { name: string; address: string } {
   let host = url;
   try {
@@ -263,6 +187,112 @@ function senderForUrl(url: string, siteName: string | null): { name: string; add
     // pass through
   }
   return { name: siteName ?? host, address: `web@${host}` };
+}
+
+/**
+ * Fetch + parse + ingest items from an RSS/Atom feed that we
+ * discovered as the fallback path for a "watch a website" source.
+ * Mirrors the per-item shape rssSync uses (kind: 'rss', feed sender,
+ * categories → topics) so a feed-fallback page is indistinguishable
+ * downstream from a native RSS source. Cap at 25 items per sync to
+ * avoid flooding generate-page on a long-running blog's first
+ * fallback hit.
+ */
+const feedParser = new Parser({ timeout: 15_000 });
+
+async function ingestFeedFallback(
+  userId: Types.ObjectId,
+  source: SourceDoc,
+  feedUrl: string,
+): Promise<{ ingested: number; skippedDup: number }> {
+  await assertSafeHttpUrl(feedUrl);
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 15_000);
+  let xml: string;
+  try {
+    const res = await fetch(feedUrl, {
+      headers: browserFeedHeaders(feedUrl),
+      redirect: 'follow',
+      signal: ctrl.signal,
+    });
+    if (!res.ok) {
+      throw new Error(`Feed fallback responded ${res.status} ${res.statusText}`);
+    }
+    xml = await res.text();
+  } finally {
+    clearTimeout(timer);
+  }
+  const feed = await feedParser.parseString(xml);
+  const feedTitle = feed.title?.trim() || null;
+  const items = (feed.items ?? []).slice(0, 25);
+
+  let ingested = 0;
+  let skippedDup = 0;
+  for (const item of items) {
+    const messageId = (item.guid || (item as { id?: string }).id || item.link || `${feedUrl}#${item.title ?? ''}#${item.isoDate ?? ''}`).slice(0, 998);
+    const html = item['content:encoded'] || item.content || item.summary || '';
+    const text = (item.contentSnippet || html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim() || '').trim();
+    const rawHash = createHash('sha256').update(messageId).update(' ').update(text).digest('hex');
+    const dup = await Email.findOne({ userId, $or: [{ messageId }, { rawHash }] })
+      .select('_id')
+      .lean();
+    if (dup) {
+      skippedDup += 1;
+      continue;
+    }
+    const sender = senderForUrl(feedUrl, feedTitle);
+    const brand = senderDomainTag(sender.address);
+    const topics: string[] = [];
+    if (brand) topics.push(brand.toLowerCase());
+    for (const c of item.categories ?? []) {
+      const t = c.trim().toLowerCase().replace(/\s+/g, '-');
+      if (t.length >= 2 && t.length <= 60 && !topics.includes(t)) topics.push(t);
+    }
+    const date = item.isoDate ? new Date(item.isoDate) : new Date();
+    const created = await Email.create({
+      userId,
+      sourceId: source._id,
+      kind: 'rss',
+      messageId,
+      rawHash,
+      from: sender,
+      to: [],
+      cc: [],
+      subject: item.title?.trim() || '(untitled feed item)',
+      date,
+      text: text.slice(0, 20_000),
+      rawText: text.slice(0, 20_000),
+      html: html || null,
+      attachments: [],
+      priority: 'normal',
+      topics,
+      links: item.link ? [{ url: item.link, text: item.title ?? null }] : [],
+      images: [],
+      spamScore: 0,
+      spamSignals: [],
+      isMassMailing: false,
+      authResults: { spf: 'unknown', dkim: 'unknown', dmarc: 'unknown' },
+      unsubscribeUrls: [],
+      ingestStatus: 'parsed',
+    });
+    await generateQueue.add(
+      'generate',
+      { emailId: String(created._id), userId: String(userId) },
+      { attempts: 3, removeOnComplete: 500, removeOnFail: 500, priority: priorityForDate(date) },
+    );
+    await emitRecipeEvent({
+      kind: 'email.ingested',
+      userId: String(userId),
+      emailId: String(created._id),
+      from: sender.address,
+      subject: item.title?.trim() ?? '',
+      brandKey: brand ? brand.toLowerCase() : null,
+      priority: 'normal',
+      tags: topics,
+    });
+    ingested += 1;
+  }
+  return { ingested, skippedDup };
 }
 
 export function startWebsiteSyncWorker() {
@@ -306,11 +336,46 @@ export function startWebsiteSyncWorker() {
         }
       }
 
-      let outcome: FetchOutcome;
+      // Sticky feed fallback: once a previous sync flipped this
+      // source over to its discovered RSS feed, keep using the feed
+      // path on subsequent runs without re-probing the origin. The
+      // user can clear `websiteFeedFallbackUrl` from the UI to force
+      // a direct re-attempt if the site stops blocking us.
+      if (source.websiteFeedFallbackUrl) {
+        try {
+          const stats = await ingestFeedFallback(
+            userId,
+            source,
+            source.websiteFeedFallbackUrl,
+          );
+          source.websiteLastFetchVia = 'feed-fallback';
+          source.lastSyncAt = new Date();
+          source.lastError = null;
+          source.status = 'active';
+          await source.save();
+          logger.info(
+            { sourceId: String(source._id), feedUrl: source.websiteFeedFallbackUrl, ...stats },
+            'website-sync: feed fallback ingested',
+          );
+          return;
+        } catch (err) {
+          // Feed went away too. Clear the sticky pointer so the next
+          // sync re-runs the full discovery chain from scratch.
+          source.websiteFeedFallbackUrl = null;
+          source.lastError = (err as Error).message;
+          source.status = 'error';
+          await source.save();
+          throw err;
+        }
+      }
+
+      let outcome: ResilientFetchOutcome;
       try {
-        outcome = await conditionalFetchHtml(cfg.url, {
-          etag: source.websiteEtag ?? null,
-          lastModified: source.websiteLastModified ?? null,
+        outcome = await resilientFetchHtml(cfg.url, {
+          cache: {
+            etag: source.websiteEtag ?? null,
+            lastModified: source.websiteLastModified ?? null,
+          },
         });
       } catch (err) {
         source.lastError = (err as Error).message;
@@ -328,6 +393,30 @@ export function startWebsiteSyncWorker() {
         return;
       }
 
+      // Discovered an RSS/Atom feed for the origin. Persist the URL
+      // for sticky use on the next sync and ingest its items now.
+      if (outcome.kind === 'feed') {
+        source.websiteFeedFallbackUrl = outcome.feedUrl;
+        source.websiteLastFetchVia = 'feed-fallback';
+        const stats = await ingestFeedFallback(userId, source, outcome.feedUrl);
+        source.lastSyncAt = new Date();
+        source.lastError = null;
+        source.status = 'active';
+        await source.save();
+        logger.info(
+          {
+            sourceId: String(source._id),
+            feedUrl: outcome.feedUrl,
+            via: outcome.discoveredVia,
+            ...stats,
+          },
+          'website-sync: feed fallback discovered + ingested',
+        );
+        return;
+      }
+
+      // outcome.kind === 'html' — direct, rotated-ua, or wayback.
+      source.websiteLastFetchVia = outcome.via;
       const article = extractArticle(outcome.bodyHtml);
       if (!article) {
         const msg = 'No readable content extracted from page';

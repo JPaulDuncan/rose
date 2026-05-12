@@ -42,6 +42,8 @@ type Source = {
   rssFeedTitle?: string | null;
   websiteUrl?: string | null;
   websiteTitle?: string | null;
+  websiteLastFetchVia?: 'direct' | 'rotated-ua' | 'feed-fallback' | 'wayback' | null;
+  websiteFeedFallbackUrl?: string | null;
 };
 
 type RssConfig = {
@@ -383,6 +385,30 @@ export default function SourcesSettings() {
                         {s.websiteTitle ? `${s.websiteTitle} — ` : ''}
                         {s.websiteUrl}
                       </a>
+                      {s.websiteLastFetchVia === 'rotated-ua' && (
+                        <span
+                          className="ml-2 inline-flex items-center rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800 dark:bg-amber-900/40 dark:text-amber-200"
+                          title="Site rejected our default browser fingerprint; switched to a different User-Agent on retry"
+                        >
+                          UA rotated
+                        </span>
+                      )}
+                      {s.websiteLastFetchVia === 'feed-fallback' && s.websiteFeedFallbackUrl && (
+                        <span
+                          className="ml-2 inline-flex items-center rounded bg-sky-100 px-1.5 py-0.5 text-[10px] font-medium text-sky-800 dark:bg-sky-900/40 dark:text-sky-200"
+                          title={`Origin blocked HTML; pulling from ${s.websiteFeedFallbackUrl}`}
+                        >
+                          via RSS feed
+                        </span>
+                      )}
+                      {s.websiteLastFetchVia === 'wayback' && (
+                        <span
+                          className="ml-2 inline-flex items-center rounded bg-purple-100 px-1.5 py-0.5 text-[10px] font-medium text-purple-800 dark:bg-purple-900/40 dark:text-purple-200"
+                          title="Origin unreachable; serving the most recent archive.org snapshot — content may be hours to days stale"
+                        >
+                          via Wayback
+                        </span>
+                      )}
                     </div>
                   )}
                   <div className="flex flex-wrap items-center gap-x-2 text-xs text-ink-500">

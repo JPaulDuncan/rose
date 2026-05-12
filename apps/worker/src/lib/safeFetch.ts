@@ -4,7 +4,7 @@
 // the by-hand redirect loop with per-hop revalidation, which is more
 // than the simpler webFetch tool exposes.
 export { assertSafeHttpUrl, UnsafeUrlError } from '@rose/llm';
-import { assertSafeHttpUrl, UnsafeUrlError } from '@rose/llm';
+import { assertSafeHttpUrl, UnsafeUrlError, browserHeadersFor } from '@rose/llm';
 
 export type SafeFetchResult = {
   buffer: Buffer;
@@ -15,6 +15,12 @@ export type SafeFetchResult = {
 /**
  * Fetch a URL with SSRF guards, hard size cap, and hard timeout.
  * Follows redirects but re-validates each new hostname.
+ *
+ * Sends browser-shaped headers by default — same UA pool as the
+ * resilient website-sync path so a host that whitelisted us once
+ * (e.g. via UA-rotation) keeps seeing the same fingerprint. Caller
+ * can still override via `userAgent` for legacy callers that need
+ * to identify deliberately.
  */
 export async function safeFetch(
   raw: string,
@@ -22,7 +28,6 @@ export async function safeFetch(
 ): Promise<SafeFetchResult> {
   const maxBytes = opts.maxBytes ?? 5 * 1024 * 1024;
   const timeoutMs = opts.timeoutMs ?? 15_000;
-  const ua = opts.userAgent ?? 'Rose/1.0 (+https://rose.local)';
 
   // The Node fetch implementation does the redirect handling, but we
   // need to validate each redirect target. We follow up to 5 hops by
@@ -34,8 +39,11 @@ export async function safeFetch(
     const timer = setTimeout(() => ctrl.abort(), timeoutMs);
     let res: Response;
     try {
+      const headers: Record<string, string> = opts.userAgent
+        ? { 'User-Agent': opts.userAgent, Accept: '*/*' }
+        : browserHeadersFor(current);
       res = await fetch(current, {
-        headers: { 'User-Agent': ua, Accept: '*/*' },
+        headers,
         redirect: 'manual',
         signal: ctrl.signal,
       });

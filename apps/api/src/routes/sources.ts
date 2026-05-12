@@ -14,6 +14,7 @@ import { userIdOf } from '../middleware/auth.js';
 import { validateBody } from '../middleware/validate.js';
 import { Source, ApiToken, User } from '@rose/db';
 import { formatImapError } from '@rose/email-parser';
+import { resilientFetchHtml, browserFeedHeaders } from '@rose/llm';
 import { encryptJson, decryptJson } from '../lib/crypto.js';
 import {
   imapSyncQueue,
@@ -383,7 +384,7 @@ async function testRss(url: string): Promise<
 > {
   try {
     const res = await fetch(url, {
-      headers: { 'User-Agent': 'Rose/1.0 (+https://rose.local)' },
+      headers: browserFeedHeaders(url),
       redirect: 'follow',
       signal: AbortSignal.timeout(10_000),
     });
@@ -403,31 +404,47 @@ async function testRss(url: string): Promise<
 }
 
 /**
- * Stateless preview: fetch the URL, run Readability, return the page title and
- * a short snippet so the user can confirm the parser picks up real content
- * before saving the source.
+ * Stateless preview: fetch the URL through the same resilient chain
+ * the worker uses (browser-shaped headers + UA rotation + RSS
+ * autodiscovery + Wayback fallback) so the user's "Test" button
+ * reflects what the actual sync will see — including a heads-up when
+ * the page can only be reached via a feed or an archive snapshot.
  */
 async function testWebsite(url: string): Promise<
-  | { ok: true; pageTitle: string; snippet: string; finalUrl: string }
+  | {
+      ok: true;
+      pageTitle: string;
+      snippet: string;
+      finalUrl: string;
+      via: 'direct' | 'rotated-ua' | 'wayback';
+    }
+  | {
+      ok: true;
+      kind: 'feed';
+      feedUrl: string;
+      via: 'feed-fallback';
+    }
   | { ok: false; message: string }
 > {
   try {
-    const res = await fetch(url, {
-      headers: {
-        'User-Agent': 'Rose/1.0 (+https://rose.local)',
-        Accept: 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.5',
-      },
-      redirect: 'follow',
-      signal: AbortSignal.timeout(10_000),
+    const outcome = await resilientFetchHtml(url, {
+      timeoutMs: 10_000,
+      // Test endpoint is for confirmation, not state — never honor a
+      // cache the user can't see.
+      cache: { etag: null, lastModified: null },
     });
-    if (!res.ok) {
-      return { ok: false, message: `Page responded ${res.status} ${res.statusText}` };
+    if (outcome.kind === 'unchanged') {
+      return { ok: false, message: 'Page returned 304 Not Modified to a fresh request' };
     }
-    const ct = (res.headers.get('content-type') ?? '').toLowerCase();
-    if (!ct.includes('text/html') && !ct.includes('application/xhtml+xml')) {
-      return { ok: false, message: `Unsupported content-type: ${ct || 'unknown'}` };
+    if (outcome.kind === 'feed') {
+      return {
+        ok: true,
+        kind: 'feed',
+        feedUrl: outcome.feedUrl,
+        via: 'feed-fallback',
+      };
     }
-    const html = await res.text();
+    const html = outcome.bodyHtml;
     // Lightweight preview: pull <title> + a stripped-text snippet without
     // dragging Readability/linkedom into the API bundle. The worker runs
     // the full extractor when it actually syncs.
@@ -438,11 +455,7 @@ async function testWebsite(url: string): Promise<
     const ogDescMatch = html.match(
       /<meta[^>]+name=["']description["'][^>]+content=["']([^"']{1,500})["']/i,
     );
-    const title = (
-      ogTitleMatch?.[1] ??
-      titleMatch?.[1] ??
-      url
-    )
+    const title = (ogTitleMatch?.[1] ?? titleMatch?.[1] ?? url)
       .replace(/&amp;/g, '&')
       .replace(/&lt;/g, '<')
       .replace(/&gt;/g, '>')
@@ -458,7 +471,7 @@ async function testWebsite(url: string): Promise<
       .trim();
     const snippet = (ogDescMatch?.[1] ?? stripped).trim().slice(0, 280);
     if (!snippet) return { ok: false, message: 'No readable content extracted' };
-    return { ok: true, pageTitle: title, snippet, finalUrl: res.url };
+    return { ok: true, pageTitle: title, snippet, finalUrl: outcome.finalUrl, via: outcome.via };
   } catch (err) {
     return { ok: false, message: (err as Error).message || 'Failed to fetch page' };
   }

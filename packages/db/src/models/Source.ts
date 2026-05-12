@@ -34,6 +34,24 @@ const sourceSchema = new Schema(
     websiteContentHash: { type: String, default: null },
     websiteEtag: { type: String, default: null },
     websiteLastModified: { type: String, default: null },
+    /**
+     * Recovery-path memory for "watch a website" sources that can't be
+     * fetched directly. Set when resilientFetchHtml had to fall through
+     * past the direct + UA-rotate steps; surfaced in the UI so the user
+     * knows their content is coming from a feed or an archive instead
+     * of the live page. `null` means the last sync served clean from
+     * the origin.
+     */
+    websiteLastFetchVia: {
+      type: String,
+      enum: ['direct', 'rotated-ua', 'feed-fallback', 'wayback'],
+      default: null,
+    },
+    /** When set, the next sync goes straight to this RSS/Atom URL
+     *  instead of probing the origin again — discovered via
+     *  `<link rel="alternate">` or well-known path the first time
+     *  the origin started 403'ing. */
+    websiteFeedFallbackUrl: { type: String, default: null },
     /** Outbound SMTP overrides for IMAP sources — derived host
      *  defaults work for most providers (smtp.<domain>:465 secure)
      *  but the user can override per-source. */
