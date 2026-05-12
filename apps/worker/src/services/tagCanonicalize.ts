@@ -53,22 +53,68 @@ export async function canonicalizeTags(
       if (normalized.includes(a)) resolved.set(a, row.canonical);
     }
   }
-  const unknown = normalized.filter((t) => !resolved.has(t));
+  let unknown = normalized.filter((t) => !resolved.has(t));
   if (unknown.length === 0) {
     return [...new Set(resolved.values())];
   }
 
   // We have at least one unknown tag — fetch a candidate set of
-  // existing canonicals to feed the LLM as the "merge into one of
-  // these or treat as new" anchor list. Prefer the heaviest tags
+  // existing canonicals to feed BOTH the deterministic cascade
+  // and (when needed) the LLM prompt. Prefer the heaviest tags
   // first so the LLM has the most-used global taxonomy in front of
-  // it; cap at 80 lines so the prompt stays bounded as the
-  // collection grows.
+  // it; cap at 200 here (was 80) since the cascade benefits from
+  // a wider candidate set without paying LLM-prompt cost for it.
   const existingCanonicals = await TagCanonical.find({})
     .sort({ pageCount: -1, updatedAt: -1 })
-    .limit(80)
+    .limit(200)
     .select('canonical displayName aliases')
     .lean();
+
+  // ── Deterministic cascade: suffix collapse → edit distance.
+  // Most "unknown" tags are simple variants of known canonicals
+  // (`invoices` → `invoice`, `remote-working` → `remote-work`).
+  // The LLM was doing this work at meaningful cost; do it for free
+  // here first, and only fall through to the LLM for the genuinely-
+  // ambiguous tail (synonyms, novel concepts).
+  const canonicalKeys = existingCanonicals.map((c) => c.canonical as string);
+  const aliasIndex = new Map<string, string>();
+  for (const c of existingCanonicals) {
+    for (const a of ((c.aliases as string[] | undefined) ?? [])) {
+      aliasIndex.set(a, c.canonical as string);
+    }
+  }
+  const canonicalSet = new Set(canonicalKeys);
+  const stillUnknown: string[] = [];
+  for (const tag of unknown) {
+    const suffixHit = trySuffixCollapse(tag, canonicalSet, aliasIndex);
+    if (suffixHit) {
+      resolved.set(tag, suffixHit);
+      // Persist the alias so the next page write hits the cheap
+      // direct-lookup path. Best-effort.
+      try {
+        await persistMapping(userId, tag, suffixHit, '', false);
+      } catch {
+        // ignore
+      }
+      continue;
+    }
+    const editHit = tryEditDistance(tag, canonicalKeys);
+    if (editHit) {
+      resolved.set(tag, editHit);
+      try {
+        await persistMapping(userId, tag, editHit, '', false);
+      } catch {
+        // ignore
+      }
+      continue;
+    }
+    stillUnknown.push(tag);
+  }
+  if (stillUnknown.length === 0) {
+    return [...new Set(resolved.values())];
+  }
+  // From here down only the genuinely-novel tags hit the LLM.
+  unknown = stillUnknown;
 
   const template = await getTagCanonInstruction(userId);
   if (!template) {
@@ -204,6 +250,122 @@ function finaliseWithoutLLM(
 ): string[] {
   for (const t of unknown) resolved.set(t, t);
   return [...new Set(resolved.values())];
+}
+
+/**
+ * Suffix-collapse pass — the cheap first line of the cascade.
+ * Looks for plural/singular variants of an unknown tag against the
+ * existing canonicals + aliases. Examples:
+ *   • `invoices`  → matches canonical `invoice`
+ *   • `invoice`   → matches canonical `invoices` (rarer; supported)
+ *   • `companies` → matches canonical `company` (ies → y)
+ *
+ * Conservative on stem length so we don't collapse `news` → `ne`
+ * or `bus` → `bu`. Stems below 3 chars are rejected.
+ *
+ * Exported for vitest coverage so the rules are pinned.
+ */
+export function trySuffixCollapse(
+  tag: string,
+  canonicalSet: Set<string>,
+  aliasIndex: Map<string, string>,
+): string | null {
+  const candidates: string[] = [];
+  // Singularising the unknown tag.
+  if (tag.endsWith('ies') && tag.length > 4) {
+    candidates.push(tag.slice(0, -3) + 'y');
+  }
+  if (tag.endsWith('es') && tag.length > 4) {
+    candidates.push(tag.slice(0, -2));
+  }
+  if (tag.endsWith('s') && tag.length > 3) {
+    candidates.push(tag.slice(0, -1));
+  }
+  // Pluralising — handles the rarer case where the canonical was
+  // emitted in plural form first.
+  if (tag.length > 2) {
+    candidates.push(tag + 's');
+    if (tag.endsWith('y')) candidates.push(tag.slice(0, -1) + 'ies');
+    if (!tag.endsWith('s')) candidates.push(tag + 'es');
+  }
+  for (const c of candidates) {
+    if (c.length < 3) continue;
+    if (canonicalSet.has(c)) return c;
+    const aliasHit = aliasIndex.get(c);
+    if (aliasHit) return aliasHit;
+  }
+  return null;
+}
+
+/**
+ * Levenshtein distance with an early-exit threshold. Computes the
+ * standard DP table only up to `maxDistance` rows of edits before
+ * giving up — keeps the cascade fast for long tag sets.
+ *
+ * Exported for vitest coverage.
+ */
+export function boundedLevenshtein(
+  a: string,
+  b: string,
+  maxDistance: number,
+): number {
+  if (Math.abs(a.length - b.length) > maxDistance) return maxDistance + 1;
+  if (a === b) return 0;
+  const la = a.length;
+  const lb = b.length;
+  // Allocate one row at a time — the standard space-optimised DP.
+  let prev = new Array<number>(lb + 1);
+  let curr = new Array<number>(lb + 1);
+  for (let j = 0; j <= lb; j += 1) prev[j] = j;
+  for (let i = 1; i <= la; i += 1) {
+    curr[0] = i;
+    let rowMin = curr[0]!;
+    for (let j = 1; j <= lb; j += 1) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      curr[j] = Math.min(
+        curr[j - 1]! + 1,
+        prev[j]! + 1,
+        prev[j - 1]! + cost,
+      );
+      if (curr[j]! < rowMin) rowMin = curr[j]!;
+    }
+    if (rowMin > maxDistance) return maxDistance + 1;
+    [prev, curr] = [curr, prev];
+  }
+  return prev[lb]!;
+}
+
+/**
+ * Edit-distance pass — catches typos and slight variants the
+ * suffix pass missed. Threshold scales with tag length so short
+ * tags ("css" vs "cs") need an exact match while longer ones
+ * ("remote-working" vs "remote-work") tolerate a couple of edits.
+ *
+ *   ≤ 5 chars     →  distance ≤ 1
+ *   ≤ 8 chars     →  distance ≤ 1
+ *   > 8 chars     →  distance ≤ 2
+ *
+ * Returns the canonical with the SMALLEST distance ≤ threshold, or
+ * null when nothing's close enough. Exported for vitest coverage.
+ */
+export function tryEditDistance(
+  tag: string,
+  canonicalKeys: string[],
+): string | null {
+  // Short tags are noisy at edit-distance 1 (e.g. "ci" vs "cd" are
+  // unrelated). Require exact equality below 5 chars.
+  if (tag.length < 5) return null;
+  const maxDistance = tag.length <= 8 ? 1 : 2;
+  let best: { canonical: string; distance: number } | null = null;
+  for (const c of canonicalKeys) {
+    if (Math.abs(c.length - tag.length) > maxDistance) continue;
+    const d = boundedLevenshtein(tag, c, maxDistance);
+    if (d <= maxDistance && (!best || d < best.distance)) {
+      best = { canonical: c, distance: d };
+      if (d === 0) break; // can't beat zero
+    }
+  }
+  return best?.canonical ?? null;
 }
 
 async function persistMapping(
