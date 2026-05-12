@@ -437,6 +437,88 @@ async function markFailed(
 }
 
 /**
+ * Try to skip the LLM synthesis by using Wikipedia's extract
+ * verbatim — for most encyclopedic subjects (people, orgs, places,
+ * works) the LLM was rewriting a human-authored summary that's
+ * already coherent and citable. Using it verbatim is cheaper AND
+ * lower-risk: no hallucination, fully sourced.
+ *
+ * Returns null when:
+ *   • No Wikipedia snippet in the batch (adapter disabled / no hit).
+ *   • The article title doesn't reasonably match the subject —
+ *     Wikipedia search occasionally returns surprising primary
+ *     topics ("Rust" → corrosion, not the language) and we'd
+ *     rather defer to multi-source synthesis in that case.
+ *   • The snippet confidence is low (disambiguation page etc.).
+ *
+ * The output is shaped exactly like a DaydreamSynthesisOutput so
+ * the existing `upsertNote` persistence path takes it unchanged —
+ * the only marker that it's a verbatim note is the model label
+ * (`wikipedia:verbatim`) that the worker passes through.
+ */
+function tryWikipediaVerbatim(
+  display: string,
+  snippets: Array<DaydreamSnippet & { adapterId?: string }>,
+): { out: DaydreamSynthesisOutput; usedIndex: number } | null {
+  const wikiIdx = snippets.findIndex((s) => s.adapterId === 'wikipedia');
+  if (wikiIdx === -1) return null;
+  const wiki = snippets[wikiIdx]!;
+  // Disambiguation pages land at confidence 0.3 in the adapter
+  // — never trust those verbatim; the LLM was helpful here at
+  // picking the right meaning.
+  if ((wiki.confidence ?? 0) < 0.8) return null;
+  const extract = (wiki.content ?? '').trim();
+  if (!extract || extract.length < 80) return null;
+
+  // Title-match gate. Wikipedia normalises article titles
+  // ("anthropic" → "Anthropic", "rust programming language" →
+  // "Rust (programming language)"). We accept when, after dropping
+  // parenthetical clarifications and case, the title and query
+  // overlap meaningfully.
+  const articleTitle = (wiki.title ?? '').trim();
+  if (!articleTitle) return null;
+  const normTitle = articleTitle
+    .replace(/\s*\([^)]*\)\s*/g, ' ')
+    .toLowerCase()
+    .trim();
+  const normDisplay = display.toLowerCase().trim();
+  const titleMatches =
+    normTitle === normDisplay ||
+    normTitle.startsWith(normDisplay) ||
+    normDisplay.startsWith(normTitle);
+  if (!titleMatches) return null;
+
+  // Split the extract into a summary (first 1–2 sentences) and a
+  // body. The Wikipedia REST extract is one paragraph max; we use
+  // the first sentence boundary as the summary marker. The bodyMd
+  // gains an inline citation marker [1] pointing at the snippet
+  // index, mirroring how the LLM-synthesised notes look.
+  const firstSentenceEnd = extract.search(/[.!?](?:\s|$)/);
+  const summarySource =
+    firstSentenceEnd > 40 && firstSentenceEnd < 320
+      ? extract.slice(0, firstSentenceEnd + 1)
+      : extract.slice(0, 320);
+  const summary = summarySource.trim();
+
+  // bodyMd: the full extract, capped at 900 chars, with a single
+  // "[1]" citation marker at the end of the first paragraph so
+  // the UI's source-list lookup keeps working without re-shaping.
+  const bodyCore = extract.length > 880 ? `${extract.slice(0, 880)}…` : extract;
+  const bodyMd = `${bodyCore} [1]`;
+
+  return {
+    out: {
+      displayName: articleTitle.slice(0, 120),
+      summary: summary.slice(0, 320),
+      bodyMd: bodyMd.slice(0, 900),
+      usedSources: [wikiIdx],
+      confidence: 'high',
+    },
+    usedIndex: wikiIdx,
+  };
+}
+
+/**
  * Research one subject end-to-end: fetch snippets from each enabled
  * adapter, synthesize via the user's gen provider, persist note.
  * Returns true if a note was successfully written.
@@ -484,6 +566,30 @@ async function researchSubject(
   if (snippets.length === 0) {
     await markFailed(userId, kind, subjectKey, 'no source returned content', refreshAfterDays);
     return false;
+  }
+
+  // ── Fast path: Wikipedia verbatim. When the encyclopedic
+  // source already returned a coherent paragraph that matches the
+  // subject's name, the LLM was rewriting it into Rose's voice
+  // — costly, and a source of hallucinations the verbatim path
+  // doesn't have. Skip the synthesis call entirely when we have
+  // a confident hit.
+  const verbatim = tryWikipediaVerbatim(display, snippets);
+  if (verbatim) {
+    await upsertNote(
+      userId,
+      kind,
+      subjectKey,
+      verbatim.out,
+      snippets,
+      'wikipedia:verbatim',
+      refreshAfterDays,
+    );
+    logger.info(
+      { kind, subjectKey, source: 'wikipedia' },
+      'daydream: verbatim (no LLM)',
+    );
+    return true;
   }
 
   let resolved;

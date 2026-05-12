@@ -459,6 +459,14 @@ function BackgroundBrief({
               {note.generatedAt && (
                 <span>· {new Date(note.generatedAt).toLocaleDateString()}</span>
               )}
+              {note.model === 'wikipedia:verbatim' && (
+                <span
+                  className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] uppercase tracking-widest text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200"
+                  title="Rendered verbatim from Wikipedia — no LLM synthesis, no hallucination risk."
+                >
+                  · from wikipedia
+                </span>
+              )}
               {note.contributedBy && (
                 <span
                   className="italic"
