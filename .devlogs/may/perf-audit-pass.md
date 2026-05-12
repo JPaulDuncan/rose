@@ -29,18 +29,6 @@ but have since landed. No action needed.
 
 ## Real backlog — declined this pass with reasons
 
-- **§5.3 bulk inserts in IMAP/Gmail sync.** Both `imapSync.ts`
-  and `gmailSync.ts` still loop `Email.create`. Converting to
-  `bulkWrite({ordered: false})` is a 5x speedup on initial
-  syncs, but it restructures the dedup-by-rawHash flow
-  (currently using duplicate-key error catch on per-create) and
-  the post-create downstream enqueue (`parseEmailQueue.add` per
-  inserted doc). A clean conversion needs:
-    • bulkWrite, then refetch by rawHash to recover ObjectIds
-      for the enqueue payload
-    • test fixture covering dup-while-bulking semantics
-  Out of scope for this session. Worth its own PR.
-
 - **§7.3 batch embeddings.** Real win but needs an Ollama API
   upgrade (`/api/embeddings` is single-input; `/api/embed`
   accepts arrays). Cross-deployment compatibility check needed
@@ -50,10 +38,31 @@ but have since landed. No action needed.
   case-by-case judgement. Best handled when a specific endpoint
   is identified as slow under profiling, not as a sweep.
 
-- **§3.1 htmlparser2 SAX pre-filter.** Real CPU win on
-  web-research, but `quickSniff` is a stub today and the
-  reference implementation is non-trivial. Independent PR
-  needed.
+## Shipped in the follow-up pass
+
+- **§5.3 bulk inserts in IMAP/Gmail sync.** Both sync workers
+  now batch into `Email.bulkWrite({ordered: false})` via a
+  shared `flushPendingEmails` helper in
+  `apps/worker/src/lib/bulkIngestEmails.ts`. Each pending entry
+  gets a pre-assigned `ObjectId`; after the bulk insert we
+  refetch by `_id ∈ assignedIds` so the side-effect fan-out
+  (generate-page enqueue, recipe emit, shipment + promo
+  detection, metric inc) runs only for the rows that actually
+  inserted — dup-key collisions on `(userId, rawHash)` skip
+  cleanly. Flush window is 50, sized to stay well under
+  Mongo's 16MB op cap on any plausible mailbox. ~40 round-trips
+  instead of ~2000 on an initial backfill.
+
+- **§3.1 htmlparser2 SAX pre-filter.** `quickSniff` in
+  `apps/worker/src/services/extractArticle.ts` is now a real
+  htmlparser2 SAX pass: counts visible text (skipping
+  `script`/`style`/`noscript`/`iframe`/`template`/`svg` token
+  ranges) and harvests `<title>` for keyword matching. Catches
+  the cases the old regex stub missed — captcha /
+  cloudflare-interstitial pages, soft-404s, and tracking-blob
+  pages that *look* big but have no body text — without paying
+  for the linkedom DOM build + Readability traversal on
+  obviously-thin pages. Added tests for the new behaviours.
 
 ## Already-done items shipped while this audit was being written
 

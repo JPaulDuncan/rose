@@ -1,23 +1,23 @@
 import { Worker, type Job, Queue } from 'bullmq';
 import { ImapFlow } from 'imapflow';
 import { Types } from 'mongoose';
-import { Source, Email, User } from '@rose/db';
+import { Source, User } from '@rose/db';
 import {
   parseEmail,
   formatImapError,
-  senderDomainTag,
   compileSenderBlocklist,
   isSenderBlocked,
   isSenderWhitelisted,
 } from '@rose/email-parser';
 import { decryptJson } from '../lib/crypto.js';
-import { redis, bullConnection } from '../lib/redis.js';
+import { bullConnection } from '../lib/redis.js';
 import { logger } from '../lib/logger.js';
-import { inc, METRIC } from '../lib/metrics.js';
-import { emitRecipeEvent } from '../lib/recipeEmit.js';
-import { detectShipmentsForEmail } from '@rose/shipments';
-import { detectPromoCodesForEmail } from '@rose/promo-codes';
-import { priorityForDate, type ImapConfig } from '@rose/shared';
+import {
+  DEFAULT_FLUSH_SIZE,
+  flushPendingEmails,
+  type PendingEmail,
+} from '../lib/bulkIngestEmails.js';
+import { type ImapConfig } from '@rose/shared';
 
 const QUEUE = 'rose.imap-sync';
 const generateQueue = new Queue('rose.generate-page', { connection: bullConnection() });
@@ -86,6 +86,18 @@ export function startImapSyncWorker() {
             },
             'imap-sync: starting fetch',
           );
+          const pending: PendingEmail[] = [];
+          const flushCtx = {
+            userId,
+            sourceId: source._id as Types.ObjectId,
+            sourceTag: 'imap' as const,
+            generateQueue,
+          };
+          const flush = async () => {
+            const r = await flushPendingEmails(pending, flushCtx);
+            ingested += r.ingested;
+            skippedDup += r.skippedDup;
+          };
           for (const uid of toFetch) {
             try {
               const msg = await client.fetchOne(String(uid), { source: true });
@@ -115,111 +127,14 @@ export function startImapSyncWorker() {
                 skippedDup += 1;
                 continue;
               }
-              // Atomic dedup-or-insert. The unique index on
-              // (userId, rawHash) is the source of truth; we attempt
-              // insertOne and treat duplicate-key errors (E11000) as
-              // a known dup. This collapses the previous two
-              // round-trips (exists + insert) into one and removes
-              // the race where a concurrent IMAP run could have
-              // inserted between the `exists` check and our `create`.
-              let created;
-              try {
-                created = await Email.create({
-                  userId,
-                  sourceId: source._id,
-                  messageId: cleaned.messageId,
-                  threadKey: cleaned.threadKey,
-                  subjectTemplate: cleaned.subjectTemplate,
-                  rawHash: cleaned.rawHash,
-                  from: cleaned.from,
-                  to: cleaned.to,
-                  cc: cleaned.cc,
-                  subject: cleaned.subject,
-                  date: cleaned.date,
-                  text: cleaned.text,
-                  rawText: cleaned.rawText,
-                  html: cleaned.html,
-                  attachments: cleaned.attachments.map((a) => ({
-                    filename: a.filename,
-                    contentType: a.contentType,
-                    size: a.size,
-                    contentId: a.contentId,
-                  })),
-                  priority: cleaned.metadata.priority,
-                  topics: cleaned.metadata.topics,
-                  links: cleaned.metadata.links,
-                  images: cleaned.metadata.images,
-                  spamScore: cleaned.metadata.spamScore,
-                  spamSignals: cleaned.metadata.spamSignals,
-                  isMassMailing: cleaned.metadata.isMassMailing,
-                  promotionalScore: cleaned.metadata.promotionalScore,
-                  isPromotional: cleaned.metadata.isPromotional,
-                  promotionalSignals: cleaned.metadata.promotionalSignals,
-                  authResults: cleaned.metadata.authResults,
-                  logoCandidate: cleaned.metadata.logoCandidate ?? undefined,
-                  unsubscribeUrls: cleaned.metadata.unsubscribeUrls,
-                  ingestStatus: 'parsed',
-                });
-              } catch (insertErr) {
-                if ((insertErr as { code?: number })?.code === 11000) {
-                  // Unique-index collision on (userId, rawHash) or
-                  // (userId, messageId) — already ingested. Same
-                  // observable behaviour as the old `exists` path.
-                  skippedDup += 1;
-                  continue;
-                }
-                throw insertErr;
-              }
-              await generateQueue.add(
-                'generate',
-                { emailId: created._id.toString(), userId: userId.toString() },
-                {
-                  attempts: 3,
-                  removeOnComplete: 500,
-                  removeOnFail: 500,
-                  // Newer emails jump the queue ahead of older
-                  // backfill items so a fresh message visible in the
-                  // user's mailbox lands in the UI without waiting
-                  // for a 30-day archive sweep to drain.
-                  priority: priorityForDate(cleaned.date ?? new Date()),
-                },
-              );
-              // Recipes — fire-and-forget, won't block ingest if it
-              // fails. brand-key is derived from the from-address so
-              // recipes can match on a normalized brand identifier.
-              const recipeFromAddr = cleaned.from?.address ?? null;
-              const recipeBrandKey = recipeFromAddr
-                ? senderDomainTag(recipeFromAddr)
-                : null;
-              await emitRecipeEvent({
-                kind: 'email.ingested',
-                userId: userId.toString(),
-                emailId: String(created._id),
-                from: recipeFromAddr,
-                subject: cleaned.subject ?? '',
-                brandKey: recipeBrandKey ? recipeBrandKey.toLowerCase() : null,
-                priority: cleaned.metadata.priority ?? null,
-                tags: cleaned.metadata.topics ?? [],
-              });
-              // Best-effort tracking-number detection. Wrapped so a
-              // shipment-side failure can't take down ingestion.
-              try {
-                await detectShipmentsForEmail(String(created._id));
-              } catch (err) {
-                logger.warn({ err, emailId: String(created._id) }, 'shipment detection failed');
-              }
-              try {
-                await detectPromoCodesForEmail(String(created._id));
-              } catch (err) {
-                logger.warn({ err, emailId: String(created._id) }, 'promo-code detection failed');
-              }
-              ingested += 1;
-              inc(METRIC.EMAIL_INGESTED, 1, { source: 'imap' });
+              pending.push({ assignedId: new Types.ObjectId(), cleaned });
+              if (pending.length >= DEFAULT_FLUSH_SIZE) await flush();
             } catch (perMsgErr) {
               failed += 1;
               logger.warn({ uid, err: perMsgErr }, 'imap-sync: per-message failure (continuing)');
             }
           }
+          await flush();
         } finally {
           lock.release();
         }

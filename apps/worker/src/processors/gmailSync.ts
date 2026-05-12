@@ -1,23 +1,22 @@
 import { Worker, type Job, Queue } from 'bullmq';
 import { google } from 'googleapis';
 import { Types } from 'mongoose';
-import { Source, Email, User } from '@rose/db';
+import { Source, User } from '@rose/db';
 import {
   parseEmail,
-  senderDomainTag,
   compileSenderBlocklist,
   isSenderBlocked,
   isSenderWhitelisted,
 } from '@rose/email-parser';
 import { decryptJson, encryptJson } from '../lib/crypto.js';
-import { redis, bullConnection } from '../lib/redis.js';
+import { bullConnection } from '../lib/redis.js';
 import { env } from '../lib/env.js';
 import { logger } from '../lib/logger.js';
-import { inc, METRIC } from '../lib/metrics.js';
-import { emitRecipeEvent } from '../lib/recipeEmit.js';
-import { detectShipmentsForEmail } from '@rose/shipments';
-import { detectPromoCodesForEmail } from '@rose/promo-codes';
-import { priorityForDate } from '@rose/shared';
+import {
+  DEFAULT_FLUSH_SIZE,
+  flushPendingEmails,
+  type PendingEmail,
+} from '../lib/bulkIngestEmails.js';
 
 const QUEUE = 'rose.gmail-sync';
 const generateQueue = new Queue('rose.generate-page', { connection: bullConnection() });
@@ -73,6 +72,13 @@ export function startGmailSyncWorker() {
         q: 'newer_than:7d',
       });
       const messages = list.data.messages ?? [];
+      const pending: PendingEmail[] = [];
+      const flushCtx = {
+        userId,
+        sourceId: source._id as Types.ObjectId,
+        sourceTag: 'gmail' as const,
+        generateQueue,
+      };
       for (const m of messages) {
         if (!m.id) continue;
         const full = await gmail.users.messages.get({
@@ -86,86 +92,10 @@ export function startGmailSyncWorker() {
         const fromAddr = cleaned.from?.address?.toLowerCase() ?? '';
         const isWhitelisted = isSenderWhitelisted(whitelisted, fromAddr);
         if (fromAddr && !isWhitelisted && isSenderBlocked(blocked, fromAddr)) continue;
-        // Atomic dedup-or-insert via the unique (userId, rawHash)
-        // index. One round-trip; E11000 means already-ingested.
-        let created;
-        try {
-          created = await Email.create({
-            userId,
-            sourceId: source._id,
-            messageId: cleaned.messageId,
-            threadKey: cleaned.threadKey,
-            subjectTemplate: cleaned.subjectTemplate,
-            rawHash: cleaned.rawHash,
-            from: cleaned.from,
-            to: cleaned.to,
-            cc: cleaned.cc,
-            subject: cleaned.subject,
-            date: cleaned.date,
-            text: cleaned.text,
-            rawText: cleaned.rawText,
-            html: cleaned.html,
-            attachments: cleaned.attachments.map((a) => ({
-              filename: a.filename,
-              contentType: a.contentType,
-              size: a.size,
-              contentId: a.contentId,
-            })),
-            priority: cleaned.metadata.priority,
-            topics: cleaned.metadata.topics,
-            links: cleaned.metadata.links,
-            images: cleaned.metadata.images,
-            spamScore: cleaned.metadata.spamScore,
-            spamSignals: cleaned.metadata.spamSignals,
-            isMassMailing: cleaned.metadata.isMassMailing,
-            promotionalScore: cleaned.metadata.promotionalScore,
-            isPromotional: cleaned.metadata.isPromotional,
-            promotionalSignals: cleaned.metadata.promotionalSignals,
-            authResults: cleaned.metadata.authResults,
-            logoCandidate: cleaned.metadata.logoCandidate ?? undefined,
-            unsubscribeUrls: cleaned.metadata.unsubscribeUrls,
-            ingestStatus: 'parsed',
-          });
-        } catch (insertErr) {
-          if ((insertErr as { code?: number })?.code === 11000) continue;
-          throw insertErr;
-        }
-        await generateQueue.add(
-          'generate',
-          { emailId: created._id.toString(), userId: userId.toString() },
-          {
-            attempts: 3,
-            removeOnComplete: 500,
-            removeOnFail: 500,
-            priority: priorityForDate(cleaned.date ?? new Date()),
-          },
-        );
-        inc(METRIC.EMAIL_INGESTED, 1, { source: 'gmail' });
-        const recipeFromAddr = cleaned.from?.address ?? null;
-        const recipeBrandKey = recipeFromAddr
-          ? senderDomainTag(recipeFromAddr)
-          : null;
-        await emitRecipeEvent({
-          kind: 'email.ingested',
-          userId: userId.toString(),
-          emailId: String(created._id),
-          from: recipeFromAddr,
-          subject: cleaned.subject ?? '',
-          brandKey: recipeBrandKey ? recipeBrandKey.toLowerCase() : null,
-          priority: cleaned.metadata.priority ?? null,
-          tags: cleaned.metadata.topics ?? [],
-        });
-        try {
-          await detectShipmentsForEmail(String(created._id));
-        } catch (err) {
-          logger.warn({ err, emailId: String(created._id) }, 'shipment detection failed');
-        }
-        try {
-          await detectPromoCodesForEmail(String(created._id));
-        } catch (err) {
-          logger.warn({ err, emailId: String(created._id) }, 'promo-code detection failed');
-        }
+        pending.push({ assignedId: new Types.ObjectId(), cleaned });
+        if (pending.length >= DEFAULT_FLUSH_SIZE) await flushPendingEmails(pending, flushCtx);
       }
+      await flushPendingEmails(pending, flushCtx);
       source.lastSyncAt = new Date();
       source.lastError = null;
       await source.save();
