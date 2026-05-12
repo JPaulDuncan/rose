@@ -8,6 +8,7 @@ import {
 import { TagCanonicalization } from '@rose/shared';
 import { SYSTEM_PROMPT_BASE, extractJson, renderTemplate } from '@rose/llm';
 import { resolveProviderForUser, applyParamOverrides } from '../lib/providers.js';
+import { cosine } from '../lib/vec.js';
 import { logger } from '../lib/logger.js';
 
 /**
@@ -113,8 +114,45 @@ export async function canonicalizeTags(
   if (stillUnknown.length === 0) {
     return [...new Set(resolved.values())];
   }
-  // From here down only the genuinely-novel tags hit the LLM.
   unknown = stillUnknown;
+
+  // ── Embedding-similarity pass: only fold tags whose meaning is
+  // genuinely near-synonymous with an existing canonical. This is
+  // the LAST free rung before the LLM. Gated aggressively —
+  // threshold 0.92 cosine — because the failure mode is bridging
+  // distinct concepts ("python" → "ruby") which is harder to
+  // notice and harder to undo than a missed merge. Embeddings are
+  // expensive, so:
+  //   1. Compute the unknown tag's embedding once per call.
+  //   2. Read canonical embeddings from the persisted cache when
+  //      present; lazily backfill the missing ones for the
+  //      top-100 most-used canonicals only (the candidates we
+  //      actually score against).
+  //   3. Skip gracefully if the embedding provider is unavailable.
+  const tryEmbed = await runEmbeddingRung(
+    userId,
+    unknown,
+    existingCanonicals,
+  );
+  const stillUnknownAfterEmbed: string[] = [];
+  for (const tag of unknown) {
+    const hit = tryEmbed.get(tag);
+    if (hit) {
+      resolved.set(tag, hit);
+      try {
+        await persistMapping(userId, tag, hit, '', false);
+      } catch {
+        // ignore
+      }
+    } else {
+      stillUnknownAfterEmbed.push(tag);
+    }
+  }
+  if (stillUnknownAfterEmbed.length === 0) {
+    return [...new Set(resolved.values())];
+  }
+  // From here down only the genuinely-novel tags hit the LLM.
+  unknown = stillUnknownAfterEmbed;
 
   const template = await getTagCanonInstruction(userId);
   if (!template) {
@@ -366,6 +404,144 @@ export function tryEditDistance(
     }
   }
   return best?.canonical ?? null;
+}
+
+/**
+ * Cosine threshold for the embedding rung. 0.92 is intentionally
+ * tight — at this score on a small-model embedding the two tags
+ * tend to be near-synonyms ("authentication" / "auth", "machine-
+ * learning" / "ml"). At 0.85 you start folding adjacent-but-
+ * distinct concepts ("python" / "ruby"), which is hard to undo
+ * because the loser canonical disappears as an alias.
+ */
+const EMBED_SIM_THRESHOLD = 0.92;
+/** How many existing canonicals to score against. Bounded so the
+ *  per-page cost stays predictable; the candidates are
+ *  pageCount-ranked so the top of the taxonomy is always covered. */
+const EMBED_CANDIDATE_CAP = 100;
+
+type CanonicalCandidate = {
+  canonical: string;
+  displayName?: string | null;
+  aliases?: string[];
+};
+
+/**
+ * Score each unknown tag against the top-pageCount canonicals via
+ * embedding cosine similarity. Returns a map of `tag → canonical`
+ * for matches at or above the threshold. The unknown tag's
+ * embedding is computed once; canonical embeddings come from the
+ * persisted cache when present and are lazily filled in when
+ * absent.
+ *
+ * Best-effort: returns an empty map on any failure (no provider
+ * configured, fetch error, etc) so the cascade falls through to
+ * the LLM rung as if this pass hadn't run.
+ */
+async function runEmbeddingRung(
+  userId: Types.ObjectId,
+  unknownTags: string[],
+  candidates: CanonicalCandidate[],
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  if (unknownTags.length === 0 || candidates.length === 0) return out;
+
+  // Resolve the embedding provider once. The user may not have one
+  // configured (Ollama not running, embedding model not pulled) —
+  // in which case we skip the whole rung quietly.
+  let provider, model, providerTag;
+  try {
+    const resolved = await resolveProviderForUser(userId, 'embedding');
+    provider = resolved.provider;
+    model = resolved.model;
+    providerTag = `${provider.id}:${model}`;
+  } catch (err) {
+    logger.debug(
+      { err, userId: String(userId) },
+      'tag-canon: embedding provider unavailable; skipping embedding rung',
+    );
+    return out;
+  }
+
+  const top = candidates.slice(0, EMBED_CANDIDATE_CAP);
+  // Pull the persisted embeddings (when cached). The `embedding`
+  // field is `select: false` so explicitly opt in.
+  const rows = (await TagCanonical.find({
+    canonical: { $in: top.map((c) => c.canonical) },
+  })
+    .select('+embedding canonical embeddingModel')
+    .lean()) as Array<{
+    canonical: string;
+    embedding?: number[] | null;
+    embeddingModel?: string | null;
+  }>;
+  const cached = new Map(rows.map((r) => [r.canonical, r]));
+
+  type Scored = { canonical: string; vec: number[] };
+  const scoredCanonicals: Scored[] = [];
+  for (const c of top) {
+    const row = cached.get(c.canonical);
+    // Cache hit when both the vector exists AND it was minted
+    // with the SAME embedding model — a mismatch (e.g. user
+    // switched provider) makes the cached vector unusable, so
+    // we recompute.
+    if (
+      row?.embedding &&
+      row.embedding.length > 0 &&
+      row.embeddingModel === providerTag
+    ) {
+      scoredCanonicals.push({ canonical: c.canonical, vec: row.embedding });
+      continue;
+    }
+    // Cache miss — embed the canonical (incl. displayName + a
+    // handful of aliases to thicken the signal) and persist.
+    const text = [
+      c.displayName || titleCaseTag(c.canonical),
+      ...((c.aliases ?? []).slice(0, 4)),
+    ]
+      .filter(Boolean)
+      .join(' ')
+      .trim();
+    try {
+      const vec = await provider.embed(model, text);
+      scoredCanonicals.push({ canonical: c.canonical, vec });
+      await TagCanonical.updateOne(
+        { canonical: c.canonical },
+        { $set: { embedding: vec, embeddingModel: providerTag } },
+      ).catch(() => null);
+    } catch (err) {
+      logger.debug(
+        { err, canonical: c.canonical },
+        'tag-canon: failed to embed canonical (continuing)',
+      );
+    }
+  }
+  if (scoredCanonicals.length === 0) return out;
+
+  for (const tag of unknownTags) {
+    let tagVec: number[];
+    try {
+      tagVec = await provider.embed(model, titleCaseTag(tag));
+    } catch (err) {
+      logger.debug({ err, tag }, 'tag-canon: failed to embed unknown tag');
+      continue;
+    }
+    let best: { canonical: string; score: number } | null = null;
+    for (const c of scoredCanonicals) {
+      const score = cosine(tagVec, c.vec);
+      if (score >= EMBED_SIM_THRESHOLD && (!best || score > best.score)) {
+        best = { canonical: c.canonical, score };
+      }
+    }
+    if (best) {
+      logger.info(
+        { tag, canonical: best.canonical, score: Number(best.score.toFixed(3)) },
+        'tag-canon: embedding rung folded',
+      );
+      out.set(tag, best.canonical);
+    }
+  }
+  return out;
 }
 
 async function persistMapping(
