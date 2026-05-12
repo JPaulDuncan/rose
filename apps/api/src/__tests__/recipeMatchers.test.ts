@@ -217,3 +217,236 @@ describe('evaluateRecipe', () => {
     }
   });
 });
+
+/* ─── Phase 2 event kinds ────────────────────────────────────────── */
+
+const ATTACHMENT_EVENT: RecipeEvent = {
+  kind: 'attachment.received',
+  userId: 'u1',
+  emailId: 'e1',
+  from: 'invoices@acme.com',
+  subject: 'Your invoice',
+  brandKey: 'acme',
+  attachmentCount: 2,
+  contentTypes: ['application/pdf', 'image/png'],
+  filenames: ['invoice-2024.pdf', 'receipt.png'],
+  totalBytes: 245_000,
+};
+
+describe('triggerMatches — attachment.received', () => {
+  it('matches any attachment-bearing email when config is empty', () => {
+    expect(
+      triggerMatches(
+        { kind: 'attachment.received', config: {} },
+        ATTACHMENT_EVENT,
+      ),
+    ).toBe(true);
+  });
+
+  it('filters by contentTypeContains (case-insensitive substring)', () => {
+    expect(
+      triggerMatches(
+        { kind: 'attachment.received', config: { contentTypeContains: 'pdf' } },
+        ATTACHMENT_EVENT,
+      ),
+    ).toBe(true);
+    expect(
+      triggerMatches(
+        { kind: 'attachment.received', config: { contentTypeContains: 'zip' } },
+        ATTACHMENT_EVENT,
+      ),
+    ).toBe(false);
+  });
+
+  it('filters by filenameMatches regex', () => {
+    expect(
+      triggerMatches(
+        { kind: 'attachment.received', config: { filenameMatches: 'invoice-\\d{4}' } },
+        ATTACHMENT_EVENT,
+      ),
+    ).toBe(true);
+    expect(
+      triggerMatches(
+        { kind: 'attachment.received', config: { filenameMatches: 'contract' } },
+        ATTACHMENT_EVENT,
+      ),
+    ).toBe(false);
+  });
+
+  it('fails closed on a malformed regex', () => {
+    expect(
+      triggerMatches(
+        { kind: 'attachment.received', config: { filenameMatches: '(unclosed' } },
+        ATTACHMENT_EVENT,
+      ),
+    ).toBe(false);
+  });
+
+  it('filters by minCount', () => {
+    expect(
+      triggerMatches(
+        { kind: 'attachment.received', config: { minCount: 3 } },
+        ATTACHMENT_EVENT,
+      ),
+    ).toBe(false);
+    expect(
+      triggerMatches(
+        { kind: 'attachment.received', config: { minCount: 1 } },
+        ATTACHMENT_EVENT,
+      ),
+    ).toBe(true);
+  });
+});
+
+const SHIPMENT_EVENT: RecipeEvent = {
+  kind: 'shipment.detected',
+  userId: 'u1',
+  emailId: 'e1',
+  count: 1,
+  from: 'shipping@amazon.com',
+  subject: 'Your order has shipped',
+  brandKey: 'amazon',
+};
+
+describe('triggerMatches — shipment.detected / promo.detected', () => {
+  it('shipment.detected matches every detection when config is empty', () => {
+    expect(
+      triggerMatches({ kind: 'shipment.detected', config: {} }, SHIPMENT_EVENT),
+    ).toBe(true);
+  });
+
+  it('shipment.detected respects minCount', () => {
+    expect(
+      triggerMatches(
+        { kind: 'shipment.detected', config: { minCount: 2 } },
+        SHIPMENT_EVENT,
+      ),
+    ).toBe(false);
+  });
+
+  it('promo.detected uses the same minCount semantics', () => {
+    const promo: RecipeEvent = {
+      kind: 'promo.detected',
+      userId: 'u1',
+      emailId: 'e1',
+      count: 3,
+      from: 'deals@store.com',
+      subject: 'Save 20%',
+      brandKey: 'store',
+    };
+    expect(
+      triggerMatches(
+        { kind: 'promo.detected', config: { minCount: 3 } },
+        promo,
+      ),
+    ).toBe(true);
+    expect(
+      triggerMatches(
+        { kind: 'promo.detected', config: { minCount: 4 } },
+        promo,
+      ),
+    ).toBe(false);
+  });
+});
+
+describe('triggerMatches — sender.blocked', () => {
+  const event: RecipeEvent = {
+    kind: 'sender.blocked',
+    userId: 'u1',
+    address: 'notices@medium.com',
+    brandKey: 'medium',
+    emailsDeleted: 47,
+    pagesDeleted: 12,
+  };
+
+  it('matches every block when config is empty', () => {
+    expect(triggerMatches({ kind: 'sender.blocked', config: {} }, event)).toBe(true);
+  });
+
+  it('filters by brandKey (case-insensitive)', () => {
+    expect(
+      triggerMatches(
+        { kind: 'sender.blocked', config: { brandKey: 'MEDIUM' } },
+        event,
+      ),
+    ).toBe(true);
+    expect(
+      triggerMatches(
+        { kind: 'sender.blocked', config: { brandKey: 'substack' } },
+        event,
+      ),
+    ).toBe(false);
+  });
+});
+
+describe('triggerMatches — website.fetched', () => {
+  const event: RecipeEvent = {
+    kind: 'website.fetched',
+    userId: 'u1',
+    sourceId: 's1',
+    url: 'https://example.com/articles/foo',
+    title: 'Foo',
+    via: 'wayback',
+  };
+
+  it('matches every fetch when config is empty', () => {
+    expect(triggerMatches({ kind: 'website.fetched', config: {} }, event)).toBe(true);
+  });
+
+  it('filters by viaIs', () => {
+    expect(
+      triggerMatches(
+        { kind: 'website.fetched', config: { viaIs: 'wayback' } },
+        event,
+      ),
+    ).toBe(true);
+    expect(
+      triggerMatches(
+        { kind: 'website.fetched', config: { viaIs: 'direct' } },
+        event,
+      ),
+    ).toBe(false);
+  });
+
+  it('filters by urlContains (case-insensitive substring)', () => {
+    expect(
+      triggerMatches(
+        { kind: 'website.fetched', config: { urlContains: 'EXAMPLE' } },
+        event,
+      ),
+    ).toBe(true);
+    expect(
+      triggerMatches(
+        { kind: 'website.fetched', config: { urlContains: 'other.org' } },
+        event,
+      ),
+    ).toBe(false);
+  });
+});
+
+/* ─── Pipeline catalog coverage ──────────────────────────────────── */
+
+import { PIPELINE_CATALOG, RecipeEventKind, getPipelineStage } from '@rose/shared';
+
+describe('PIPELINE_CATALOG', () => {
+  it('has a stage entry for every RecipeEventKind enum value', () => {
+    const known = new Set(PIPELINE_CATALOG.map((s) => s.kind));
+    const missing: string[] = [];
+    for (const kind of RecipeEventKind.options) {
+      if (!known.has(kind)) missing.push(kind);
+    }
+    expect(missing).toEqual([]);
+  });
+
+  it('getPipelineStage returns the right row for a known kind', () => {
+    const s = getPipelineStage('email.ingested');
+    expect(s).toBeDefined();
+    expect(s?.label).toMatch(/Email/);
+  });
+
+  it('every stage declares at least one emitter', () => {
+    for (const stage of PIPELINE_CATALOG) {
+      expect(stage.emittedBy.length).toBeGreaterThan(0);
+    }
+  });
+});

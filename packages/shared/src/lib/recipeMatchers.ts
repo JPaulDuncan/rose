@@ -58,6 +58,55 @@ export function triggerMatches(trigger: Trigger, event: RecipeEvent): boolean {
     }
     return true;
   }
+  if (
+    trigger.kind === 'attachment.received' &&
+    event.kind === 'attachment.received'
+  ) {
+    const cfg = trigger.config;
+    if (cfg.minCount && event.attachmentCount < cfg.minCount) return false;
+    if (cfg.contentTypeContains) {
+      const want = cfg.contentTypeContains.toLowerCase();
+      if (!event.contentTypes.some((ct) => ct.toLowerCase().includes(want))) {
+        return false;
+      }
+    }
+    if (cfg.filenameMatches) {
+      try {
+        const re = new RegExp(cfg.filenameMatches, 'i');
+        if (!event.filenames.some((f) => re.test(f))) return false;
+      } catch {
+        // Bad regex — fail closed; user can fix in the wizard.
+        return false;
+      }
+    }
+    return true;
+  }
+  if (
+    (trigger.kind === 'shipment.detected' && event.kind === 'shipment.detected') ||
+    (trigger.kind === 'promo.detected' && event.kind === 'promo.detected')
+  ) {
+    const cfg = trigger.config;
+    if (cfg.minCount && event.count < cfg.minCount) return false;
+    return true;
+  }
+  if (trigger.kind === 'sender.blocked' && event.kind === 'sender.blocked') {
+    const cfg = trigger.config;
+    if (cfg.brandKey && (event.brandKey ?? '') !== cfg.brandKey.toLowerCase()) {
+      return false;
+    }
+    return true;
+  }
+  if (trigger.kind === 'website.fetched' && event.kind === 'website.fetched') {
+    const cfg = trigger.config;
+    if (cfg.viaIs && event.via !== cfg.viaIs) return false;
+    if (
+      cfg.urlContains &&
+      !event.url.toLowerCase().includes(cfg.urlContains.toLowerCase())
+    ) {
+      return false;
+    }
+    return true;
+  }
   return true;
 }
 

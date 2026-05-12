@@ -21,6 +21,11 @@ export const TriggerKind = z.enum([
   'time.scheduled',
   'subscription.created',
   'subscription.renewed',
+  'attachment.received',
+  'shipment.detected',
+  'promo.detected',
+  'sender.blocked',
+  'website.fetched',
 ]);
 export type TriggerKind = z.infer<typeof TriggerKind>;
 
@@ -118,6 +123,101 @@ const SubscriptionRenewedTrigger = z.object({
     .default({}),
 });
 
+/**
+ * Fires when an email arrives carrying one or more attachments. The
+ * trigger is on the email, not on each attachment individually —
+ * actions get the aggregate count + content-type list and can decide
+ * how to react. Common shape: "PDF from vendor → save to library."
+ */
+const AttachmentReceivedTrigger = z.object({
+  kind: z.literal('attachment.received'),
+  config: z
+    .object({
+      /** Substring of any attachment content-type. Lower-case; empty
+       *  matches every attachment-bearing email. Example: `pdf`,
+       *  `image/`, `application/zip`. */
+      contentTypeContains: z.string().max(120).optional(),
+      /** Regex against any attachment filename (case-insensitive). */
+      filenameMatches: z.string().max(200).optional(),
+      /** Only fire when the email has at least this many attachments. */
+      minCount: z.number().int().min(1).max(50).optional(),
+    })
+    .default({}),
+});
+
+/**
+ * Fires when the shipment detector finds one or more tracking
+ * numbers in an email. The detector already deduplicates so a
+ * re-fetched email won't re-fire; the trigger's `minCount` lets a
+ * recipe filter on multi-shipment receipts (rare but real for
+ * marketplace consolidators).
+ */
+const ShipmentDetectedTrigger = z.object({
+  kind: z.literal('shipment.detected'),
+  config: z
+    .object({
+      /** Only fire when ≥ this many shipments were detected on the
+       *  same email. Defaults to 1 (fire on any detection). */
+      minCount: z.number().int().min(1).max(20).optional(),
+    })
+    .default({}),
+});
+
+/**
+ * Fires when the promo-code detector finds one or more codes. Pair
+ * with `notify.push` for "tell me when a coupon arrives" or with
+ * `tag.add` to centralise them on a tag page.
+ */
+const PromoDetectedTrigger = z.object({
+  kind: z.literal('promo.detected'),
+  config: z
+    .object({
+      minCount: z.number().int().min(1).max(20).optional(),
+    })
+    .default({}),
+});
+
+/**
+ * Fires when the user blocks a sender (POST /api/spam/block). The
+ * spam-policy update is a state change worth automating against —
+ * common pattern: "when I block someone, also archive every page
+ * they were the sole contributor to" (already partly handled by
+ * spam.ts's removeExisting flag, but recipes let users layer on
+ * webhook notifications, custom tags, etc).
+ */
+const SenderBlockedTrigger = z.object({
+  kind: z.literal('sender.blocked'),
+  config: z
+    .object({
+      /** Lower-case brandKey filter — fire only when the blocked
+       *  address resolves to one of these brands. */
+      brandKey: z.string().max(120).optional(),
+    })
+    .default({}),
+});
+
+/**
+ * Fires when a "Watch a website" source successfully fetches new
+ * content. The `via` field carries which path served the body
+ * (`direct`, `rotated-ua`, `feed-fallback`, `wayback`) so recipes
+ * can react when the origin starts blocking or when archived
+ * content is served. "Notify me if a watched site falls back to
+ * Wayback" is the headline use case.
+ */
+const WebsiteFetchedTrigger = z.object({
+  kind: z.literal('website.fetched'),
+  config: z
+    .object({
+      /** Filter on the recovery path that served the body. */
+      viaIs: z
+        .enum(['direct', 'rotated-ua', 'feed-fallback', 'wayback'])
+        .optional(),
+      /** Lower-case substring match against the source URL. */
+      urlContains: z.string().max(200).optional(),
+    })
+    .default({}),
+});
+
 export const TriggerSchema = z.discriminatedUnion('kind', [
   EmailIngestedTrigger,
   PageCreatedTrigger,
@@ -125,6 +225,11 @@ export const TriggerSchema = z.discriminatedUnion('kind', [
   TimeScheduledTrigger,
   SubscriptionCreatedTrigger,
   SubscriptionRenewedTrigger,
+  AttachmentReceivedTrigger,
+  ShipmentDetectedTrigger,
+  PromoDetectedTrigger,
+  SenderBlockedTrigger,
+  WebsiteFetchedTrigger,
 ]);
 export type Trigger = z.infer<typeof TriggerSchema>;
 
@@ -511,6 +616,11 @@ export const RecipeEventKind = z.enum([
   'time.scheduled',
   'subscription.created',
   'subscription.renewed',
+  'attachment.received',
+  'shipment.detected',
+  'promo.detected',
+  'sender.blocked',
+  'website.fetched',
 ]);
 export type RecipeEventKind = z.infer<typeof RecipeEventKind>;
 
@@ -616,4 +726,82 @@ export type RecipeEvent =
       pageId: string | null;
       slug: string | null;
       title: string | null;
+    }
+  | {
+      /**
+       * Emitted from the IMAP/Gmail bulk-ingest path once per email
+       * whose `attachments[]` is non-empty. The denormalised
+       * content-type list lets the matcher decide without re-loading
+       * the email row — same shape as the existing `email.ingested`
+       * shape, plus aggregate attachment metadata.
+       */
+      kind: 'attachment.received';
+      userId: string;
+      emailId: string;
+      from: string | null;
+      subject: string;
+      brandKey: string | null;
+      attachmentCount: number;
+      contentTypes: string[];
+      filenames: string[];
+      totalBytes: number;
+    }
+  | {
+      /**
+       * Emitted after `detectShipmentsForEmail` returns a positive
+       * count for an email. One event per detection-pass, not one
+       * per shipment — most receipts carry a single tracking number;
+       * multi-shipment edge cases get one event with count > 1.
+       */
+      kind: 'shipment.detected';
+      userId: string;
+      emailId: string;
+      count: number;
+      from: string | null;
+      subject: string;
+      brandKey: string | null;
+    }
+  | {
+      /**
+       * Emitted after `detectPromoCodesForEmail` returns a positive
+       * count. Same shape as `shipment.detected` — one event per
+       * detection-pass with an aggregate count.
+       */
+      kind: 'promo.detected';
+      userId: string;
+      emailId: string;
+      count: number;
+      from: string | null;
+      subject: string;
+      brandKey: string | null;
+    }
+  | {
+      /**
+       * Emitted from POST /api/spam/block after the blocklist is
+       * updated and (when removeExisting) emails + pages are purged.
+       * The counts let a webhook recipe report "Rose just deleted
+       * 47 emails from this sender" without re-querying.
+       */
+      kind: 'sender.blocked';
+      userId: string;
+      address: string;
+      brandKey: string | null;
+      emailsDeleted: number;
+      pagesDeleted: number;
+    }
+  | {
+      /**
+       * Emitted by the website-sync worker after a successful
+       * resilient fetch produced fresh content. `via` is the
+       * recovery-path indicator from the resilient fetch chain — a
+       * `wayback` value means the live origin is gone or blocking
+       * and the snapshot came from archive.org, which is exactly
+       * the kind of thing worth notifying on.
+       */
+      kind: 'website.fetched';
+      userId: string;
+      sourceId: string;
+      url: string;
+      title: string | null;
+      via: 'direct' | 'rotated-ua' | 'feed-fallback' | 'wayback';
     };
