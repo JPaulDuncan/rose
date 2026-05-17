@@ -31,7 +31,13 @@ type PromoCode = {
   createdAt: string;
 };
 
-type Filter = 'active' | 'used' | 'archived';
+type Filter = 'active' | 'used' | 'archived' | 'expired';
+
+/** Days an expired code lingers before the retention sweep deletes
+ *  it. Mirrored from `EXPIRED_PROMO_CODE_TTL_DAYS` in @rose/db's
+ *  retention util; duplicated here so the Expired tab can show the
+ *  "auto-deletes in N days" countdown without an extra API hop. */
+const EXPIRED_PROMO_CODE_TTL_DAYS = 30;
 
 /**
  * Promotional Codes page. Rose extracts promo codes from incoming
@@ -52,6 +58,7 @@ export default function PromoCodesPage() {
       const params = new URLSearchParams();
       if (filter === 'used') params.set('used', '1');
       if (filter === 'archived') params.set('archived', '1');
+      if (filter === 'expired') params.set('expired', '1');
       const r = await api.get<{ promoCodes: PromoCode[] }>(
         `/api/promo-codes?${params.toString()}`,
       );
@@ -119,7 +126,7 @@ export default function PromoCodesPage() {
 
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-ink-200 pb-3 text-xs dark:border-ink-800">
         <div className="flex flex-wrap gap-2">
-          {(['active', 'used', 'archived'] as Filter[]).map((f) => (
+          {(['active', 'used', 'archived', 'expired'] as Filter[]).map((f) => (
             <button
               key={f}
               type="button"
@@ -148,6 +155,14 @@ export default function PromoCodesPage() {
         </button>
       </div>
 
+      {filter === 'expired' && (
+        <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200">
+          Codes past their expiration date. Rose auto-deletes them{' '}
+          {EXPIRED_PROMO_CODE_TTL_DAYS} days after expiry — mark one used or
+          archive it to keep the record.
+        </div>
+      )}
+
       {isLoading ? (
         <div className="card text-sm text-ink-500">Loading codes…</div>
       ) : codes.length === 0 ? (
@@ -159,11 +174,24 @@ export default function PromoCodesPage() {
                 ? 'No active codes'
                 : filter === 'used'
                   ? 'Nothing marked used'
-                  : 'Nothing archived'}
+                  : filter === 'expired'
+                    ? 'No expired codes'
+                    : 'Nothing archived'}
             </h3>
             <p className="mt-1 text-sm text-ink-500">
-              Rose adds codes here automatically when an email mentions one.
-              Hit <strong>Scan inbox</strong> to backfill from recent mail.
+              {filter === 'expired' ? (
+                <>
+                  Expired codes show up here automatically. Once a code has
+                  been expired for {EXPIRED_PROMO_CODE_TTL_DAYS} days, Rose
+                  removes it.
+                </>
+              ) : (
+                <>
+                  Rose adds codes here automatically when an email mentions
+                  one. Hit <strong>Scan inbox</strong> to backfill from
+                  recent mail.
+                </>
+              )}
             </p>
           </div>
           <button
@@ -191,6 +219,7 @@ export default function PromoCodesPage() {
                   <PromoCodeCard
                     key={c._id}
                     promo={c}
+                    showAutoDeleteCountdown={filter === 'expired'}
                     onMarkUsed={(used) =>
                       update.mutate({ id: c._id, patch: { used } })
                     }
@@ -219,11 +248,13 @@ export default function PromoCodesPage() {
 
 function PromoCodeCard({
   promo,
+  showAutoDeleteCountdown,
   onMarkUsed,
   onArchive,
   onRemove,
 }: {
   promo: PromoCode;
+  showAutoDeleteCountdown?: boolean;
   onMarkUsed: (used: boolean) => void;
   onArchive: (archived: boolean) => void;
   onRemove: () => void;
@@ -232,6 +263,18 @@ function PromoCodeCard({
   const expired = expires ? expires.getTime() < Date.now() : false;
   const isUsed = !!promo.usedAt;
   const isArchived = !!promo.archivedAt;
+  // Days remaining until the retention sweep deletes this code.
+  // Rendered on the Expired tab only; clamps to a non-negative
+  // count so a code that's already past the TTL just reads "soon"
+  // rather than a negative number.
+  const autoDeleteInDays =
+    showAutoDeleteCountdown && expires
+      ? Math.max(
+          0,
+          EXPIRED_PROMO_CODE_TTL_DAYS -
+            Math.floor((Date.now() - expires.getTime()) / (24 * 3600 * 1000)),
+        )
+      : null;
 
   return (
     <li
@@ -268,6 +311,14 @@ function PromoCodeCard({
                 <Clock className="h-3 w-3" />
                 {expired ? 'Expired ' : 'Expires '}
                 {expires.toLocaleDateString()}
+              </span>
+            )}
+            {autoDeleteInDays !== null && (
+              <span
+                className="text-[11px] text-ink-500"
+                title={`Rose deletes expired codes ${EXPIRED_PROMO_CODE_TTL_DAYS} days after their expiration date. Mark used or archive to keep the record.`}
+              >
+                · auto-deletes in {autoDeleteInDays}d
               </span>
             )}
           </div>

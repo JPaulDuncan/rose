@@ -12,12 +12,34 @@ export const promoCodesRouter: Router = Router();
  * Promo-code list endpoint. The Promotional Codes page sorts by
  * "soonest expiring, still-active" first so urgent codes float to
  * the top — used + archived codes drop out of the default scope.
+ *
+ * `?expired=1` is a fourth, mutually-exclusive view: codes whose
+ * expiration date has passed AND that haven't been used or
+ * archived. Used by the Expired tab; codes there are pruned 30
+ * days after expiry by the retention sweep.
  */
 promoCodesRouter.get('/', async (req, res) => {
   const userId = new Types.ObjectId(userIdOf(req));
   const includeArchived = req.query.archived === '1';
   const includeUsed = req.query.used === '1';
+  const expiredOnly = req.query.expired === '1';
   const filter: Record<string, unknown> = { userId };
+
+  if (expiredOnly) {
+    // Expired tab — codes whose expiration has passed but the user
+    // hasn't acted on. Sort most-recently-expired first; rendered
+    // with the existing dim treatment on the card.
+    filter.archivedAt = null;
+    filter.usedAt = null;
+    filter.expiresAt = { $ne: null, $lt: new Date() };
+    const codes = await PromoCode.find(filter)
+      .sort({ expiresAt: -1 })
+      .limit(500)
+      .lean();
+    res.json({ promoCodes: codes });
+    return;
+  }
+
   if (!includeArchived) filter.archivedAt = null;
   if (!includeUsed) filter.usedAt = null;
 

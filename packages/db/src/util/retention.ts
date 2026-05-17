@@ -8,6 +8,7 @@ import { RecipeAudit } from '../models/RecipeAudit.js';
 import { Conversation } from '../models/Conversation.js';
 import { Message } from '../models/Message.js';
 import { TagDigest } from '../models/TagDigest.js';
+import { PromoCode } from '../models/PromoCode.js';
 /**
  * Per-collection cleanup driven by `User.retention.*`. Lives in @rose/db
  * because both the nightly worker sweep and the on-demand API endpoint
@@ -42,6 +43,8 @@ export type CleanupSummary = {
   weatherSnapshots: number;
   emailEmbeddings: number;
   emailBodiesStripped: number;
+  /** PromoCodes whose expiresAt was >30d in the past — auto-pruned. */
+  expiredPromoCodes: number;
 };
 
 export function emptyCleanupSummary(): CleanupSummary {
@@ -56,8 +59,18 @@ export function emptyCleanupSummary(): CleanupSummary {
     weatherSnapshots: 0,
     emailEmbeddings: 0,
     emailBodiesStripped: 0,
+    expiredPromoCodes: 0,
   };
 }
+
+/**
+ * How long an expired promo code lingers in the Expired tab before
+ * the retention sweep deletes it. Codes have a fixed shelf life
+ * past expiration — most aren't honored after the window anyway,
+ * and the Expired tab is a "things to remember to use" cue, not an
+ * archive. System policy; not exposed to per-user retention config.
+ */
+export const EXPIRED_PROMO_CODE_TTL_DAYS = 30;
 
 function cutoffFor(days: number): Date | null {
   if (!days || days <= 0) return null;
@@ -203,6 +216,22 @@ export async function applyRetentionForUser(
   // setting in the schema for backwards-compat with old SPA
   // versions; the value just doesn't drive anything anymore.
   void retention.weatherSnapshots;
+
+  // System policy — expired promo codes get a fixed 30-day window
+  // past their expiration before they're permanently deleted. The
+  // Expired tab in the Promotional Codes page is a "remember to
+  // use these soon" cue; once a code is a month past expiration it
+  // almost certainly isn't being honored anymore. Not exposed as a
+  // user-configurable retention key — there's no useful knob here
+  // (shorter = surprise deletion; longer = clutter).
+  const expiredPromoCutoff = new Date(
+    Date.now() - EXPIRED_PROMO_CODE_TTL_DAYS * 24 * 3600 * 1000,
+  );
+  const promoResult = await PromoCode.deleteMany({
+    userId,
+    expiresAt: { $ne: null, $lt: expiredPromoCutoff },
+  });
+  sum.expiredPromoCodes = promoResult.deletedCount ?? 0;
 
   return sum;
 }
