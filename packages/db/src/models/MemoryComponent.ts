@@ -15,11 +15,18 @@ import { Schema, model, type InferSchemaType, type HydratedDocument, Types } fro
  * decoupled components preserve the two atomic claims and the
  * supersession chain that resolves them.
  *
- * v1 scope: user-facts only. Components extracted from generic
- * brand emails / news pages would also be valuable but the
- * extraction prompt is intentionally narrow here so we don't pay
- * one LLM call per page extracting "Apple released a phone."
+ * v1 scope: user-facts only (subject='user'). v2 broadens to
+ * world-facts as well (subject='world') — atomic claims about
+ * subjects in the page (people, places, works, organizations,
+ * events) that downstream consumers can use for retrieval and
+ * citation. Both subjects share the same component table + the
+ * same grouping sweeper, but groups stay homogeneous (a group is
+ * either all-user or all-world) so consumers can filter by
+ * subject without scanning every row.
  */
+
+export const MEMORY_COMPONENT_SUBJECTS = ['user', 'world'] as const;
+export type MemoryComponentSubject = (typeof MEMORY_COMPONENT_SUBJECTS)[number];
 
 export const MEMORY_COMPONENT_TYPES = [
   'fact',
@@ -33,6 +40,24 @@ export type MemoryComponentType = (typeof MEMORY_COMPONENT_TYPES)[number];
 const memoryComponentSchema = new Schema(
   {
     userId: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+    /**
+     * Subject domain of the claim:
+     *   - 'user'  — about the requesting user (the original v1 scope).
+     *   - 'world' — about a subject IN the page (a person, place,
+     *               work, organization, event). Downstream
+     *               consumers (daydream context, future chat-RAG)
+     *               can retrieve these to ground synthesis prompts
+     *               in claims Rose has previously extracted.
+     * Existing rows from the v1 substrate default to 'user' so
+     * the migration is a no-op for current consumers.
+     */
+    subject: {
+      type: String,
+      enum: MEMORY_COMPONENT_SUBJECTS,
+      default: 'user',
+      required: true,
+      index: true,
+    },
     /** One of: fact, preference, constraint, relation, state-update.
      *  Drives the grouping label heuristic + the "What Rose knows
      *  about you" UI sections. */
@@ -93,6 +118,7 @@ const memoryComponentSchema = new Schema(
 
 memoryComponentSchema.index({ userId: 1, status: 1, type: 1 });
 memoryComponentSchema.index({ userId: 1, groupId: 1 });
+memoryComponentSchema.index({ userId: 1, subject: 1, status: 1 });
 
 export type MemoryComponentDoc = HydratedDocument<
   InferSchemaType<typeof memoryComponentSchema>

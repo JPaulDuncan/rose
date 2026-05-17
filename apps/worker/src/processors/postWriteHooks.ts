@@ -4,7 +4,7 @@ import { Page, type PageDoc } from '@rose/db';
 import { redis, bullConnection } from '../lib/redis.js';
 import { logger } from '../lib/logger.js';
 import { runPostWriteEntityExtraction } from '../services/extractEntities.js';
-import { extractUserFactsFromPage } from '../services/extractUserFacts.js';
+import { extractComponentsFromPage } from '../services/extractUserFacts.js';
 import { hashContent } from '../services/extractPlaces.js';
 
 const QUEUE = 'rose.post-write-hooks';
@@ -59,13 +59,22 @@ export function startPostWriteHooksWorker() {
       }
 
       if (job.data.kind === 'user-facts-extract') {
+        // Job-kind name preserved for back-compat with already-enqueued
+        // jobs, but the handler now runs the dual-subject extractor —
+        // emits both user-facts AND world-facts in one LLM call.
+        const componentsHash = hashContent(page.contentMd ?? '');
+        if (page.memoryComponentsExtractedFromHash === componentsHash) {
+          return { ok: true, extracted: 0, skipped: 'unchanged-content' };
+        }
         try {
-          const out = await extractUserFactsFromPage(userId, page);
+          const out = await extractComponentsFromPage(userId, page);
+          page.memoryComponentsExtractedFromHash = componentsHash;
+          await page.save();
           return { ok: true, extracted: out.length };
         } catch (err) {
           logger.warn(
             { err, pageId: job.data.pageId },
-            'post-write hooks: user-facts extraction failed',
+            'post-write hooks: components extraction failed',
           );
           return { ok: false };
         }

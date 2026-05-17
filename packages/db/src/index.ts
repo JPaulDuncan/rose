@@ -103,10 +103,12 @@ export type { SubscriptionDoc } from './models/Subscription.js';
 export {
   MemoryComponent,
   MEMORY_COMPONENT_TYPES,
+  MEMORY_COMPONENT_SUBJECTS,
 } from './models/MemoryComponent.js';
 export type {
   MemoryComponentDoc,
   MemoryComponentType,
+  MemoryComponentSubject,
 } from './models/MemoryComponent.js';
 export { MemoryGroup } from './models/MemoryGroup.js';
 export type { MemoryGroupDoc } from './models/MemoryGroup.js';

@@ -343,6 +343,10 @@ const pageSchema = new Schema(
     relationsExtractedFromHash: { type: String, default: null },
     /** Content-hash gate for subscription extraction. */
     subscriptionExtractedFromHash: { type: String, default: null },
+    /** Content-hash gate for the xMemory components extractor.
+     *  Same idempotent pattern as the other *ExtractedFromHash
+     *  fields — re-running on unchanged content short-circuits. */
+    memoryComponentsExtractedFromHash: { type: String, default: null },
     daydreamSubjects: {
       type: [
         new Schema(

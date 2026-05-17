@@ -83,9 +83,13 @@ export async function xRetrieveUserFacts(
   const coverageWeight = opts.coverageWeight ?? 0.5;
 
   // Cheap existence gate — no embed call if there's nothing to retrieve.
+  // Filter to user-subject components only; world-subject claims have
+  // their own retrieval helper for future consumers (daydream snippet
+  // expansion, chat-RAG) that want them.
   const candidateCount = await MemoryComponent.countDocuments({
     userId,
     status: 'active',
+    subject: 'user',
   });
   if (candidateCount === 0) return [];
 
@@ -100,7 +104,7 @@ export async function xRetrieveUserFacts(
   }
   if (!queryVec.length) return [];
 
-  const groups = (await MemoryGroup.find({ userId })
+  const groups = (await MemoryGroup.find({ userId, subject: 'user' })
     .select('+centroid')
     .lean()) as GroupRow[];
 
@@ -172,6 +176,7 @@ export async function xRetrieveUserFacts(
   const components = (await MemoryComponent.find({
     userId,
     status: 'active',
+    subject: 'user',
     groupId: { $in: selected.map((id) => new Types.ObjectId(id)) },
   })
     .select('+embedding text type groupId')
@@ -243,7 +248,11 @@ async function topKComponents(
   queryVec: number[],
   max: number,
 ): Promise<RetrievedComponent[]> {
-  const all = (await MemoryComponent.find({ userId, status: 'active' })
+  const all = (await MemoryComponent.find({
+    userId,
+    status: 'active',
+    subject: 'user',
+  })
     .select('+embedding text type groupId')
     .limit(500)
     .lean()) as ComponentRow[];

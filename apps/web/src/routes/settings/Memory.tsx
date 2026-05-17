@@ -34,6 +34,7 @@ import { useApi } from '../../lib/api';
 
 type Component = {
   _id: string;
+  subject: 'user' | 'world';
   type: 'fact' | 'preference' | 'constraint' | 'relation' | 'state-update';
   text: string;
   confidence: number;
@@ -82,14 +83,16 @@ export default function MemorySettingsPage() {
   const api = useApi();
   const qc = useQueryClient();
   const [status, setStatus] = useState<'active' | 'archived' | 'rejected'>('active');
+  const [subject, setSubject] = useState<'user' | 'world'>('user');
   const [editing, setEditing] = useState<{ id: string; text: string } | null>(null);
   const [renamingGroup, setRenamingGroup] = useState<{ id: string; label: string } | null>(
     null,
   );
 
   const { data, isLoading } = useQuery({
-    queryKey: ['memory', status],
-    queryFn: () => api.get<MemoryResponse>(`/api/memory?status=${status}`),
+    queryKey: ['memory', status, subject],
+    queryFn: () =>
+      api.get<MemoryResponse>(`/api/memory?status=${status}&subject=${subject}`),
   });
 
   const update = useMutation({
@@ -151,13 +154,14 @@ export default function MemorySettingsPage() {
       <div className="card">
         <div className="mb-2 flex items-center gap-2">
           <Brain className="h-5 w-5 text-rose-500" />
-          <h2 className="font-semibold">What Rose knows about you</h2>
+          <h2 className="font-semibold">
+            {subject === 'user' ? 'What Rose knows about you' : 'Atomic facts in your archive'}
+          </h2>
         </div>
         <p className="text-sm text-ink-500">
-          Atomic facts Rose has extracted from your inbox + pages,
-          grouped into themes. Every entry shows the pages it was
-          learned from. Mark anything wrong to suppress it
-          permanently — Rose won't re-learn it from a later page.
+          {subject === 'user'
+            ? "Atomic facts Rose has extracted from your inbox + pages, grouped into themes. Every entry shows the pages it was learned from. Mark anything wrong to suppress it permanently — Rose won't re-learn it from a later page."
+            : 'Atomic, third-person claims Rose has extracted about the subjects of your pages (people, places, works, organizations). Used to ground retrieval-augmented prose in claims Rose has previously seen rather than re-reading every page body.'}
         </p>
         {data && (
           <div className="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-xs text-ink-500">
@@ -186,22 +190,46 @@ export default function MemorySettingsPage() {
         )}
       </div>
 
-      <div className="flex flex-wrap gap-2 text-xs">
-        {(['active', 'archived', 'rejected'] as const).map((s) => (
-          <button
-            key={s}
-            type="button"
-            onClick={() => setStatus(s)}
-            className={
-              'rounded-full border px-2.5 py-1 capitalize ' +
-              (status === s
-                ? 'border-rose-300 bg-rose-100 text-rose-800 dark:border-rose-700 dark:bg-rose-950/40 dark:text-rose-200'
-                : 'border-ink-200 text-ink-600 hover:bg-ink-50 dark:border-ink-800 dark:text-ink-300 dark:hover:bg-ink-900')
-            }
-          >
-            {s}
-          </button>
-        ))}
+      <div className="flex flex-wrap items-center gap-3 text-xs">
+        <div className="inline-flex rounded-md border border-ink-200 p-0.5 dark:border-ink-800">
+          {(['user', 'world'] as const).map((s) => (
+            <button
+              key={s}
+              type="button"
+              onClick={() => setSubject(s)}
+              className={
+                'rounded px-3 py-1 ' +
+                (subject === s
+                  ? 'bg-rose-500 text-white'
+                  : 'text-ink-600 dark:text-ink-300')
+              }
+              title={
+                s === 'user'
+                  ? 'Facts Rose has learned about you'
+                  : 'Atomic claims about subjects in your pages'
+              }
+            >
+              {s === 'user' ? 'About you' : 'About the world'}
+            </button>
+          ))}
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {(['active', 'archived', 'rejected'] as const).map((s) => (
+            <button
+              key={s}
+              type="button"
+              onClick={() => setStatus(s)}
+              className={
+                'rounded-full border px-2.5 py-1 capitalize ' +
+                (status === s
+                  ? 'border-rose-300 bg-rose-100 text-rose-800 dark:border-rose-700 dark:bg-rose-950/40 dark:text-rose-200'
+                  : 'border-ink-200 text-ink-600 hover:bg-ink-50 dark:border-ink-800 dark:text-ink-300 dark:hover:bg-ink-900')
+              }
+            >
+              {s}
+            </button>
+          ))}
+        </div>
       </div>
 
       {isLoading && <div className="card text-sm text-ink-500">Loading…</div>}

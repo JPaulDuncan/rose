@@ -47,6 +47,7 @@ type ComponentRow = {
   _id: Types.ObjectId;
   text: string;
   type: string;
+  subject: 'user' | 'world';
   embedding?: number[] | null;
   groupId?: Types.ObjectId | null;
 };
@@ -54,8 +55,10 @@ type ComponentRow = {
 type GroupRow = {
   _id: Types.ObjectId;
   label: string;
+  subject: 'user' | 'world';
   centroid: number[];
   componentCount: number;
+  neighborGroupIds: Types.ObjectId[];
 };
 
 /**
@@ -225,7 +228,12 @@ async function refreshNeighbors(userId: Types.ObjectId): Promise<void> {
   }
   for (const g of groups) {
     const scored = groups
-      .filter((other) => !other._id.equals(g._id) && other.centroid.length === g.centroid.length)
+      .filter(
+        (other) =>
+          !other._id.equals(g._id) &&
+          other.subject === g.subject &&
+          other.centroid.length === g.centroid.length,
+      )
       .map((other) => ({ id: other._id, sim: cosine(g.centroid, other.centroid) }))
       .sort((a, b) => b.sim - a.sim)
       .slice(0, NEIGHBOR_K)
@@ -259,7 +267,7 @@ export async function runMemoryGroupingForUser(
     groupId: null,
     embedding: { $ne: null },
   })
-    .select('+embedding text type')
+    .select('+embedding text type subject')
     .lean()) as ComponentRow[];
 
   let groups = (await MemoryGroup.find({ userId })
@@ -267,11 +275,17 @@ export async function runMemoryGroupingForUser(
     .lean()) as GroupRow[];
 
   // ── Attach ─────────────────────────────────────────────────
+  // Subject constraint: a 'user' component can only join a 'user'
+  // group; same for 'world'. This is the homogeneity invariant —
+  // downstream consumers filter by subject and trust the group
+  // boundary, so a mixed group would leak world-facts into the
+  // "what Rose knows about you" surface.
   for (const c of ungrouped) {
     if (!c.embedding) continue;
     let bestId: Types.ObjectId | null = null;
     let bestSim = 0;
     for (const g of groups) {
+      if (g.subject !== c.subject) continue;
       if (g.centroid.length !== c.embedding.length) continue;
       const sim = cosine(c.embedding, g.centroid);
       if (sim > bestSim) {
@@ -286,11 +300,14 @@ export async function runMemoryGroupingForUser(
       );
       summary.attached += 1;
     } else {
-      // Create a fresh group seeded by this component.
+      // Create a fresh group seeded by this component. The
+      // subject inherits from the seeding component so subsequent
+      // attaches respect the homogeneity invariant.
       const label =
         (await labelGroup(userId, [{ text: c.text, type: c.type }])) ?? 'Misc';
       const created = await MemoryGroup.create({
         userId,
+        subject: c.subject,
         label,
         centroid: c.embedding,
         componentCount: 1,
@@ -305,8 +322,10 @@ export async function runMemoryGroupingForUser(
         {
           _id: created._id,
           label: created.label,
+          subject: c.subject,
           centroid: c.embedding,
           componentCount: 1,
+          neighborGroupIds: [],
         },
       ];
       summary.created += 1;
@@ -364,6 +383,7 @@ export async function runMemoryGroupingForUser(
     );
     const groupB = await MemoryGroup.create({
       userId,
+      subject: g.subject,
       label: labelB,
       centroid: centB,
       componentCount: idxB.length,
@@ -389,6 +409,7 @@ export async function runMemoryGroupingForUser(
     for (let j = i + 1; j < groups.length; j += 1) {
       const gj = groups[j]!;
       if (merged.has(String(gj._id))) continue;
+      if (gi.subject !== gj.subject) continue;
       if (gi.centroid.length !== gj.centroid.length) continue;
       const sim = cosine(gi.centroid, gj.centroid);
       if (sim < MERGE_DISTANCE) continue;

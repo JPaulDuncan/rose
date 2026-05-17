@@ -25,6 +25,22 @@ import { Schema, model, type InferSchemaType, type HydratedDocument, Types } fro
 const memoryGroupSchema = new Schema(
   {
     userId: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+    /**
+     * Subject of the components in this group. A group only ever
+     * contains components of one subject — the sweeper's attach
+     * step refuses to merge a 'world' component into a 'user'
+     * group, and vice versa. Lets the UI render two disjoint
+     * surfaces ("What Rose knows about you" vs. "Atomic facts
+     * Rose has extracted") without filtering every component.
+     * Defaults to 'user' so existing v1 rows migrate cleanly.
+     */
+    subject: {
+      type: String,
+      enum: ['user', 'world'],
+      default: 'user',
+      required: true,
+      index: true,
+    },
     /** Human-readable theme. "Travel preferences", "Health
      *  constraints", "Family relationships". */
     label: { type: String, required: true, maxlength: 120 },

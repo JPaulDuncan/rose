@@ -29,13 +29,20 @@ export const memoryRouter: Router = Router();
 memoryRouter.get('/', async (req, res) => {
   const userId = new Types.ObjectId(userIdOf(req));
   const status = (req.query.status as string | undefined) ?? 'active';
+  const subjectParam = (req.query.subject as string | undefined) ?? 'user';
   const allowedStatus = new Set(['active', 'archived', 'rejected', 'all']);
+  const allowedSubject = new Set(['user', 'world', 'all']);
   if (!allowedStatus.has(status)) {
     res.status(400).json({ error: 'invalid_status' });
     return;
   }
+  if (!allowedSubject.has(subjectParam)) {
+    res.status(400).json({ error: 'invalid_subject' });
+    return;
+  }
   const filter: Record<string, unknown> = { userId };
   if (status !== 'all') filter.status = status;
+  if (subjectParam !== 'all') filter.subject = subjectParam;
 
   const [components, groups] = await Promise.all([
     MemoryComponent.find(filter)
@@ -43,7 +50,9 @@ memoryRouter.get('/', async (req, res) => {
       .limit(1000)
       .select('-embedding')
       .lean(),
-    MemoryGroup.find({ userId })
+    MemoryGroup.find(
+      subjectParam === 'all' ? { userId } : { userId, subject: subjectParam },
+    )
       .sort({ componentCount: -1 })
       .select('-centroid')
       .lean(),
