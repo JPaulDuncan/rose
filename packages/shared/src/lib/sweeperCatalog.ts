@@ -88,6 +88,15 @@ export const SWEEPER_CATALOG: readonly InProcessSweeper[] = [
     pool: 'bg',
     definedAt: 'apps/worker/src/processors/pushNotify.ts',
   },
+  {
+    id: 'memory-grouping',
+    label: 'xMemory grouping sweeper',
+    description:
+      "Walks users with ungrouped MemoryComponents and runs the xMemory attach / split / merge maintenance — embeds pending components, attaches each to its nearest group above threshold (or seeds a new group), splits oversized / incoherent groups via 2-means, merges near-duplicate centroids, refreshes the kNN neighbour links Stage I retrieval walks.",
+    intervalMs: 5 * 60_000,
+    pool: 'bg',
+    definedAt: 'apps/worker/src/services/memoryGroupingSweep.ts',
+  },
 ];
 
 export function getSweeperById(id: string): InProcessSweeper | undefined {

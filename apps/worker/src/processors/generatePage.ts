@@ -54,6 +54,7 @@ import { emitRecipeEvent } from '../lib/recipeEmit.js';
 import { describePageImages } from '../services/describeImages.js';
 import { extractPlacesFromPage, hashContent } from '../services/extractPlaces.js';
 import { runPostWriteEntityExtraction } from '../services/extractEntities.js';
+import { extractUserFactsFromPage } from '../services/extractUserFacts.js';
 import { enrichEntityWikidata } from '../services/wikidataResolver.js';
 import { extractOutboundLinks } from '../services/outboundLinks.js';
 import { runPostWriteReceiptExtraction } from '../services/extractReceipt.js';
@@ -464,6 +465,18 @@ async function runEntityExtraction(
   await runPostWriteRelationExtraction(userId, page);
   // Subscription extraction — tag/keyword-gated like receipts.
   await runPostWriteSubscriptionExtraction(userId, page);
+  // xMemory user-facts: atomic claims about THE USER mined from
+  // this page. Best-effort. The vast majority of pages return an
+  // empty list (the prompt is strict about "facts about the user
+  // ONLY"); cost is bounded per-page by the maxTokens=600 cap.
+  try {
+    await extractUserFactsFromPage(userId, page);
+  } catch (err) {
+    logger.warn(
+      { err, pageId: String(page._id) },
+      'user-facts extraction failed (continuing)',
+    );
+  }
 }
 
 /**

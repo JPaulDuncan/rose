@@ -695,6 +695,18 @@ async function runBriefingGenerate(
         'briefing: post-write hook enqueue failed',
       ),
     );
+  await postWriteHooksQueue
+    .add(
+      'user-facts-extract',
+      { kind: 'user-facts-extract', userId: String(userId), pageId: String(pageId) },
+      { attempts: 2, removeOnComplete: 200, removeOnFail: 200 },
+    )
+    .catch((err) =>
+      logger.warn(
+        { err, pageId: String(pageId) },
+        'briefing: user-facts hook enqueue failed',
+      ),
+    );
 
   // Push to the user so they know the brief refreshed.
   await pushToUser(userId, {

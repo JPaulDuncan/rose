@@ -44,6 +44,7 @@ import {
 import { startReputationDecaySweep } from './services/reputationSweep.js';
 import { startAlertSweeper } from './services/alertSweeper.js';
 import { startDaydreamSweeper } from './services/daydreamSweeper.js';
+import { startMemoryGroupingSweeper } from './services/memoryGroupingSweep.js';
 import { reconcileSourceSchedules } from './services/sourceScheduleReconciler.js';
 import { getVapidKeys } from './lib/vapid.js';
 
@@ -284,6 +285,10 @@ async function bootstrap() {
     // cooldown. Lives in bg-mode so we don't multi-fire in split
     // deploys.
     startAlertSweeper();
+    // xMemory grouping sweeper — every 5 minutes, walks users with
+    // freshly-extracted MemoryComponents and runs attach / split /
+    // merge / neighbour-refresh against their MemoryGroup graph.
+    startMemoryGroupingSweeper();
   }
 
   // -----------------------------------------------------------------

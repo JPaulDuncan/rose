@@ -100,6 +100,16 @@ export { EntityRelation } from './models/EntityRelation.js';
 export type { EntityRelationDoc } from './models/EntityRelation.js';
 export { Subscription } from './models/Subscription.js';
 export type { SubscriptionDoc } from './models/Subscription.js';
+export {
+  MemoryComponent,
+  MEMORY_COMPONENT_TYPES,
+} from './models/MemoryComponent.js';
+export type {
+  MemoryComponentDoc,
+  MemoryComponentType,
+} from './models/MemoryComponent.js';
+export { MemoryGroup } from './models/MemoryGroup.js';
+export type { MemoryGroupDoc } from './models/MemoryGroup.js';
 export { uniqueSlug } from './util/uniqueSlug.js';
 export {
   applyRetentionForUser,
