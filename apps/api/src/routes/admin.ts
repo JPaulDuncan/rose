@@ -44,6 +44,7 @@ import {
   gmailSyncQueue,
   rssSyncQueue,
   websiteSyncQueue,
+  icsSyncQueue,
   daydreamQueue,
   topicResearchQueue,
   postWriteHooksQueue,
@@ -524,6 +525,7 @@ adminRouter.get('/queue-stats', requireAdmin, async (_req, res, next) => {
       { name: 'gmail-sync', q: gmailSyncQueue },
       { name: 'rss-sync', q: rssSyncQueue },
       { name: 'website-sync', q: websiteSyncQueue },
+      { name: 'ics-sync', q: icsSyncQueue },
       { name: 'daydream', q: daydreamQueue },
       { name: 'topic-research', q: topicResearchQueue },
       { name: 'post-write-hooks', q: postWriteHooksQueue },
@@ -638,6 +640,7 @@ adminRouter.get('/cron-jobs', requireAdmin, async (_req, res, next) => {
       { name: 'rose.gmail-sync', q: gmailSyncQueue, ephemeral: false },
       { name: 'rose.rss-sync', q: rssSyncQueue, ephemeral: false },
       { name: 'rose.website-sync', q: websiteSyncQueue, ephemeral: false },
+      { name: 'rose.ics-sync', q: icsSyncQueue, ephemeral: false },
       { name: 'rose.slack-sync', q: slackSyncQueue, ephemeral: false },
       { name: 'rose.discord-sync', q: discordSyncQueue, ephemeral: false },
       { name: 'rose.gcal-sync', q: gcalSyncQueue, ephemeral: false },
@@ -679,7 +682,7 @@ adminRouter.get('/cron-jobs', requireAdmin, async (_req, res, next) => {
               source = 'recipe';
               recipeIds.add(jobId.slice('cron:'.length));
             } else if (
-              /^rose\.(imap|gmail|rss|website|slack|discord|gcal)-sync$/.test(name) &&
+              /^rose\.(imap|gmail|rss|website|ics|slack|discord|gcal)-sync$/.test(name) &&
               jobId &&
               jobId.includes(':')
             ) {

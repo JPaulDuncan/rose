@@ -31,6 +31,7 @@ const QUEUE_BY_TYPE: Record<string, string> = {
   slack: 'rose.slack-sync',
   discord: 'rose.discord-sync',
   gcal: 'rose.gcal-sync',
+  ics: 'rose.ics-sync',
 };
 
 const SYNCABLE_TYPES = Object.keys(QUEUE_BY_TYPE);

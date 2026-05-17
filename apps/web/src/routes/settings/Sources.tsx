@@ -32,7 +32,8 @@ type Source = {
     | 'slack'
     | 'discord'
     | 'gcal'
-    | 'website';
+    | 'website'
+    | 'ics';
   name: string;
   status: string;
   pollIntervalMinutes?: number;
@@ -44,6 +45,8 @@ type Source = {
   websiteTitle?: string | null;
   websiteLastFetchVia?: 'direct' | 'rotated-ua' | 'feed-fallback' | 'wayback' | null;
   websiteFeedFallbackUrl?: string | null;
+  icsResolvedUrl?: string | null;
+  icsCalendarName?: string | null;
 };
 
 type RssConfig = {
@@ -106,6 +109,30 @@ const DEFAULT_WEBSITE: WebsiteFormValues = {
   sitemapMaxUrlsPerSync: 50,
 };
 
+type IcsConfig = {
+  url: string;
+  resolvedUrl?: string;
+  pollIntervalMinutes: number;
+  historicalBackfillDays: number;
+  maxPerSync: number;
+};
+
+type IcsFormValues = {
+  name: string;
+  url: string;
+  pollIntervalMinutes: number;
+  historicalBackfillDays: number;
+  maxPerSync: number;
+};
+
+const DEFAULT_ICS: IcsFormValues = {
+  name: '',
+  url: '',
+  pollIntervalMinutes: 60,
+  historicalBackfillDays: 365,
+  maxPerSync: 1000,
+};
+
 type SourceWithConfig = Source & {
   config: ImapConfig | RssConfig | WebsiteConfig | null;
 };
@@ -143,6 +170,8 @@ export default function SourcesSettings() {
     | { kind: 'create-slack' }
     | { kind: 'create-discord' }
     | { kind: 'create-gcal' }
+    | { kind: 'create-ics' }
+    | { kind: 'edit-ics'; id: string }
     | { kind: 'webhook' }
     | null
   >(null);
@@ -247,6 +276,9 @@ export default function SourcesSettings() {
         <button className="btn-secondary" onClick={() => setForm({ kind: 'create-gcal' })}>
           <CalendarDays className="h-4 w-4" /> Google Calendar
         </button>
+        <button className="btn-secondary" onClick={() => setForm({ kind: 'create-ics' })}>
+          <CalendarDays className="h-4 w-4" /> Calendar share link
+        </button>
         <button className="btn-secondary" onClick={() => setForm({ kind: 'webhook' })}>
           <Webhook className="h-4 w-4" /> Add Webhook
         </button>
@@ -341,6 +373,27 @@ export default function SourcesSettings() {
           onSubmit={(body) => create.mutate(body)}
         />
       )}
+      {form?.kind === 'create-ics' && (
+        <IcsForm
+          mode="create"
+          initial={DEFAULT_ICS}
+          onCancel={() => setForm(null)}
+          onSubmit={(values) => {
+            const { name, ...config } = values;
+            create.mutate({ type: 'ics', name, config });
+          }}
+        />
+      )}
+      {form?.kind === 'edit-ics' && (
+        <EditIcsForm
+          id={form.id}
+          onCancel={() => setForm(null)}
+          onSubmit={(values) => {
+            const { name, ...icsConfig } = values;
+            update.mutate({ id: form.id, body: { name, icsConfig } });
+          }}
+        />
+      )}
       {form?.kind === 'webhook' && (
         <WebhookForm
           onCancel={() => setForm(null)}
@@ -371,6 +424,19 @@ export default function SourcesSettings() {
                         className="hover:underline"
                       >
                         {s.rssFeedUrl}
+                      </a>
+                    </div>
+                  )}
+                  {s.type === 'ics' && s.icsResolvedUrl && (
+                    <div className="truncate text-xs text-ink-500">
+                      <a
+                        href={s.icsResolvedUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="hover:underline"
+                      >
+                        {s.icsCalendarName ? `${s.icsCalendarName} — ` : ''}
+                        {s.icsResolvedUrl}
                       </a>
                     </div>
                   )}
@@ -421,7 +487,8 @@ export default function SourcesSettings() {
                     {(s.type === 'imap' ||
                       s.type === 'gmail' ||
                       s.type === 'rss' ||
-                      s.type === 'website') && (
+                      s.type === 'website' ||
+                      s.type === 'ics') && (
                       <>
                         <span>·</span>
                         <button
@@ -475,10 +542,21 @@ export default function SourcesSettings() {
                       <Pencil className="h-4 w-4" />
                     </button>
                   )}
+                  {s.type === 'ics' && (
+                    <button
+                      className="btn-ghost"
+                      onClick={() => setForm({ kind: 'edit-ics', id: s._id })}
+                      aria-label="Edit"
+                      title="Edit"
+                    >
+                      <Pencil className="h-4 w-4" />
+                    </button>
+                  )}
                   {(s.type === 'imap' ||
                     s.type === 'gmail' ||
                     s.type === 'rss' ||
-                    s.type === 'website') && (
+                    s.type === 'website' ||
+                    s.type === 'ics') && (
                     <button
                       className="btn-ghost"
                       onClick={() => syncNow.mutate(s._id)}
@@ -543,6 +621,7 @@ const SOURCE_TYPE_ORDER: Source['type'][] = [
   'slack',
   'discord',
   'gcal',
+  'ics',
   'upload',
 ];
 
@@ -555,6 +634,7 @@ const SOURCE_TYPE_LABELS: Record<Source['type'], string> = {
   slack: 'Slack workspaces',
   discord: 'Discord guilds',
   gcal: 'Google calendars',
+  ics: 'Calendar subscriptions',
   upload: 'Uploaded mailboxes',
 };
 
@@ -1901,6 +1981,271 @@ function GcalForm({
         <button type="submit" className="btn-primary">
           Connect
         </button>
+      </div>
+    </form>
+  );
+}
+
+/**
+ * Edit form for an existing ICS calendar subscription. Fetches the
+ * decrypted config from `/api/sources/:id` (which only echoes the
+ * non-secret fields) and seeds the form.
+ */
+function EditIcsForm({
+  id,
+  onCancel,
+  onSubmit,
+}: {
+  id: string;
+  onCancel: () => void;
+  onSubmit: (values: IcsFormValues) => void;
+}) {
+  const api = useApi();
+  const { data, isLoading } = useQuery({
+    queryKey: ['source', id],
+    queryFn: () => api.get<SourceWithConfig>(`/api/sources/${id}`),
+  });
+  if (isLoading || !data) {
+    return <div className="card text-sm text-ink-500">Loading calendar…</div>;
+  }
+  const cfg = data.config as IcsConfig | null;
+  if (!cfg || !('historicalBackfillDays' in cfg)) {
+    return <div className="card text-sm text-ink-500">This source isn’t editable here.</div>;
+  }
+  const initial: IcsFormValues = {
+    name: data.name,
+    url: cfg.url,
+    pollIntervalMinutes: cfg.pollIntervalMinutes,
+    historicalBackfillDays: cfg.historicalBackfillDays,
+    maxPerSync: cfg.maxPerSync,
+  };
+  return <IcsForm mode="edit" initial={initial} onCancel={onCancel} onSubmit={onSubmit} />;
+}
+
+/**
+ * "Subscribe to a calendar share link" form. Accepts any of:
+ *   - A Google Calendar share link (`https://calendar.google.com/calendar/u/0?cid=...`)
+ *   - A direct `.ics` URL (Apple iCloud, Outlook, Nextcloud, …)
+ *   - A `webcal://` URL
+ *
+ * The Test button calls `/api/sources/test` which normalises the
+ * input and fetches the resolved feed — the server returns the
+ * calendar name + first few event summaries so the user can confirm
+ * the link works before saving. The calendar must be public for the
+ * fetch to succeed; private Google calendars need the OAuth path
+ * (the existing "Google Calendar" affordance).
+ */
+function IcsForm({
+  mode,
+  initial,
+  onCancel,
+  onSubmit,
+}: {
+  mode: 'create' | 'edit';
+  initial: IcsFormValues;
+  onCancel: () => void;
+  onSubmit: (values: IcsFormValues) => void;
+}) {
+  const api = useApi();
+  const [values, setValues] = useState<IcsFormValues>(initial);
+  const [testResult, setTestResult] = useState<
+    | { state: 'idle' }
+    | { state: 'pending' }
+    | {
+        state: 'ok';
+        calendarName: string | null;
+        sampleEvents: { title: string; start: string | null }[];
+        resolvedUrl: string;
+      }
+    | { state: 'fail'; message: string }
+  >({ state: 'idle' });
+
+  useEffect(() => {
+    setValues(initial);
+    setTestResult({ state: 'idle' });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initial.url, mode]);
+
+  function set<K extends keyof IcsFormValues>(key: K, val: IcsFormValues[K]) {
+    setValues((v) => ({ ...v, [key]: val }));
+  }
+
+  async function runTest() {
+    if (!values.url.trim()) {
+      toast.error('Paste a calendar URL first');
+      return;
+    }
+    setTestResult({ state: 'pending' });
+    try {
+      const result = await api.post<
+        | {
+            ok: true;
+            calendarName: string | null;
+            sampleEvents: { title: string; start: string | null }[];
+            resolvedUrl: string;
+          }
+        | { ok: false; message: string }
+      >('/api/sources/test', { type: 'ics', config: { url: values.url } });
+      if (result.ok) {
+        setTestResult({
+          state: 'ok',
+          calendarName: result.calendarName,
+          sampleEvents: result.sampleEvents,
+          resolvedUrl: result.resolvedUrl,
+        });
+        toast.success(
+          result.calendarName
+            ? `Connected to "${result.calendarName}"`
+            : `Connected — ${result.sampleEvents.length} event${result.sampleEvents.length === 1 ? '' : 's'} found`,
+        );
+        if (mode === 'create' && !values.name && result.calendarName) {
+          set('name', result.calendarName);
+        }
+      } else {
+        setTestResult({ state: 'fail', message: result.message });
+        toast.error(result.message);
+      }
+    } catch (err) {
+      const msg = (err as Error).message;
+      setTestResult({ state: 'fail', message: msg });
+      toast.error(msg);
+    }
+  }
+
+  return (
+    <form
+      className="card space-y-4"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (!values.name) {
+          toast.error('Give the calendar a display name');
+          return;
+        }
+        onSubmit(values);
+      }}
+    >
+      <h3 className="font-semibold">
+        {mode === 'create' ? 'Subscribe to a calendar' : `Edit "${initial.name}"`}
+      </h3>
+      <p className="text-xs text-ink-500">
+        Paste a Google Calendar share link, a public iCal (<code>.ics</code>)
+        URL, or a <code>webcal://</code> link. Rose polls the feed and adds
+        its events to your calendar. The calendar must be public —
+        private Google calendars need the "Google Calendar" connector
+        instead.
+      </p>
+
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <Field
+          label="Calendar URL"
+          hint="Google share link, .ics URL, or webcal:// link."
+        >
+          <input
+            className="input"
+            value={values.url}
+            onChange={(e) => set('url', e.target.value)}
+            placeholder="https://calendar.google.com/calendar/u/0?cid=…"
+            required
+          />
+        </Field>
+        <Field label="Display name" hint="Shown in the sources list.">
+          <input
+            className="input"
+            value={values.name}
+            onChange={(e) => set('name', e.target.value)}
+            required
+          />
+        </Field>
+        <Field
+          label="Poll interval (minutes)"
+          hint="Minimum 15. Default 60 — calendars don't change as fast as RSS."
+        >
+          <input
+            className="input"
+            type="number"
+            min={15}
+            max={1440}
+            value={values.pollIntervalMinutes}
+            onChange={(e) => set('pollIntervalMinutes', Number(e.target.value))}
+            required
+          />
+        </Field>
+        <Field
+          label="Historical backfill (days)"
+          hint="Events whose start is older than this are ignored."
+        >
+          <input
+            className="input"
+            type="number"
+            min={1}
+            max={3650}
+            value={values.historicalBackfillDays}
+            onChange={(e) => set('historicalBackfillDays', Number(e.target.value))}
+            required
+          />
+        </Field>
+        <Field label="Max events per sync" hint="Hard cap to keep memory bounded.">
+          <input
+            className="input"
+            type="number"
+            min={1}
+            max={5000}
+            value={values.maxPerSync}
+            onChange={(e) => set('maxPerSync', Number(e.target.value))}
+            required
+          />
+        </Field>
+      </div>
+
+      <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+        <div className="min-w-0 flex-1">
+          {testResult.state === 'ok' && (
+            <div className="space-y-1 text-ink-500">
+              <div>
+                Found{' '}
+                <strong>{testResult.calendarName ?? '(unnamed calendar)'}</strong>
+                {' '}— {testResult.sampleEvents.length} event
+                {testResult.sampleEvents.length === 1 ? '' : 's'} in preview.
+              </div>
+              {testResult.sampleEvents.length > 0 && (
+                <ul className="space-y-0.5 text-[11px]">
+                  {testResult.sampleEvents.slice(0, 3).map((ev, i) => (
+                    <li key={i}>
+                      • {ev.title}
+                      {ev.start && (
+                        <span className="ml-1 text-ink-400">
+                          ({new Date(ev.start).toLocaleDateString()})
+                        </span>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <div className="truncate font-mono text-[10px] text-ink-400">
+                fetches from {testResult.resolvedUrl}
+              </div>
+            </div>
+          )}
+          {testResult.state === 'fail' && (
+            <div className="text-red-600">{testResult.message}</div>
+          )}
+        </div>
+        <div className="flex shrink-0 gap-2">
+          <button
+            type="button"
+            className="btn-ghost"
+            onClick={runTest}
+            disabled={testResult.state === 'pending'}
+          >
+            {testResult.state === 'pending' ? 'Testing…' : 'Test connection'}
+          </button>
+          <button type="button" className="btn-ghost" onClick={onCancel}>
+            Cancel
+          </button>
+          <button type="submit" className="btn-primary">
+            {mode === 'create' ? 'Subscribe' : 'Save'}
+          </button>
+        </div>
       </div>
     </form>
   );

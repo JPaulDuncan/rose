@@ -9,6 +9,10 @@ import {
   type ImapConfig,
   type RssConfig,
   type WebsiteConfig,
+  type IcsConfig,
+  normalizeCalendarUrl,
+  InvalidCalendarUrlError,
+  parseIcs,
 } from '@rose/shared';
 import { userIdOf } from '../middleware/auth.js';
 import { validateBody } from '../middleware/validate.js';
@@ -24,6 +28,7 @@ import {
   slackSyncQueue,
   discordSyncQueue,
   gcalSyncQueue,
+  icsSyncQueue,
 } from '../lib/queues.js';
 import { logger } from '../lib/logger.js';
 
@@ -43,7 +48,7 @@ sourcesRouter.get('/:id', async (req, res) => {
     res.status(404).json({ error: 'not_found', message: 'Source not found' });
     return;
   }
-  let config: Partial<ImapConfig> | RssConfig | WebsiteConfig | null = null;
+  let config: Partial<ImapConfig> | RssConfig | WebsiteConfig | IcsConfig | null = null;
   if (src.type === 'imap' && src.encryptedConfig) {
     const decrypted = decryptJson<ImapConfig>(src.encryptedConfig);
     config = { ...decrypted, password: '' };
@@ -51,6 +56,8 @@ sourcesRouter.get('/:id', async (req, res) => {
     config = decryptJson<RssConfig>(src.encryptedConfig);
   } else if (src.type === 'website' && src.encryptedConfig) {
     config = decryptJson<WebsiteConfig>(src.encryptedConfig);
+  } else if (src.type === 'ics' && src.encryptedConfig) {
+    config = decryptJson<IcsConfig>(src.encryptedConfig);
   }
   const obj = src.toObject();
   delete (obj as { encryptedConfig?: unknown }).encryptedConfig;
@@ -200,6 +207,48 @@ sourcesRouter.post('/', validateBody(SourceCreateRequest), async (req, res) => {
     return;
   }
 
+  if (body.type === 'ics') {
+    let resolvedUrl: string;
+    try {
+      resolvedUrl = normalizeCalendarUrl(body.config.url);
+    } catch (err) {
+      const msg =
+        err instanceof InvalidCalendarUrlError
+          ? err.message
+          : 'Unparseable calendar URL';
+      res.status(400).json({ error: 'invalid_calendar_url', message: msg });
+      return;
+    }
+    const interval = body.config.pollIntervalMinutes;
+    const cfg: IcsConfig = {
+      url: body.config.url,
+      resolvedUrl,
+      pollIntervalMinutes: interval,
+      historicalBackfillDays: body.config.historicalBackfillDays,
+      maxPerSync: body.config.maxPerSync,
+    };
+    const src = await Source.create({
+      userId,
+      type: 'ics',
+      name: body.name,
+      encryptedConfig: encryptJson(cfg),
+      pollIntervalMinutes: interval,
+      icsResolvedUrl: resolvedUrl,
+    });
+    const payload = { sourceId: src._id.toString(), userId: userId.toString() };
+    await icsSyncQueue.add('sync', payload, {
+      repeat: { every: interval * 60_000 },
+      jobId: `ics:${src._id.toString()}`,
+    });
+    await icsSyncQueue.add('sync', payload, {
+      attempts: 3,
+      removeOnComplete: 50,
+      removeOnFail: 50,
+    });
+    res.status(201).json(src);
+    return;
+  }
+
   if (body.type === 'website') {
     const interval = body.config.pollIntervalMinutes;
     const cfg: WebsiteConfig = {
@@ -296,6 +345,11 @@ sourcesRouter.post('/:id/sync', async (req, res) => {
   }
   if (src.type === 'website') {
     const job = await websiteSyncQueue.add('sync', payload, opts);
+    res.status(202).json({ jobId: job.id });
+    return;
+  }
+  if (src.type === 'ics') {
+    const job = await icsSyncQueue.add('sync', payload, opts);
     res.status(202).json({ jobId: job.id });
     return;
   }
@@ -504,8 +558,76 @@ sourcesRouter.post('/test', validateBody(SourceTestRequest), async (req, res) =>
     res.status(result.ok ? 200 : 400).json(result);
     return;
   }
+  if (body.type === 'ics') {
+    const result = await testIcs(body.config.url);
+    res.status(result.ok ? 200 : 400).json(result);
+    return;
+  }
   res.status(400).json({ ok: false, message: 'Unsupported source type for test' });
 });
+
+/**
+ * Stateless calendar-feed preview. Same shape as `testRss` /
+ * `testWebsite`: fetch, parse, return the calendar name plus the
+ * first few VEVENT summaries so the user can confirm they pasted
+ * the right URL. Normalises the input through `normalizeCalendarUrl`
+ * first so a Google `cid=` share link works in the preview before
+ * it's persisted.
+ */
+async function testIcs(input: string): Promise<
+  | {
+      ok: true;
+      calendarName: string | null;
+      sampleEvents: { title: string; start: string | null }[];
+      resolvedUrl: string;
+    }
+  | { ok: false; message: string }
+> {
+  let resolvedUrl: string;
+  try {
+    resolvedUrl = normalizeCalendarUrl(input);
+  } catch (err) {
+    const msg =
+      err instanceof InvalidCalendarUrlError
+        ? err.message
+        : (err as Error).message;
+    return { ok: false, message: msg };
+  }
+  try {
+    const res = await fetch(resolvedUrl, {
+      headers: browserFeedHeaders(resolvedUrl),
+      redirect: 'follow',
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!res.ok) {
+      return {
+        ok: false,
+        message: `Calendar feed responded ${res.status} ${res.statusText}`,
+      };
+    }
+    const text = await res.text();
+    if (!/BEGIN:VCALENDAR/i.test(text.slice(0, 1024))) {
+      return {
+        ok: false,
+        message:
+          'URL responded but the body is not an iCalendar feed (no BEGIN:VCALENDAR header)',
+      };
+    }
+    const ics = parseIcs(text);
+    const sampleEvents = ics.events.slice(0, 5).map((e) => ({
+      title: e.summary || '(untitled event)',
+      start: e.start ? e.start.toISOString() : null,
+    }));
+    return {
+      ok: true,
+      calendarName: ics.name,
+      sampleEvents,
+      resolvedUrl,
+    };
+  } catch (err) {
+    return { ok: false, message: (err as Error).message || 'Failed to fetch calendar' };
+  }
+}
 
 /** Resolve a Slack workspace + list channels using the supplied token.
  *  Also doubles as a connectivity check before saving the source. */
@@ -616,7 +738,45 @@ sourcesRouter.patch('/:id', validateBody(SourceUpdateRequest), async (req, res) 
   const oldInterval = src.pollIntervalMinutes ?? 5;
   let newInterval = oldInterval;
 
-  if (body.websiteConfig && src.type === 'website' && src.encryptedConfig) {
+  if (body.icsConfig && src.type === 'ics' && src.encryptedConfig) {
+    const current = decryptJson<IcsConfig>(src.encryptedConfig);
+    // Re-normalise if the user changed the URL — otherwise reuse
+    // the existing resolved URL so a no-op PATCH doesn't burn the
+    // base64 decode + URL build path.
+    let nextResolvedUrl = current.resolvedUrl;
+    const nextUrl = body.icsConfig.url ?? current.url;
+    if (nextUrl !== current.url) {
+      try {
+        nextResolvedUrl = normalizeCalendarUrl(nextUrl);
+      } catch (err) {
+        const msg =
+          err instanceof InvalidCalendarUrlError
+            ? err.message
+            : 'Unparseable calendar URL';
+        res.status(400).json({ error: 'invalid_calendar_url', message: msg });
+        return;
+      }
+    }
+    const merged: IcsConfig = {
+      url: nextUrl,
+      resolvedUrl: nextResolvedUrl,
+      pollIntervalMinutes:
+        body.icsConfig.pollIntervalMinutes ?? current.pollIntervalMinutes,
+      historicalBackfillDays:
+        body.icsConfig.historicalBackfillDays ?? current.historicalBackfillDays,
+      maxPerSync: body.icsConfig.maxPerSync ?? current.maxPerSync,
+    };
+    src.encryptedConfig = encryptJson(merged);
+    if (merged.url !== current.url) {
+      // URL changed — caches and discovered name no longer mean
+      // what they used to. Clear so the next sync re-populates.
+      src.icsEtag = null;
+      src.icsLastModified = null;
+      src.icsCalendarName = null;
+      src.icsResolvedUrl = merged.resolvedUrl;
+    }
+    newInterval = merged.pollIntervalMinutes;
+  } else if (body.websiteConfig && src.type === 'website' && src.encryptedConfig) {
     const current = decryptJson<WebsiteConfig>(src.encryptedConfig);
     const nextSitemapUrl =
       body.websiteConfig.sitemapUrl === null
@@ -717,7 +877,8 @@ sourcesRouter.patch('/:id', validateBody(SourceUpdateRequest), async (req, res) 
       src.type === 'website' ||
       src.type === 'slack' ||
       src.type === 'discord' ||
-      src.type === 'gcal')
+      src.type === 'gcal' ||
+      src.type === 'ics')
   ) {
     const queue =
       src.type === 'imap'
@@ -732,7 +893,9 @@ sourcesRouter.patch('/:id', validateBody(SourceUpdateRequest), async (req, res) 
                 ? slackSyncQueue
                 : src.type === 'discord'
                   ? discordSyncQueue
-                  : gcalSyncQueue;
+                  : src.type === 'ics'
+                    ? icsSyncQueue
+                    : gcalSyncQueue;
     const repeatKey = `${src.type}:${src._id.toString()}`;
     await queue.removeRepeatableByKey(repeatKey).catch((err: Error) => {
       logger.warn({ err, repeatKey }, 'failed to remove old repeatable');
@@ -775,6 +938,8 @@ sourcesRouter.delete('/:id', async (req, res) => {
     await discordSyncQueue.removeRepeatableByKey(`discord:${src._id.toString()}`).catch(() => null);
   if (src.type === 'gcal')
     await gcalSyncQueue.removeRepeatableByKey(`gcal:${src._id.toString()}`).catch(() => null);
+  if (src.type === 'ics')
+    await icsSyncQueue.removeRepeatableByKey(`ics:${src._id.toString()}`).catch(() => null);
   await ApiToken.deleteMany({ sourceId: src._id });
   await src.deleteOne();
   res.json({ ok: true });
