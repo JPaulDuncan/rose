@@ -1,6 +1,7 @@
 import { Worker, type Job } from 'bullmq';
 import { Types } from 'mongoose';
 import { User, Page, DaydreamNote, Entity, type PageDoc } from '@rose/db';
+import { xRetrieveUserFacts } from '../services/xRetrieve.js';
 import {
   WikipediaAdapter,
   WikidataAdapter,
@@ -218,6 +219,12 @@ Rules:
     cinema", pick the interpretation that fits. CONTEXT is not a
     source — do not cite it, do not introduce facts from it that
     aren't in the snippets.
+  - CONTEXT may include a "User context" block listing things Rose
+    has learned about the requesting user (a film buff vs. a chef,
+    a Brooklyn local vs. a remote worker). These are NOT facts
+    about the SUBJECT and must never appear in the entry — they
+    exist purely to help you pick the right interpretation when
+    the subject is ambiguous.
   - When CONTEXT clearly identifies one interpretation, prefer
     snippets that match that interpretation and downweight ones that
     plainly refer to a different thing.
@@ -257,6 +264,10 @@ function renderContextBlock(ctx: DaydreamContext | undefined): string[] {
     lines.push(`Page tags: ${ctx.pageTags.slice(0, 8).join(', ')}`);
   }
   if (ctx.excerpt) lines.push(`Excerpt: "${ctx.excerpt}"`);
+  if (ctx.userFacts && ctx.userFacts.length > 0) {
+    lines.push('User context (for disambiguation only, NOT facts about the subject):');
+    for (const f of ctx.userFacts.slice(0, 8)) lines.push(`  - ${f}`);
+  }
   if (lines.length === 0) return [];
   return ['CONTEXT:', ...lines, ''];
 }
@@ -881,6 +892,26 @@ export function startDaydreamWorker(): void {
           }
         }
 
+        // xMemory pull — one Stage I retrieval per page, shared
+        // across every subject on the page. The query is the page
+        // title + top tags, which gives a stable "what's this page
+        // about" seed; per-subject retrieval would burn one embed
+        // call per entity for marginal disambiguation gain.
+        const pageQueryParts = [page.title ?? '', ...(page.tags ?? []).slice(0, 5)].filter(Boolean);
+        const pageQuery = pageQueryParts.join(' ').trim();
+        let pageUserFacts: string[] = [];
+        if (pageQuery.length > 0) {
+          try {
+            const hits = await xRetrieveUserFacts(userId, pageQuery, { maxComponents: 5 });
+            pageUserFacts = hits.map((h) => h.text);
+          } catch (err) {
+            logger.warn(
+              { err, pageId: String(page._id) },
+              'daydream: xRetrieve user-facts failed (continuing without)',
+            );
+          }
+        }
+
         let researched = 0;
         const subjectsRef: { kind: PageSubject['kind']; subjectKey: string }[] = [];
         for (const s of subjects) {
@@ -894,6 +925,7 @@ export function startDaydreamWorker(): void {
               null,
             entityType:
               s.kind === 'entity' ? mapEntityType(entityTypeByKey.get(s.key) ?? null) : null,
+            userFacts: pageUserFacts,
           };
           const ok = await researchSubject(
             userId,
@@ -998,12 +1030,26 @@ export function startDaydreamWorker(): void {
         })
           .sort({ updatedAt: -1 })
           .limit(1)) as PageDoc | null;
+        let entityUserFacts: string[] = [];
+        try {
+          const hits = await xRetrieveUserFacts(userId, display, { maxComponents: 5 });
+          entityUserFacts = hits.map((h) => h.text);
+        } catch (err) {
+          logger.warn(
+            { err, key },
+            'daydream: xRetrieve user-facts failed (continuing without)',
+          );
+        }
         const entityCtx: DaydreamContext = refPage
           ? {
               ...buildPageContext(refPage, display),
               entityType: mapEntityType(entityRow?.type ?? null),
+              userFacts: entityUserFacts,
             }
-          : { entityType: mapEntityType(entityRow?.type ?? null) };
+          : {
+              entityType: mapEntityType(entityRow?.type ?? null),
+              userFacts: entityUserFacts,
+            };
         const ok = await researchSubject(
           userId,
           cfg,

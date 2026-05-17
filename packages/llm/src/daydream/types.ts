@@ -40,6 +40,15 @@ export type DaydreamContext = {
   excerpt?: string | null;
   /** Entity registry type, when the subject is a resolved Entity. */
   entityType?: 'person' | 'organization' | 'place' | 'work' | null;
+  /**
+   * Relevant user-facts pulled from the xMemory substrate, ranked
+   * by Stage I greedy-coverage against the page query. Same
+   * disambiguation-only role as the other context fields — never
+   * a source the synthesis prompt should cite or invent from.
+   * Empty when the user has no extracted facts yet or no relevant
+   * ones for this query.
+   */
+  userFacts?: string[];
 };
 
 export type AdapterContext = {

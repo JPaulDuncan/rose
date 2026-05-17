@@ -70,6 +70,29 @@ describe('renderContextBlock', () => {
     const tagLine = lines.find((l) => l.startsWith('Page tags:'));
     expect(tagLine).toBe('Page tags: a, b, c, d, e, f, g, h');
   });
+
+  it('renders userFacts under a disambiguation-only header with bullets', () => {
+    const lines = renderContextBlock({
+      userFacts: ['I am a film school graduate', 'I prefer A24 releases'],
+    });
+    expect(lines).toContain(
+      'User context (for disambiguation only, NOT facts about the subject):',
+    );
+    expect(lines).toContain('  - I am a film school graduate');
+    expect(lines).toContain('  - I prefer A24 releases');
+  });
+
+  it('caps userFacts at 8 entries', () => {
+    const facts = Array.from({ length: 12 }, (_, i) => `fact ${i + 1}`);
+    const lines = renderContextBlock({ userFacts: facts });
+    const bullets = lines.filter((l) => l.startsWith('  - fact '));
+    expect(bullets).toHaveLength(8);
+  });
+
+  it('omits the userFacts section when the array is empty', () => {
+    const lines = renderContextBlock({ userFacts: [] });
+    expect(lines).toEqual([]);
+  });
 });
 
 describe('buildSubjectPrompt', () => {
