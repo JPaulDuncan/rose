@@ -9,8 +9,87 @@ import {
 } from '@rose/db';
 import { userIdOf } from '../middleware/auth.js';
 import { validateBody } from '../middleware/validate.js';
+import { postWriteHooksQueue } from '../lib/queues.js';
+import { logger } from '../lib/logger.js';
 
 export const memoryRouter: Router = Router();
+
+/**
+ * GET /api/memory/stats — counts driving the maintenance UI on
+ * Settings → Memory. Returns total components, total groups, AND
+ * the number of pages that have not yet been through the xMemory
+ * component extractor. The "pages awaiting extraction" number
+ * disables the backfill button when it's 0 + tells the user how
+ * many runs they'll need (each `/extract` job processes up to
+ * 200 pages).
+ */
+memoryRouter.get('/stats', async (req, res) => {
+  const userId = new Types.ObjectId(userIdOf(req));
+  const [components, groups, pagesAwaiting] = await Promise.all([
+    MemoryComponent.countDocuments({ userId, status: 'active' }),
+    MemoryGroup.countDocuments({ userId }),
+    Page.countDocuments({
+      userId,
+      $or: [
+        { memoryComponentsExtractedFromHash: null },
+        { memoryComponentsExtractedFromHash: { $exists: false } },
+      ],
+    }),
+  ]);
+  res.json({
+    components,
+    groups,
+    pagesAwaiting,
+    backfillBatchSize: 200,
+  });
+});
+
+/**
+ * POST /api/memory/extract — kick a backfill job that walks the
+ * user's pages without an extraction hash and runs the components
+ * extractor on each. Capped at 200 pages per invocation so a
+ * 5000-page archive doesn't burn the LLM cap in one click; the
+ * user is expected to re-click as the `pagesAwaiting` count
+ * drains.
+ */
+memoryRouter.post('/extract', async (req, res) => {
+  const userId = new Types.ObjectId(userIdOf(req));
+  try {
+    await postWriteHooksQueue.add(
+      'memory-backfill',
+      { kind: 'memory-backfill', userId: String(userId), limit: 200 },
+      { attempts: 1, removeOnComplete: 20, removeOnFail: 20 },
+    );
+  } catch (err) {
+    logger.warn({ err }, 'memory: failed to enqueue backfill');
+    res.status(503).json({ error: 'enqueue_failed' });
+    return;
+  }
+  res.status(202).json({ ok: true });
+});
+
+/**
+ * POST /api/memory/regroup — kick the grouping sweeper for this
+ * user immediately, without waiting for the 5-minute background
+ * tick. Useful after a bulk extraction or when the user has
+ * archived/rejected components and wants to see the groups
+ * recompute right away.
+ */
+memoryRouter.post('/regroup', async (req, res) => {
+  const userId = new Types.ObjectId(userIdOf(req));
+  try {
+    await postWriteHooksQueue.add(
+      'memory-regroup',
+      { kind: 'memory-regroup', userId: String(userId) },
+      { attempts: 1, removeOnComplete: 20, removeOnFail: 20 },
+    );
+  } catch (err) {
+    logger.warn({ err }, 'memory: failed to enqueue regroup');
+    res.status(503).json({ error: 'enqueue_failed' });
+    return;
+  }
+  res.status(202).json({ ok: true });
+});
 
 /**
  * "What Rose knows about you" surface. Lists the user's

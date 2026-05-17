@@ -10,6 +10,8 @@ import {
   Pencil,
   X,
   ExternalLink,
+  Wrench,
+  RefreshCw,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useApi } from '../../lib/api';
@@ -115,6 +117,41 @@ export default function MemorySettingsPage() {
     },
     onError: (e: Error) => toast.error(e.message),
   });
+  // Ad-hoc maintenance ops. Stats query backs the badge + the
+  // disable-when-zero state on the backfill button. Polls every
+  // 10s while the page is open so progress shows up without the
+  // user having to refresh.
+  const stats = useQuery({
+    queryKey: ['memory-stats'],
+    queryFn: () =>
+      api.get<{
+        components: number;
+        groups: number;
+        pagesAwaiting: number;
+        backfillBatchSize: number;
+      }>('/api/memory/stats'),
+    refetchInterval: 10_000,
+  });
+  const backfill = useMutation({
+    mutationFn: async () => api.post<{ ok: true }>('/api/memory/extract', {}),
+    onSuccess: () => {
+      toast.success(
+        'Extraction queued — progress refreshes every 10s while you watch.',
+      );
+      qc.invalidateQueries({ queryKey: ['memory-stats'] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+  const regroup = useMutation({
+    mutationFn: async () => api.post<{ ok: true }>('/api/memory/regroup', {}),
+    onSuccess: () => {
+      toast.success('Regrouping queued — groups refresh once the worker finishes.');
+      qc.invalidateQueries({ queryKey: ['memory'] });
+      qc.invalidateQueries({ queryKey: ['memory-stats'] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
   const renameGroup = useMutation({
     mutationFn: async ({ id, label }: { id: string; label: string }) =>
       api.patch<{ ok: true }>(`/api/memory/groups/${id}`, { label }),
@@ -188,6 +225,102 @@ export default function MemorySettingsPage() {
               ))}
           </div>
         )}
+      </div>
+
+      <div className="card">
+        <div className="mb-2 flex items-center gap-2">
+          <Wrench className="h-4 w-4 text-rose-500" />
+          <h3 className="text-sm font-semibold">Maintenance</h3>
+        </div>
+        <p className="mb-3 text-xs text-ink-500">
+          Memory updates happen automatically as new pages are
+          generated and every 5 minutes by the background grouping
+          sweeper. The buttons below force either step to run right
+          now — useful after a bulk archive cleanup or to backfill
+          components on pages that pre-date the feature.
+        </p>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div className="rounded-md border border-ink-200 p-3 dark:border-ink-800">
+            <div className="flex items-center justify-between gap-2">
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-medium">Extract from missing pages</div>
+                <div className="mt-1 text-[11px] text-ink-500">
+                  {stats.data ? (
+                    stats.data.pagesAwaiting === 0 ? (
+                      <>All pages have been through extraction.</>
+                    ) : (
+                      <>
+                        <strong className="text-ink-700 dark:text-ink-300">
+                          {stats.data.pagesAwaiting}
+                        </strong>{' '}
+                        page{stats.data.pagesAwaiting === 1 ? '' : 's'} awaiting
+                        extraction. Each click processes up to{' '}
+                        {stats.data.backfillBatchSize}.
+                      </>
+                    )
+                  ) : (
+                    'Loading…'
+                  )}
+                </div>
+              </div>
+              <button
+                type="button"
+                className="btn-secondary text-xs"
+                onClick={() => backfill.mutate()}
+                disabled={
+                  backfill.isPending ||
+                  stats.isLoading ||
+                  (stats.data?.pagesAwaiting ?? 0) === 0
+                }
+              >
+                <RefreshCw
+                  className={
+                    'h-3.5 w-3.5' + (backfill.isPending ? ' animate-spin' : '')
+                  }
+                />
+                {backfill.isPending ? 'Queued' : 'Extract'}
+              </button>
+            </div>
+          </div>
+          <div className="rounded-md border border-ink-200 p-3 dark:border-ink-800">
+            <div className="flex items-center justify-between gap-2">
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-medium">Re-cluster groups now</div>
+                <div className="mt-1 text-[11px] text-ink-500">
+                  Runs the grouping sweeper for your components
+                  immediately — attach / split / merge / refresh
+                  the neighbour kNN links.
+                  {stats.data && (
+                    <span className="ml-1">
+                      Currently:{' '}
+                      <strong className="text-ink-700 dark:text-ink-300">
+                        {stats.data.components}
+                      </strong>{' '}
+                      component{stats.data.components === 1 ? '' : 's'} in{' '}
+                      <strong className="text-ink-700 dark:text-ink-300">
+                        {stats.data.groups}
+                      </strong>{' '}
+                      group{stats.data.groups === 1 ? '' : 's'}.
+                    </span>
+                  )}
+                </div>
+              </div>
+              <button
+                type="button"
+                className="btn-secondary text-xs"
+                onClick={() => regroup.mutate()}
+                disabled={regroup.isPending || (stats.data?.components ?? 0) === 0}
+              >
+                <RefreshCw
+                  className={
+                    'h-3.5 w-3.5' + (regroup.isPending ? ' animate-spin' : '')
+                  }
+                />
+                {regroup.isPending ? 'Queued' : 'Regroup'}
+              </button>
+            </div>
+          </div>
+        </div>
       </div>
 
       <div className="flex flex-wrap items-center gap-3 text-xs">

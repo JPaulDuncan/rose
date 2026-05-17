@@ -822,6 +822,49 @@ adminRouter.get('/cron-jobs', requireAdmin, async (_req, res, next) => {
 });
 
 /**
+ * Admin trigger for an in-process sweeper. The setInterval-based
+ * sweepers run on their own schedule (see SWEEPER_CATALOG); this
+ * endpoint enqueues an immediate one-off tick onto the appropriate
+ * BullMQ queue so a deploy doesn't have to wait an hour to verify
+ * the sweeper is healthy.
+ *
+ * v1 supports `desk-proposals` only — the other in-process
+ * sweepers don't have a manual-trigger surface today. Adding more
+ * is a matter of (a) exporting a "run now" entrypoint from the
+ * sweeper service, (b) enqueuing onto whichever queue the worker
+ * processes it on, (c) adding the id to the allow-list below.
+ *
+ * `?force=1` skips the per-user threshold gates (new-content,
+ * pending-backlog) for the desk sweeper. The per-user opt-out
+ * (`settings.desks.autoSuggest.enabled = false`) is ALWAYS
+ * respected; we never burn LLM cycles for a user who said
+ * "don't propose for me."
+ */
+adminRouter.post('/sweepers/:id/run', requireAdmin, async (req, res) => {
+  const id = req.params.id ?? '';
+  const force = req.query.force === '1' || req.query.force === 'true';
+  if (id !== 'desk-proposals') {
+    res.status(404).json({
+      error: 'no_manual_trigger',
+      message: `Sweeper "${id}" doesn't support manual trigger yet.`,
+    });
+    return;
+  }
+  try {
+    await postWriteHooksQueue.add(
+      'desk-sweep-tick',
+      { kind: 'desk-sweep-tick', force },
+      { attempts: 1, removeOnComplete: 20, removeOnFail: 20 },
+    );
+  } catch (err) {
+    logger.warn({ err }, 'sweepers/run: enqueue failed');
+    res.status(503).json({ error: 'enqueue_failed' });
+    return;
+  }
+  res.status(202).json({ ok: true, queued: true, sweeperId: id, force });
+});
+
+/**
  * Trigger a backfill — re-run an extractor across pages it hasn't
  * touched yet. Idempotent: every extractor short-circuits via its
  * own content-hash gate, so re-running on already-extracted pages

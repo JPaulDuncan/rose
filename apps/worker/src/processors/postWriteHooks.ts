@@ -7,6 +7,8 @@ import { runPostWriteEntityExtraction } from '../services/extractEntities.js';
 import { extractComponentsFromPage } from '../services/extractUserFacts.js';
 import { hashContent } from '../services/extractPlaces.js';
 import { proposeDesksForUser } from '../services/proposeDesks.js';
+import { runDeskProposalSweepNow } from '../services/deskProposalSweeper.js';
+import { runMemoryGroupingForUser } from '../services/memoryGroupingSweep.js';
 
 const QUEUE = 'rose.post-write-hooks';
 
@@ -30,13 +32,94 @@ const QUEUE = 'rose.post-write-hooks';
 type PostWriteJobData =
   | { kind: 'entity-extract'; userId: string; pageId: string }
   | { kind: 'user-facts-extract'; userId: string; pageId: string }
-  | { kind: 'suggest-desks'; userId: string };
+  | { kind: 'suggest-desks'; userId: string }
+  | { kind: 'desk-sweep-tick'; force?: boolean }
+  | { kind: 'memory-backfill'; userId: string; limit?: number }
+  | { kind: 'memory-regroup'; userId: string };
 
 export function startPostWriteHooksWorker() {
   const worker = new Worker<PostWriteJobData>(
     QUEUE,
     async (job: Job<PostWriteJobData>) => {
+      // Admin-triggered desk-sweep tick. No userId on the payload —
+      // walks every user, gated by their per-user opt-out flag.
+      // `force` skips the threshold gates (new-content, pending-
+      // backlog) so the run actually does something even when those
+      // would normally hold it.
+      if (job.data.kind === 'desk-sweep-tick') {
+        try {
+          const summary = await runDeskProposalSweepNow({ force: job.data.force });
+          return { ok: true, ...summary };
+        } catch (err) {
+          logger.warn(
+            { err },
+            'post-write hooks: desk-sweep-tick failed',
+          );
+          return { ok: false };
+        }
+      }
+
       const userId = new Types.ObjectId(job.data.userId);
+
+      // xMemory ad-hoc operations — user-triggered via the
+      // Settings → Memory maintenance panel.
+      if (job.data.kind === 'memory-backfill') {
+        const limit = Math.min(job.data.limit ?? 200, 500);
+        try {
+          // Pages that have never been through the components
+          // extractor (legacy data + pages where the gen path
+          // bailed). Cap aggressively so a 5000-page archive
+          // doesn't burn the LLM cap in one click — the UI
+          // surfaces the remaining count so the user knows.
+          const pages = (await Page.find({
+            userId,
+            $or: [
+              { memoryComponentsExtractedFromHash: null },
+              { memoryComponentsExtractedFromHash: { $exists: false } },
+            ],
+          })
+            .sort({ updatedAt: -1 })
+            .limit(limit)
+            .lean()) as PageDoc[];
+          let extracted = 0;
+          for (const p of pages) {
+            try {
+              await extractComponentsFromPage(userId, p);
+              const hash = hashContent(p.contentMd ?? '');
+              await Page.updateOne(
+                { _id: p._id, userId },
+                { $set: { memoryComponentsExtractedFromHash: hash } },
+              );
+              extracted += 1;
+            } catch (err) {
+              logger.debug(
+                { err, pageId: String(p._id) },
+                'memory-backfill: per-page failure (continuing)',
+              );
+            }
+          }
+          return { ok: true, scanned: pages.length, extracted };
+        } catch (err) {
+          logger.warn(
+            { err, userId: String(userId) },
+            'memory-backfill: failed',
+          );
+          return { ok: false };
+        }
+      }
+
+      if (job.data.kind === 'memory-regroup') {
+        try {
+          const summary = await runMemoryGroupingForUser(userId);
+          return { ok: true, ...summary };
+        } catch (err) {
+          logger.warn(
+            { err, userId: String(userId) },
+            'memory-regroup: failed',
+          );
+          return { ok: false };
+        }
+      }
 
       // suggest-desks isn't pageId-scoped; handle before the page
       // lookup so it doesn't bail on "page-not-found".

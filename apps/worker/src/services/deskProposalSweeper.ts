@@ -93,9 +93,10 @@ export async function isUserDueForDeskSweep(
 
 /**
  * Run one tick: enumerate users, gate them, run proposals on the
- * due ones up to USERS_PER_TICK.
+ * due ones up to USERS_PER_TICK. Exposed (via `runDeskProposalSweepNow`)
+ * so the admin "Run now" button can fire a tick on demand.
  */
-async function sweepTick(): Promise<{ swept: number; proposed: number }> {
+async function sweepTick(force = false): Promise<{ swept: number; proposed: number }> {
   const out = { swept: 0, proposed: 0 };
   // Pull users that haven't opted out. `settings.desks.autoSuggest.enabled`
   // is undefined by default → opt-out, not opt-in.
@@ -133,15 +134,28 @@ async function sweepTick(): Promise<{ swept: number; proposed: number }> {
       .select('_id')
       .lean()).map((c) => c._id as Types.ObjectId);
 
-    const gate = await isUserDueForDeskSweep(
-      userId,
-      u.settings?.desks,
-      activeDeskIds,
-    );
-    if (!gate.due) {
+    // `force=true` bypasses the threshold gates (new-content,
+    // pending-backlog) but still honours the per-user opt-out —
+    // we never burn LLM calls for a user who said "don't propose
+    // for me." Admin-triggered runs use this to kick a sweep even
+    // when the new-content threshold hasn't been crossed yet.
+    if (!force) {
+      const gate = await isUserDueForDeskSweep(
+        userId,
+        u.settings?.desks,
+        activeDeskIds,
+      );
+      if (!gate.due) {
+        logger.debug(
+          { userId: String(userId), reason: gate.reason },
+          'desk-proposal sweep: gated',
+        );
+        continue;
+      }
+    } else if (u.settings?.desks?.autoSuggest?.enabled === false) {
       logger.debug(
-        { userId: String(userId), reason: gate.reason },
-        'desk-proposal sweep: gated',
+        { userId: String(userId) },
+        'desk-proposal sweep: opt-out honoured even under force',
       );
       continue;
     }
@@ -177,6 +191,20 @@ async function sweepTick(): Promise<{ swept: number; proposed: number }> {
     }
   }
   return out;
+}
+
+/**
+ * On-demand sweep tick. Identical to the timer-driven path but
+ * callable from an admin endpoint. `force=true` skips the new-
+ * content and pending-backlog gates so a manual "Run now" actually
+ * does something even when those gates would normally hold the
+ * tick.
+ */
+export async function runDeskProposalSweepNow(opts: { force?: boolean } = {}): Promise<{
+  swept: number;
+  proposed: number;
+}> {
+  return sweepTick(!!opts.force);
 }
 
 export function startDeskProposalSweeper(): { stop: () => void } {

@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Activity, ShieldAlert, Trash2, Clock } from 'lucide-react';
+import { Activity, ShieldAlert, Trash2, Clock, Play } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useApi } from '../../lib/api';
 
@@ -482,6 +482,12 @@ function formatNext(next: number | null): string {
   return `in ${Math.round(ms / (24 * 60 * 60_000))}d`;
 }
 
+/** In-process sweeper ids that support manual triggering via
+ *  POST /api/admin/sweepers/:id/run. The set must stay in lockstep
+ *  with the server-side allow-list; adding a sweeper here without
+ *  the corresponding server entry yields a 404 + a stuck spinner. */
+const MANUAL_TRIGGER_SWEEPERS = new Set(['desk-proposals']);
+
 function CronJobs() {
   const api = useApi();
   const [open, setOpen] = useState(false);
@@ -493,6 +499,19 @@ function CronJobs() {
     queryFn: () => api.get<CronJobsResponse>('/api/admin/cron-jobs'),
     refetchInterval: 30_000,
     refetchIntervalInBackground: false,
+  });
+  const runSweeper = useMutation({
+    mutationFn: async ({ id, force }: { id: string; force: boolean }) =>
+      api.post<{ ok: true; queued: true }>(
+        `/api/admin/sweepers/${id}/run${force ? '?force=1' : ''}`,
+        {},
+      ),
+    onSuccess: (_data, vars) => {
+      toast.success(
+        `Sweeper "${vars.id}" queued${vars.force ? ' (force)' : ''} — runs on the next worker tick.`,
+      );
+    },
+    onError: (err: Error) => toast.error(err.message),
   });
   if (!data) {
     return (
@@ -641,24 +660,58 @@ function CronJobs() {
                     <th className="px-2 py-1 text-left">Cadence</th>
                     <th className="px-2 py-1 text-left">Pool</th>
                     <th className="px-2 py-1 text-left">Does</th>
+                    <th className="px-2 py-1 text-left">Trigger</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {data.inProcess.map((s) => (
-                    <tr
-                      key={s.id}
-                      className="border-t border-ink-100 align-top dark:border-ink-800"
-                    >
-                      <td className="px-2 py-1 font-medium">{s.label}</td>
-                      <td className="px-2 py-1 font-mono">{formatEvery(s.intervalMs)}</td>
-                      <td className="px-2 py-1 font-mono text-[10px] text-ink-500">
-                        {s.pool}
-                      </td>
-                      <td className="px-2 py-1 text-ink-600 dark:text-ink-300">
-                        {s.description}
-                      </td>
-                    </tr>
-                  ))}
+                  {data.inProcess.map((s) => {
+                    const canTrigger = MANUAL_TRIGGER_SWEEPERS.has(s.id);
+                    return (
+                      <tr
+                        key={s.id}
+                        className="border-t border-ink-100 align-top dark:border-ink-800"
+                      >
+                        <td className="px-2 py-1 font-medium">{s.label}</td>
+                        <td className="px-2 py-1 font-mono">{formatEvery(s.intervalMs)}</td>
+                        <td className="px-2 py-1 font-mono text-[10px] text-ink-500">
+                          {s.pool}
+                        </td>
+                        <td className="px-2 py-1 text-ink-600 dark:text-ink-300">
+                          {s.description}
+                        </td>
+                        <td className="px-2 py-1 whitespace-nowrap">
+                          {canTrigger ? (
+                            <div className="flex gap-1">
+                              <button
+                                type="button"
+                                className="inline-flex items-center gap-1 rounded bg-ink-100 px-1.5 py-0.5 text-[10px] font-medium text-ink-700 hover:bg-ink-200 dark:bg-ink-800 dark:text-ink-200 dark:hover:bg-ink-700"
+                                onClick={() =>
+                                  runSweeper.mutate({ id: s.id, force: false })
+                                }
+                                disabled={runSweeper.isPending}
+                                title="Enqueue a one-off tick — respects the per-user gates (new-content threshold, pending-backlog)."
+                              >
+                                <Play className="h-2.5 w-2.5" /> Run
+                              </button>
+                              <button
+                                type="button"
+                                className="inline-flex items-center gap-1 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800 hover:bg-amber-200 dark:bg-amber-950/40 dark:text-amber-200 dark:hover:bg-amber-900/60"
+                                onClick={() =>
+                                  runSweeper.mutate({ id: s.id, force: true })
+                                }
+                                disabled={runSweeper.isPending}
+                                title="Force-run: bypass the new-content + pending-backlog gates. Per-user opt-out is still honoured."
+                              >
+                                Force
+                              </button>
+                            </div>
+                          ) : (
+                            <span className="text-[10px] text-ink-400">—</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
