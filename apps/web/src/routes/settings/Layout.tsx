@@ -16,6 +16,7 @@ const TABS = [
   { to: 'maps', label: 'Maps' },
   { to: 'tags', label: 'Tags' },
   { to: 'entities', label: 'Entities' },
+  { to: 'memory', label: 'Memory' },
   { to: 'library', label: 'Library' },
   { to: 'spam', label: 'Spam' },
   { to: 'storage', label: 'Storage' },

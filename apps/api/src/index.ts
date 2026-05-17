@@ -35,6 +35,7 @@ import { recipesRouter } from './routes/recipes.js';
 import { topicWatchesRouter } from './routes/topicWatches.js';
 import { shipmentsRouter } from './routes/shipments.js';
 import { promoCodesRouter } from './routes/promoCodes.js';
+import { memoryRouter } from './routes/memory.js';
 import { retentionRouter } from './routes/retention.js';
 import { webhookRouter } from './routes/webhook.js';
 import { providersRouter } from './routes/providers.js';
@@ -138,6 +139,7 @@ export async function createServer(): Promise<Express> {
   app.use('/api/topic-watches', requireAuth, topicWatchesRouter);
   app.use('/api/shipments', requireAuth, shipmentsRouter);
   app.use('/api/promo-codes', requireAuth, promoCodesRouter);
+  app.use('/api/memory', requireAuth, memoryRouter);
   app.use('/api/retention', requireAuth, retentionRouter);
   // Models / providers / system are deployment-wide configuration —
   // an admin sets them once and every account uses the same stack.
