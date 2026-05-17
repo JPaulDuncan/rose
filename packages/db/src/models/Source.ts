@@ -5,7 +5,7 @@ const sourceSchema = new Schema(
     userId: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
     type: {
       type: String,
-      enum: ['imap', 'webhook', 'gmail', 'rss', 'slack', 'discord', 'gcal', 'website'],
+      enum: ['imap', 'webhook', 'gmail', 'rss', 'slack', 'discord', 'gcal', 'website', 'ics'],
       required: true,
     },
     name: { type: String, required: true },
@@ -52,6 +52,17 @@ const sourceSchema = new Schema(
      *  `<link rel="alternate">` or well-known path the first time
      *  the origin started 403'ing. */
     websiteFeedFallbackUrl: { type: String, default: null },
+    /** ICS calendar subscription caches. `icsResolvedUrl` is the
+     *  normalised endpoint the worker actually fetches (a Google
+     *  cid= share link is rewritten to `/public/basic.ics`);
+     *  `icsCalendarName` is the X-WR-CALNAME for display in the
+     *  sources list without decrypting the config blob. Conditional-
+     *  GET validators (etag + last-modified) let the worker
+     *  short-circuit on 304. */
+    icsResolvedUrl: { type: String, default: null },
+    icsCalendarName: { type: String, default: null },
+    icsEtag: { type: String, default: null },
+    icsLastModified: { type: String, default: null },
     /** Outbound SMTP overrides for IMAP sources — derived host
      *  defaults work for most providers (smtp.<domain>:465 secure)
      *  but the user can override per-source. */

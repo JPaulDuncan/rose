@@ -54,6 +54,11 @@ const eventSchema = new Schema(
      *  Format: `gcal:<calendarId>:<eventId>`. Indexed unique-per-user
      *  so re-syncs idempotently upsert. */
     gcalId: { type: String, default: null, sparse: true },
+    /** Stable identifier for events pulled from an ICS feed
+     *  subscription. Format: `ics:<sourceId>:<UID>`. The sourceId
+     *  prefix prevents collisions between two ICS feeds that happen
+     *  to share a UID (rare but legal under RFC 5545). */
+    icsUid: { type: String, default: null, sparse: true },
   },
   { timestamps: true },
 );
@@ -64,6 +69,7 @@ eventSchema.index({ userId: 1, start: 1, dismissed: 1 });
 // duplicate was tripping Mongoose's duplicate-index warning on
 // every model registration.
 eventSchema.index({ userId: 1, gcalId: 1 }, { sparse: true });
+eventSchema.index({ userId: 1, icsUid: 1 }, { sparse: true });
 
 export type EventDoc = HydratedDocument<InferSchemaType<typeof eventSchema>> & {
   _id: Types.ObjectId;
