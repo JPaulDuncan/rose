@@ -6,6 +6,7 @@ import { logger } from '../lib/logger.js';
 import { runPostWriteEntityExtraction } from '../services/extractEntities.js';
 import { extractComponentsFromPage } from '../services/extractUserFacts.js';
 import { hashContent } from '../services/extractPlaces.js';
+import { proposeDesksForUser } from '../services/proposeDesks.js';
 
 const QUEUE = 'rose.post-write-hooks';
 
@@ -28,13 +29,30 @@ const QUEUE = 'rose.post-write-hooks';
  */
 type PostWriteJobData =
   | { kind: 'entity-extract'; userId: string; pageId: string }
-  | { kind: 'user-facts-extract'; userId: string; pageId: string };
+  | { kind: 'user-facts-extract'; userId: string; pageId: string }
+  | { kind: 'suggest-desks'; userId: string };
 
 export function startPostWriteHooksWorker() {
   const worker = new Worker<PostWriteJobData>(
     QUEUE,
     async (job: Job<PostWriteJobData>) => {
       const userId = new Types.ObjectId(job.data.userId);
+
+      // suggest-desks isn't pageId-scoped; handle before the page
+      // lookup so it doesn't bail on "page-not-found".
+      if (job.data.kind === 'suggest-desks') {
+        try {
+          const summary = await proposeDesksForUser(userId);
+          return { ok: true, ...summary };
+        } catch (err) {
+          logger.warn(
+            { err, userId: job.data.userId },
+            'post-write hooks: propose-desks failed',
+          );
+          return { ok: false };
+        }
+      }
+
       const page = (await Page.findOne({
         _id: job.data.pageId,
         userId,

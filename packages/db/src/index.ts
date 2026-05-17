@@ -18,8 +18,11 @@ export {
   normalizeCategoryName,
   displayCategoryName,
   UNCATEGORIZED_NAME,
+  CATEGORY_KINDS,
+  CATEGORY_STATUSES,
+  DESK_SEED_DEFAULTS,
 } from './models/Category.js';
-export type { CategoryDoc } from './models/Category.js';
+export type { CategoryDoc, CategoryKind, CategoryStatus } from './models/Category.js';
 export { Instruction } from './models/Instruction.js';
 export type { InstructionDoc } from './models/Instruction.js';
 export { Source } from './models/Source.js';

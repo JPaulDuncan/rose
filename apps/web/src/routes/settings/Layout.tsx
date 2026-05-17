@@ -15,6 +15,7 @@ const TABS = [
   { to: 'daydream', label: 'Daydream' },
   { to: 'maps', label: 'Maps' },
   { to: 'tags', label: 'Tags' },
+  { to: 'desks', label: 'Desks' },
   { to: 'entities', label: 'Entities' },
   { to: 'memory', label: 'Memory' },
   { to: 'library', label: 'Library' },

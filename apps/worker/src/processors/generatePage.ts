@@ -55,6 +55,13 @@ import { describePageImages } from '../services/describeImages.js';
 import { extractPlacesFromPage, hashContent } from '../services/extractPlaces.js';
 import { runPostWriteEntityExtraction } from '../services/extractEntities.js';
 import { extractComponentsFromPage } from '../services/extractUserFacts.js';
+import {
+  ensureDeskSeedsForUser,
+  buildCategoryVocabulary,
+  snapToDesk,
+  getUncategorizedDeskId,
+  getAdvertisingDeskId,
+} from '../services/desks.js';
 import { enrichEntityWikidata } from '../services/wikidataResolver.js';
 import { extractOutboundLinks } from '../services/outboundLinks.js';
 import { runPostWriteReceiptExtraction } from '../services/extractReceipt.js';
@@ -775,7 +782,12 @@ export function startGeneratePageWorker() {
         pageEmails = [triggerEmail];
       }
 
-      const categories = await Category.find({ userId }).select('name').lean();
+      // Make sure the user has their desk vocabulary seeded. Idempotent:
+      // a single `Category.exists` query when desks already exist. First
+      // time after deploy on a legacy user, this inserts the 9 seed
+      // defaults so the next prompt-rendering pass sees them.
+      await ensureDeskSeedsForUser(userId);
+
       // Page counts per category — lets the prompt show the LLM which
       // buckets are popular so it prefers established names over inventing
       // new (often catch-all) ones. Aggregation is bounded by the user's
@@ -785,11 +797,13 @@ export function startGeneratePageWorker() {
         { $group: { _id: '$categoryId', n: { $sum: 1 } } },
       ]);
       const countById = new Map(counts.map((c) => [String(c._id), c.n]));
-      const categoriesBlock = categories.length
-        ? categories
-            .map((c) => `${c.name}\t${countById.get(String(c._id)) ?? 0}`)
-            .join('\n')
-        : '(none yet — pick null or invent a specific category)';
+      // Desk-aware vocabulary: when active desks exist, render the
+      // strict closed-set block (the prompt's static "prefer/invent"
+      // rules get overridden by the more specific instruction in the
+      // vocabulary block). When none exist, fall through to the
+      // legacy free-form rendering for backwards-compat.
+      const vocabulary = await buildCategoryVocabulary(userId, countById);
+      const categoriesBlock = vocabulary.block;
       // Embedding-driven pre-pass. Before the LLM runs, find the
       // user's tags + categories that are most semantically similar
       // to the trigger email and surface them as preferred candidates.
@@ -1146,42 +1160,63 @@ export function startGeneratePageWorker() {
       // a single Category row.
       let categoryId: Types.ObjectId | null = null;
       const rawCategoryName = verdict.assignCategory ?? draft.suggestedCategory;
-      // Title-case + de-slug at the seam: an LLM-emitted
-      // "email-marketing" lands as "Email Marketing"; an empty
-      // suggestion falls back to "Uncategorized" instead of leaving
-      // the page with no category.
-      const categoryName = displayCategoryName(rawCategoryName ?? '');
-      if (categoryName) {
-        const normalizedName = normalizeCategoryName(categoryName);
-        const cat =
-          (await Category.findOne({ userId, normalizedName })) ??
-          (await Category.findOne({ userId, name: categoryName }));
-        if (cat) {
-          // Backfill: legacy rows with a kebab-case or lowercased
-          // `name` get rewritten to the canonical Title Case form so
-          // the codex / browse views render consistently going
-          // forward.
-          let dirty = false;
-          if (!cat.normalizedName) {
-            cat.normalizedName = normalizedName;
-            dirty = true;
-          }
-          const display = displayCategoryName(cat.name);
-          if (cat.name !== display) {
-            cat.name = display;
-            dirty = true;
-          }
-          if (dirty) await cat.save();
-          categoryId = cat._id as Types.ObjectId;
+
+      // Desk-vocabulary mode — snap LLM output to a known desk; on
+      // miss, land in Uncategorized rather than creating a new
+      // ad-hoc Category row. Rule-based `assignCategory` overrides
+      // still get the strict-snap treatment (rule writers might
+      // typo a desk name).
+      if (vocabulary.isStrictDeskMode) {
+        const snappedDeskId = snapToDesk(rawCategoryName, vocabulary.desks);
+        if (snappedDeskId) {
+          categoryId = snappedDeskId;
         } else {
-          const created = await Category.create({
-            userId,
-            name: categoryName,
-            normalizedName,
-          });
-          categoryId = created._id as Types.ObjectId;
+          // No snap → Uncategorized. Always exists (seeded).
+          categoryId = await getUncategorizedDeskId(userId);
+        }
+      } else {
+        // Cold-start / pre-seed legacy path — original behaviour.
+        // Title-case + de-slug at the seam: an LLM-emitted
+        // "email-marketing" lands as "Email Marketing"; an empty
+        // suggestion falls back to "Uncategorized" instead of leaving
+        // the page with no category.
+        const categoryName = displayCategoryName(rawCategoryName ?? '');
+        if (categoryName) {
+          const normalizedName = normalizeCategoryName(categoryName);
+          const cat =
+            (await Category.findOne({ userId, normalizedName })) ??
+            (await Category.findOne({ userId, name: categoryName }));
+          if (cat) {
+            // Backfill: legacy rows with a kebab-case or lowercased
+            // `name` get rewritten to the canonical Title Case form so
+            // the codex / browse views render consistently going
+            // forward.
+            let dirty = false;
+            if (!cat.normalizedName) {
+              cat.normalizedName = normalizedName;
+              dirty = true;
+            }
+            const display = displayCategoryName(cat.name);
+            if (cat.name !== display) {
+              cat.name = display;
+              dirty = true;
+            }
+            if (dirty) await cat.save();
+            categoryId = cat._id as Types.ObjectId;
+          } else {
+            const created = await Category.create({
+              userId,
+              name: categoryName,
+              normalizedName,
+            });
+            categoryId = created._id as Types.ObjectId;
+          }
         }
       }
+
+      // Promotional override happens AFTER the email-walk computes
+      // the `isPromotional` flag (further below) — see the second
+      // call to getAdvertisingDeskId near the page-persist site.
 
       // Build citation map from labels actually cited. For
       // incremental merges, start with the page's existing citations
@@ -1428,6 +1463,17 @@ export function startGeneratePageWorker() {
       };
       // Rule-driven flag.set actions override the heuristics above.
       const flags = { ...baseFlags, ...verdict.setFlags };
+
+      // Promotional override (desks). When the per-email scorer
+      // flagged this page as promotional, pin the desk to
+      // Advertising regardless of what the LLM picked — keeps the
+      // two classifications consistent. Without this, a deal email
+      // could land on the Dining desk because the LLM read past
+      // the marketing wrapper.
+      if (vocabulary.isStrictDeskMode && flags.isPromotional) {
+        const advertisingId = await getAdvertisingDeskId(userId);
+        if (advertisingId) categoryId = advertisingId;
+      }
       // -------------------------------------------------------------------------
 
 
