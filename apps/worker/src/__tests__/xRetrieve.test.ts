@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { greedyCoverScore } from '../services/xRetrieve.js';
+import {
+  greedyCoverScore,
+  augmentSystemPromptWithUserFacts,
+} from '../services/xRetrieve.js';
 
 /**
  * Stage I scoring math (xMemory paper Eq. 4 — simplified to a
@@ -68,5 +71,37 @@ describe('greedyCoverScore', () => {
     const lowSimWideCoverage = greedyCoverScore('a', 0.2, covered, wide, POOL, 0);
     const highSimNoCoverage = greedyCoverScore('b', 0.7, covered, new Set(), POOL, 0);
     expect(highSimNoCoverage).toBeGreaterThan(lowSimWideCoverage);
+  });
+});
+
+describe('augmentSystemPromptWithUserFacts', () => {
+  const BASE = 'You are Rose, the assistant. Write clearly.';
+
+  it('returns the base prompt unchanged when no facts are provided', () => {
+    expect(augmentSystemPromptWithUserFacts(BASE, [])).toBe(BASE);
+  });
+
+  it('appends a labeled, bulleted background block when facts are present', () => {
+    const out = augmentSystemPromptWithUserFacts(BASE, [
+      'I run 5K twice a week',
+      'I prefer concise updates',
+    ]);
+    expect(out.startsWith(BASE)).toBe(true);
+    expect(out).toContain('Background on the recipient');
+    expect(out).toContain('  - I run 5K twice a week');
+    expect(out).toContain('  - I prefer concise updates');
+  });
+
+  it("warns the model that facts are about the user, not subjects to summarise", () => {
+    const out = augmentSystemPromptWithUserFacts(BASE, ['I am a chef']);
+    // The exact warning wording matters — it's what stops the model
+    // from writing "this week, I am a chef…" into a briefing body.
+    expect(out).toMatch(/ABOUT THEM/);
+    expect(out).toMatch(/not subjects to summarise/);
+  });
+
+  it('separates the base prompt from the addendum with a blank line', () => {
+    const out = augmentSystemPromptWithUserFacts(BASE, ['fact one']);
+    expect(out).toContain(`${BASE}\n\nBackground`);
   });
 });

@@ -16,6 +16,7 @@ import { resolveProviderForUser, applyParamOverrides } from '../lib/providers.js
 import { runPostWriteEntityExtraction } from '../services/extractEntities.js';
 import { hashContent } from '../services/extractPlaces.js';
 import { cosine } from '../lib/vec.js';
+import { xRetrieveUserFacts, augmentSystemPromptWithUserFacts } from '../services/xRetrieve.js';
 
 const QUEUE = 'rose.briefing';
 
@@ -210,10 +211,36 @@ async function generateBriefingForUser(
   // Briefing is a narrative write — slightly higher temp than the
   // JSON-mode generate-page job. User overrides win.
   const merged = applyParamOverrides({ temperature: 0.4 }, userParams);
+
+  // xMemory user-facts → system-prompt augmentation. Seeded with
+  // the cluster labels so retrieval biases toward facts that match
+  // what the user actually engaged with this period (a work-heavy
+  // week pulls professional facts; a personal-heavy week pulls
+  // family / habits / preferences). System prompt rather than
+  // template variable keeps this backward-compatible with the
+  // user's existing briefing instruction.
+  const themeQuery = themes
+    .map((t) => t.label)
+    .filter(Boolean)
+    .join(' ');
+  let userFacts: string[] = [];
+  if (themeQuery.length > 0) {
+    try {
+      const hits = await xRetrieveUserFacts(userId, themeQuery, { maxComponents: 8 });
+      userFacts = hits.map((h) => h.text);
+    } catch (err) {
+      logger.warn(
+        { err, userId: String(userId) },
+        'briefing: xRetrieve user-facts failed (continuing without)',
+      );
+    }
+  }
+  const systemPrompt = augmentSystemPromptWithUserFacts(SYSTEM_PROMPT_BASE, userFacts);
+
   const text = await provider.generate({
     model: genModel,
     prompt,
-    system: SYSTEM_PROMPT_BASE,
+    system: systemPrompt,
     temperature: merged.temperature ?? 0.4,
     maxTokens: merged.maxTokens ?? undefined,
     topP: merged.topP ?? undefined,

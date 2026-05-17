@@ -261,6 +261,27 @@ async function topKComponents(
     .slice(0, max);
 }
 
+/**
+ * Render a list of user-facts as a system-prompt addendum for any
+ * narrative-generation call (briefing, tag-digest, future
+ * chat-RAG). Returns the original base prompt unchanged when there
+ * are no facts so callers can use it unconditionally. The instruction
+ * line is deliberate: tells the model these are facts ABOUT THE
+ * RECIPIENT and not subjects to summarise.
+ */
+export function augmentSystemPromptWithUserFacts(
+  basePrompt: string,
+  userFacts: readonly string[],
+): string {
+  if (userFacts.length === 0) return basePrompt;
+  const block = [
+    'Background on the recipient (use to shape tone, emphasis, and word choice —',
+    'these are facts ABOUT THEM, not subjects to summarise):',
+    ...userFacts.map((f) => `  - ${f}`),
+  ].join('\n');
+  return `${basePrompt}\n\n${block}`;
+}
+
 /** Pure scoring helper — exposed for unit testing the greedy step
  *  without spinning up Mongo + an embed provider. */
 export function greedyCoverScore(

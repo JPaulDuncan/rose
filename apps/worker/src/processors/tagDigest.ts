@@ -6,6 +6,7 @@ import { renderTemplate, SYSTEM_PROMPT_BASE } from '@rose/llm';
 import { redis, bullConnection } from '../lib/redis.js';
 import { logger } from '../lib/logger.js';
 import { resolveProviderForUser } from '../lib/providers.js';
+import { xRetrieveUserFacts, augmentSystemPromptWithUserFacts } from '../services/xRetrieve.js';
 
 const QUEUE = 'rose.tag-digest';
 
@@ -189,12 +190,31 @@ export function startTagDigestWorker(): void {
         return { failed: true };
       }
 
+      // xMemory user-facts seeded with the tag itself — pulls
+      // facts a user has expressed about this tag's topic area.
+      // For tag "running": "I run 5K twice a week" influences the
+      // digest's tone (briefing-to-a-runner vs. briefing-to-a-novice).
+      let digestUserFacts: string[] = [];
+      try {
+        const hits = await xRetrieveUserFacts(userId, tag, { maxComponents: 5 });
+        digestUserFacts = hits.map((h) => h.text);
+      } catch (err) {
+        logger.warn(
+          { err, userId: String(userId), tag },
+          'tag-digest: xRetrieve user-facts failed (continuing without)',
+        );
+      }
+      const systemPrompt = augmentSystemPromptWithUserFacts(
+        SYSTEM_PROMPT_BASE,
+        digestUserFacts,
+      );
+
       let raw: string;
       try {
         raw = await provider.generate({
           model: modelName,
           prompt,
-          system: SYSTEM_PROMPT_BASE,
+          system: systemPrompt,
           format: 'json',
           temperature: 0.3,
         });
