@@ -1,7 +1,7 @@
 import { Worker, type Job } from 'bullmq';
 import { Types } from 'mongoose';
 import { User, Page, DaydreamNote, Entity, type PageDoc } from '@rose/db';
-import { xRetrieveUserFacts } from '../services/xRetrieve.js';
+import { xRetrieveUserFacts, xRetrieveWorldFacts } from '../services/xRetrieve.js';
 import {
   WikipediaAdapter,
   WikidataAdapter,
@@ -527,7 +527,19 @@ async function upsertNote(
     }))
     .filter((s) => s.include)
     .map(({ include: _i, ...rest }) => rest);
-  const staleAfter = new Date(Date.now() + refreshAfterDays * 24 * 60 * 60 * 1000);
+  // Notes that cited an internal `rose-archive` source get a
+  // shorter refresh window — when the user edits / rejects a
+  // world-fact, the daydream note that incorporated it should
+  // regenerate within the next few weeks rather than waiting out
+  // the default 30-day staleness. Proper reactive invalidation
+  // (bust on memory-component PATCH) is the longer-term fix.
+  const citedArchive = sources.some((s) => s.adapter === 'rose-archive');
+  const effectiveRefreshDays = citedArchive
+    ? Math.max(1, Math.floor(refreshAfterDays / 2))
+    : refreshAfterDays;
+  const staleAfter = new Date(
+    Date.now() + effectiveRefreshDays * 24 * 60 * 60 * 1000,
+  );
   // Plan 14 — notes are global. Dedup on `(kind, subjectKey)`.
   // `firstResearchedBy` is informational only; we set it on insert
   // so the audit trail captures whoever's research first surfaced
@@ -595,6 +607,72 @@ async function markFailed(
     },
     { upsert: true, new: true, setDefaultsOnInsert: true },
   );
+}
+
+/**
+ * Pull world-facts about `display` from the user's xMemory
+ * substrate and shape them as `DaydreamSnippet`s with adapterId
+ * `'rose-archive'`. Each snippet's URL points at the source page
+ * that produced the fact, so the daydream-note attribution chips
+ * become "from your archive · {page title}" + clickable through to
+ * the source.
+ *
+ * Confidence is capped at 0.7 — these are Rose's own extractions,
+ * not authoritative external knowledge. The synthesis prompt
+ * already weights snippets by confidence; capping under the
+ * exact-Wikipedia-label score (0.9) means an external verified
+ * source naturally outranks an internal extraction when both
+ * cover the same claim, and the synthesis can still cite both.
+ *
+ * Returns empty array on any failure path so the caller can ignore
+ * the error and proceed with whatever external snippets exist.
+ */
+async function researchArchiveSnippets(
+  userId: Types.ObjectId,
+  display: string,
+): Promise<Array<DaydreamSnippet & { adapterId: string }>> {
+  const facts = await xRetrieveWorldFacts(userId, display, {
+    maxComponents: 3,
+    minSimilarity: 0.5,
+  });
+  if (facts.length === 0) return [];
+
+  // Bulk-resolve source pages so each snippet can link back.
+  const pageIds = facts
+    .map((f) => f.sourcePageId)
+    .filter((id): id is string => id !== null);
+  const uniquePageIds = [...new Set(pageIds)];
+  const pageById = new Map<string, { title: string; slug: string }>();
+  if (uniquePageIds.length > 0) {
+    const rows = await Page.find({
+      userId,
+      _id: { $in: uniquePageIds.map((id) => new Types.ObjectId(id)) },
+    })
+      .select('title slug')
+      .lean();
+    for (const r of rows) {
+      pageById.set(String(r._id), { title: r.title, slug: r.slug });
+    }
+  }
+
+  const out: Array<DaydreamSnippet & { adapterId: string }> = [];
+  for (const f of facts) {
+    const page = f.sourcePageId ? pageById.get(f.sourcePageId) : null;
+    out.push({
+      title: page ? `From your archive · ${page.title}` : 'From your archive',
+      url: page ? `/p/${page.slug}` : '',
+      content: f.text,
+      // Cap below 0.9 so Wikipedia exact-label matches outrank
+      // internal extractions when both exist. The retrieval
+      // similarity itself only goes into the confidence rank if
+      // it's high — 0.6 floor lets weakly-matching internal facts
+      // contribute without dominating.
+      confidence: Math.min(0.7, Math.max(0.5, f.similarity)),
+      fetchedAt: new Date(),
+      adapterId: 'rose-archive',
+    });
+  }
+  return out;
 }
 
 /**
@@ -726,6 +804,32 @@ async function researchSubject(
       }
     }),
   );
+
+  // World-facts grounding (xMemory v2). Pull atomic claims Rose
+  // has previously extracted about this subject from the user's
+  // own corpus and merge them into the snippet pool with
+  // adapterId='rose-archive'. Internal data is cheaper + more
+  // trusted than open-web crawls, so when both exist the
+  // synthesis prompt has multiple corroborating sources.
+  //
+  // Failure-isolated by a 2s timeout race — a slow Mongo or embed
+  // call must never delay the daydream synthesis. The world-facts
+  // pull is additive grounding, not a hard dependency.
+  try {
+    const archiveSnippets = await Promise.race([
+      researchArchiveSnippets(userId, display),
+      new Promise<typeof snippets>((resolve) =>
+        setTimeout(() => resolve([]), 2000),
+      ),
+    ]);
+    for (const s of archiveSnippets) snippets.push(s);
+  } catch (err) {
+    logger.debug(
+      { err, display },
+      'daydream: archive-snippet pull failed (continuing)',
+    );
+  }
+
   if (snippets.length === 0) {
     await markFailed(userId, kind, subjectKey, 'no source returned content', refreshAfterDays);
     return false;

@@ -45,6 +45,10 @@ export type RetrievedComponent = {
   id: string;
   text: string;
   type: string;
+  /** First source page (most recent). The component may have more
+   *  in `sourcePageIds[]`; the consumer can fetch the full list
+   *  separately if it cares. */
+  sourcePageId: string | null;
   groupId: string | null;
   groupLabel: string | null;
   similarity: number;
@@ -62,6 +66,7 @@ type ComponentRow = {
   _id: Types.ObjectId;
   text: string;
   type: string;
+  sourcePageIds?: Types.ObjectId[];
   embedding?: number[] | null;
   groupId?: Types.ObjectId | null;
 };
@@ -179,7 +184,7 @@ export async function xRetrieveUserFacts(
     subject: 'user',
     groupId: { $in: selected.map((id) => new Types.ObjectId(id)) },
   })
-    .select('+embedding text type groupId')
+    .select('+embedding text type groupId sourcePageIds')
     .lean()) as ComponentRow[];
 
   // Group → components map for per-group ranking.
@@ -209,6 +214,7 @@ export async function xRetrieveUserFacts(
         id: String(c._id),
         text: c.text,
         type: c.type,
+        sourcePageId: c.sourcePageIds?.[0] ? String(c.sourcePageIds[0]) : null,
         groupId: gid,
         groupLabel: groupLabelById.get(gid) ?? null,
         similarity: sim,
@@ -231,6 +237,7 @@ export async function xRetrieveUserFacts(
         id: String(c._id),
         text: c.text,
         type: c.type,
+        sourcePageId: c.sourcePageIds?.[0] ? String(c.sourcePageIds[0]) : null,
         groupId: c.groupId ? String(c.groupId) : null,
         groupLabel: c.groupId ? (groupLabelById.get(String(c.groupId)) ?? null) : null,
         similarity: sim,
@@ -239,6 +246,119 @@ export async function xRetrieveUserFacts(
   }
 
   return picked.slice(0, maxComponents).sort((a, b) => b.similarity - a.similarity);
+}
+
+/**
+ * Sibling of `xRetrieveUserFacts` for the `subject: 'world'`
+ * substrate. Returns atomic claims Rose has previously extracted
+ * about subjects in the user's pages, scoped to those whose text
+ * mentions the query subject. Used as a snippet source by the
+ * daydream synthesiser so the entry can be grounded in claims
+ * already mined from the user's corpus.
+ *
+ * Differences from the user-facts version:
+ *   • Filters subject='world' on every Mongo query (countDocuments,
+ *     groups, components, fallback topK).
+ *   • Applies a case-insensitive substring filter on component text
+ *     after retrieval — cosine similarity alone surfaces tangentially-
+ *     related claims (e.g., "A24 is a film studio" for subject "The
+ *     Drama"). The substring check is the relevance gate; the
+ *     similarity threshold is the noise gate.
+ *   • Defaults to a tighter similarity floor (0.5) than user-facts,
+ *     because the substring filter is doing most of the relevance
+ *     work — anything below 0.5 that DOES contain the subject is
+ *     probably a paraphrase mismatch worth keeping.
+ */
+export type XRetrieveWorldFactsOpts = XRetrieveOpts & {
+  /** Minimum cosine similarity to keep. Below this is filtered out
+   *  even when the substring check passes. */
+  minSimilarity?: number;
+  /** When true, skip the substring filter — useful for cases where
+   *  the query is a paraphrase rather than the subject's display
+   *  name. Default false (substring required). */
+  skipSubjectSubstring?: boolean;
+};
+
+export async function xRetrieveWorldFacts(
+  userId: Types.ObjectId,
+  subject: string,
+  opts: XRetrieveWorldFactsOpts = {},
+): Promise<RetrievedComponent[]> {
+  const maxComponents = opts.maxComponents ?? 3;
+  const minSimilarity = opts.minSimilarity ?? 0.5;
+  const subjectLower = subject.toLowerCase().trim();
+  if (!subjectLower) return [];
+
+  // Cheap existence gate — skip the embed call if the user has no
+  // world-facts at all.
+  const candidateCount = await MemoryComponent.countDocuments({
+    userId,
+    status: 'active',
+    subject: 'world',
+  });
+  if (candidateCount === 0) return [];
+
+  let queryVec: number[];
+  try {
+    const resolved = await resolveProviderForUser(userId, 'embedding');
+    queryVec = await resolved.provider.embed(resolved.model, subject);
+  } catch (err) {
+    logger.warn({ err }, 'xRetrieveWorldFacts: embed provider unavailable');
+    return [];
+  }
+  if (!queryVec.length) return [];
+
+  // We don't run the full Stage I coverage loop here — world-facts
+  // relevance is so subject-specific that the diversity payoff is
+  // marginal, and the substring filter already restricts the
+  // candidate set tightly. Direct top-K is the right shape.
+  const all = (await MemoryComponent.find({
+    userId,
+    status: 'active',
+    subject: 'world',
+  })
+    .select('+embedding text type groupId sourcePageIds')
+    .limit(1000)
+    .lean()) as ComponentRow[];
+
+  const groupIds = new Set<string>();
+  for (const c of all) {
+    if (c.groupId) groupIds.add(String(c.groupId));
+  }
+  const groupLabelById = new Map<string, string>();
+  if (groupIds.size > 0) {
+    const groupRows = await MemoryGroup.find({
+      _id: { $in: [...groupIds].map((id) => new Types.ObjectId(id)) },
+    })
+      .select('label')
+      .lean();
+    for (const g of groupRows) groupLabelById.set(String(g._id), g.label);
+  }
+
+  const subjectFilter = (text: string): boolean => {
+    if (opts.skipSubjectSubstring) return true;
+    return text.toLowerCase().includes(subjectLower);
+  };
+
+  return all
+    .filter(
+      (c) =>
+        c.embedding &&
+        c.embedding.length === queryVec.length &&
+        subjectFilter(c.text),
+    )
+    .map((c) => ({
+      id: String(c._id),
+      text: c.text,
+      type: c.type,
+      sourcePageId: c.sourcePageIds?.[0] ? String(c.sourcePageIds[0]) : null,
+      groupId: c.groupId ? String(c.groupId) : null,
+      groupLabel: c.groupId ? (groupLabelById.get(String(c.groupId)) ?? null) : null,
+      similarity: cosine(queryVec, c.embedding!),
+    }))
+    .filter((r) => r.similarity >= minSimilarity)
+    .sort((a, b) => b.similarity - a.similarity)
+    .slice(0, maxComponents);
 }
 
 /** Direct top-K fallback used before the sweeper has built any
@@ -253,7 +373,7 @@ async function topKComponents(
     status: 'active',
     subject: 'user',
   })
-    .select('+embedding text type groupId')
+    .select('+embedding text type groupId sourcePageIds')
     .limit(500)
     .lean()) as ComponentRow[];
   return all
@@ -262,6 +382,7 @@ async function topKComponents(
       id: String(c._id),
       text: c.text,
       type: c.type,
+      sourcePageId: c.sourcePageIds?.[0] ? String(c.sourcePageIds[0]) : null,
       groupId: c.groupId ? String(c.groupId) : null,
       groupLabel: null,
       similarity: cosine(queryVec, c.embedding!),

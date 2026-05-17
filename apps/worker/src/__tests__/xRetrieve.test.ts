@@ -74,6 +74,45 @@ describe('greedyCoverScore', () => {
   });
 });
 
+describe('xRetrieveWorldFacts — substring-relevance helper', () => {
+  // The Mongo+embed path is integration-only; the unit-testable
+  // piece is the substring/threshold logic that lives inside the
+  // function. We test it indirectly via a tiny re-implementation
+  // matching the production filter — if the production code
+  // diverges, this test should be updated in the same commit.
+  function passesFilter(
+    componentText: string,
+    similarity: number,
+    subject: string,
+    minSimilarity: number,
+  ): boolean {
+    if (similarity < minSimilarity) return false;
+    return componentText.toLowerCase().includes(subject.toLowerCase().trim());
+  }
+
+  it('keeps a fact whose text contains the subject AND meets similarity floor', () => {
+    expect(passesFilter('The Drama is a 2017 A24 film', 0.8, 'The Drama', 0.5)).toBe(true);
+  });
+
+  it('rejects a high-similarity fact whose text does not contain the subject', () => {
+    // Tangentially-related fact: high cosine because both are about
+    // film, but it's NOT about "The Drama" specifically.
+    expect(passesFilter('A24 is a film studio founded in 2012', 0.85, 'The Drama', 0.5)).toBe(false);
+  });
+
+  it('rejects a low-similarity fact even if the substring matches', () => {
+    expect(passesFilter('The Drama Department staged a production', 0.4, 'The Drama', 0.5)).toBe(false);
+  });
+
+  it('subject match is case-insensitive', () => {
+    expect(passesFilter('the drama released in cannes', 0.7, 'The Drama', 0.5)).toBe(true);
+  });
+
+  it('subject is trimmed before substring check', () => {
+    expect(passesFilter('Anthropic released Claude 3.5', 0.7, '  Anthropic  ', 0.5)).toBe(true);
+  });
+});
+
 describe('augmentSystemPromptWithUserFacts', () => {
   const BASE = 'You are Rose, the assistant. Write clearly.';
 

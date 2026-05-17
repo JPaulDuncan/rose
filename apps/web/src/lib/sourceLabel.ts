@@ -11,9 +11,17 @@
  * Future regenerations of those notes will write the real adapter
  * id and bypass this fallback.
  */
+/** A few adapter ids that deserve a friendlier label than their
+ *  raw token. `rose-archive` in particular is internal-data
+ *  attribution — the user reads "via your archive" + clicks
+ *  through to the source page, instead of the cryptic id. */
+const ADAPTER_DISPLAY_OVERRIDES: Record<string, string> = {
+  'rose-archive': 'your archive',
+};
+
 export function adapterLabel(adapter: string | null | undefined, url: string): string {
   const a = (adapter ?? '').trim().toLowerCase();
-  if (a && a !== 'unknown') return a;
+  if (a && a !== 'unknown') return ADAPTER_DISPLAY_OVERRIDES[a] ?? a;
   return hostnameLabel(url);
 }
 
