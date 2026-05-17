@@ -51,6 +51,14 @@ type Chapter = {
   parentId: string | null;
   icon: string | null;
   color: string | null;
+  /** 'desk' for curated newspaper sections (rendered as a top
+   *  group in the rail); 'ad-hoc' for legacy free-form rows. */
+  kind?: 'desk' | 'ad-hoc';
+  /** Seeded default (Local, National, Sports, …). Visible in the
+   *  rail even with zero entries — the newspaper metaphor needs
+   *  consistent sectioning. */
+  seedDefault?: boolean;
+  description?: string;
   entries: Entry[];
 };
 type Persona = {
@@ -543,23 +551,73 @@ function CategoriesTab() {
     return <EmptyHint label="No pages yet — once Rose ingests something, categories appear here." />;
   }
 
+  // Section desks (curated newspaper sections) above ad-hoc rows.
+  // Desks are always visible — empty ones render dimmed so the rail
+  // stays stable as the user's content shifts week to week. Ad-hoc
+  // categories are filtered server-side to non-empty only.
+  const desks = data.chapters.filter((c) => c.kind === 'desk');
+  const adHoc = data.chapters.filter((c) => c.kind !== 'desk');
+
   return (
     <div className="grid gap-6 lg:grid-cols-[220px_1fr]">
       <aside>
-        <ul className="space-y-1 text-sm">
-          {data.chapters.map((c) => (
-            <li key={c._id}>
-              <button
-                type="button"
-                onClick={() => setActiveId(c._id)}
-                className={railButtonClass(focused?._id === c._id)}
-              >
-                <span className="truncate font-medium">{c.name}</span>
-                <span className="text-xs text-ink-400">{c.entries.length}</span>
-              </button>
-            </li>
-          ))}
-          {data.orphans.length > 0 && (
+        {desks.length > 0 && (
+          <>
+            <div
+              className="mb-1 mt-1 px-2 text-[10px] font-semibold uppercase tracking-widest text-ink-500"
+              title="Curated newspaper sections — manage in Settings → Desks"
+            >
+              Desks
+            </div>
+            <ul className="mb-3 space-y-1 text-sm">
+              {desks.map((c) => (
+                <li key={c._id}>
+                  <button
+                    type="button"
+                    onClick={() => setActiveId(c._id)}
+                    className={railButtonClass(
+                      focused?._id === c._id,
+                      c.entries.length === 0,
+                    )}
+                    title={c.description || c.name}
+                  >
+                    <span className="truncate font-medium">{c.name}</span>
+                    <span className="text-xs text-ink-400">
+                      {c.entries.length}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
+        {adHoc.length > 0 && (
+          <>
+            {desks.length > 0 && (
+              <div className="mb-1 mt-1 px-2 text-[10px] font-semibold uppercase tracking-widest text-ink-500">
+                Other categories
+              </div>
+            )}
+            <ul className="space-y-1 text-sm">
+              {adHoc.map((c) => (
+                <li key={c._id}>
+                  <button
+                    type="button"
+                    onClick={() => setActiveId(c._id)}
+                    className={railButtonClass(focused?._id === c._id)}
+                  >
+                    <span className="truncate font-medium">{c.name}</span>
+                    <span className="text-xs text-ink-400">
+                      {c.entries.length}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
+        {data.orphans.length > 0 && (
+          <ul className="mt-1 space-y-1 text-sm">
             <li>
               <button
                 type="button"
@@ -570,8 +628,8 @@ function CategoriesTab() {
                 <span className="text-xs text-ink-400">{data.orphans.length}</span>
               </button>
             </li>
-          )}
-        </ul>
+          </ul>
+        )}
       </aside>
       <main className="min-w-0">
         {focused ? <ChapterPanel chapter={focused} /> : null}
@@ -580,12 +638,14 @@ function CategoriesTab() {
   );
 }
 
-function railButtonClass(active: boolean) {
+function railButtonClass(active: boolean, dim = false) {
   return (
     'flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left ' +
     (active
       ? 'bg-rose-50 text-rose-800 dark:bg-rose-950/40 dark:text-rose-200'
-      : 'text-ink-700 hover:bg-ink-100 dark:text-ink-200 dark:hover:bg-ink-800')
+      : dim
+        ? 'text-ink-400 hover:bg-ink-100 dark:text-ink-500 dark:hover:bg-ink-800'
+        : 'text-ink-700 hover:bg-ink-100 dark:text-ink-200 dark:hover:bg-ink-800')
   );
 }
 

@@ -128,6 +128,10 @@ codexRouter.get('/', async (req, res) => {
   }
 
   const chapters = [...canonical.values()]
+    // Skip proposed/archived rows entirely — they're settings-only,
+    // not browse surfaces. Active ad-hoc + active desks both ship
+    // here; the kind flag below lets the UI section them.
+    .filter((c) => (c.status ?? 'active') === 'active')
     .map((c) => {
       const key = c.normalizedName?.trim() || normalizeCategoryName(c.name ?? '');
       return {
@@ -139,11 +143,33 @@ codexRouter.get('/', async (req, res) => {
         parentId: c.parentId ? String(c.parentId) : null,
         icon: c.icon ?? null,
         color: c.color ?? null,
+        /** 'desk' (curated newspaper section) or 'ad-hoc' (legacy
+         *  free-form). The Codex rail uses this to section desks
+         *  above ad-hoc categories. Defaults to 'ad-hoc' for
+         *  legacy rows that pre-date the field. */
+        kind: (c.kind as 'desk' | 'ad-hoc' | undefined) ?? 'ad-hoc',
+        /** True for the 9 shipped seed defaults — UI shows them
+         *  whether or not they have entries so the newspaper
+         *  metaphor holds. */
+        seedDefault: !!c.seedDefault,
+        /** Short LLM-prompt-facing description; surfaced in the
+         *  rail tooltip so the user can hover to remember "what
+         *  belongs on this desk". */
+        description: c.description ?? '',
         entries: byKey.get(key) ?? [],
       };
     })
-    .filter((c) => c.entries.length > 0)
-    .sort((a, b) => b.entries.length - a.entries.length);
+    // Filter out EMPTY ad-hoc rows (they're just clutter when the
+    // user reads no pages from them). Seeded desks stay visible
+    // even when empty — the newspaper metaphor requires consistent
+    // sectioning regardless of recent volume.
+    .filter((c) => c.entries.length > 0 || c.kind === 'desk')
+    .sort((a, b) => {
+      // Desks first, alphabetically; then ad-hoc by entry count.
+      if (a.kind !== b.kind) return a.kind === 'desk' ? -1 : 1;
+      if (a.kind === 'desk') return a.name.localeCompare(b.name);
+      return b.entries.length - a.entries.length;
+    });
 
   const index = pages
     .map((p) => ({ slug: p.slug, title: p.title }))

@@ -97,6 +97,15 @@ export const SWEEPER_CATALOG: readonly InProcessSweeper[] = [
     pool: 'bg',
     definedAt: 'apps/worker/src/services/memoryGroupingSweep.ts',
   },
+  {
+    id: 'desk-proposals',
+    label: 'Desk-proposal sweeper',
+    description:
+      'Hourly tick that picks users with ≥ 10 new uncategorized/ad-hoc pages since their last sweep and fewer than 5 pending proposals, then runs the desk-proposer (cluster + name) on their corpus. Persisted lastProposalSweepAt on User settings prevents back-to-back re-entry. Opt-out via settings.desks.autoSuggest.enabled = false.',
+    intervalMs: 60 * 60_000,
+    pool: 'llm',
+    definedAt: 'apps/worker/src/services/deskProposalSweeper.ts',
+  },
 ];
 
 export function getSweeperById(id: string): InProcessSweeper | undefined {

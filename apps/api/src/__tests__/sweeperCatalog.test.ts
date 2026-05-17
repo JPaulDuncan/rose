@@ -34,6 +34,16 @@ describe('SWEEPER_CATALOG', () => {
     }
   });
 
+  it('includes the desk-proposal sweeper', () => {
+    const desk = SWEEPER_CATALOG.find((s) => s.id === 'desk-proposals');
+    expect(desk).toBeDefined();
+    expect(desk?.pool).toBe('llm');
+    // Hourly tick — anything shorter would burn LLM cycles on
+    // clusters that haven't accumulated enough new pages to be
+    // worth re-running.
+    expect(desk?.intervalMs).toBeGreaterThanOrEqual(60 * 60_000);
+  });
+
   it('ids are unique across the catalog', () => {
     const ids = SWEEPER_CATALOG.map((s) => s.id);
     expect(new Set(ids).size).toBe(ids.length);

@@ -45,6 +45,7 @@ import { startReputationDecaySweep } from './services/reputationSweep.js';
 import { startAlertSweeper } from './services/alertSweeper.js';
 import { startDaydreamSweeper } from './services/daydreamSweeper.js';
 import { startMemoryGroupingSweeper } from './services/memoryGroupingSweep.js';
+import { startDeskProposalSweeper } from './services/deskProposalSweeper.js';
 import { reconcileSourceSchedules } from './services/sourceScheduleReconciler.js';
 import { getVapidKeys } from './lib/vapid.js';
 
@@ -316,6 +317,10 @@ async function bootstrap() {
 
     startTagDigestSweeper();
     startDaydreamSweeper();
+    // Newspaper-desk proposal sweeper — hourly tick, gated per-user
+    // on opt-in + new-content + pending-backlog thresholds. Runs in
+    // the llm pool because each proposal is one LLM call.
+    startDeskProposalSweeper();
   }
 
   if (has('io')) {
