@@ -29,6 +29,7 @@ import { hiddenRouter } from './routes/hidden.js';
 import { adminRouter } from './routes/admin.js';
 import { spamRouter } from './routes/spam.js';
 import { featuredTagsRouter } from './routes/featuredTags.js';
+import { featuredCategoriesRouter } from './routes/featuredCategories.js';
 import { weatherRouter } from './routes/weather.js';
 import { moonRouter } from './routes/moon.js';
 import { recipesRouter } from './routes/recipes.js';
@@ -133,6 +134,7 @@ export async function createServer(): Promise<Express> {
   app.use('/api/admin', requireAuth, adminRouter);
   app.use('/api/spam', requireAuth, spamRouter);
   app.use('/api/featured-tags', requireAuth, featuredTagsRouter);
+  app.use('/api/featured-categories', requireAuth, featuredCategoriesRouter);
   app.use('/api/weather', requireAuth, weatherRouter);
   app.use('/api/moon', requireAuth, moonRouter);
   app.use('/api/recipes', requireAuth, recipesRouter);

@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { Types } from 'mongoose';
-import { Page, Email, User, SenderBrand, TagDigest } from '@rose/db';
+import { Page, Email, User, SenderBrand, TagDigest, Category } from '@rose/db';
 import { userIdOf } from '../middleware/auth.js';
 
 export const digestRouter: Router = Router();
@@ -77,10 +77,11 @@ digestRouter.get('/', async (req, res) => {
   const includeSpam = req.query.includeSpam === '1';
   const includePromotions = req.query.includePromotions === '1';
   const userPrefs = (await User.findById(userId)
-    .select('featuredTags settings')
+    .select('featuredTags featuredCategoryIds settings')
     .lean()) as
     | {
         featuredTags?: string[];
+        featuredCategoryIds?: string[];
         settings?: {
           hidePromotions?: boolean;
           showMoonPhases?: boolean;
@@ -157,12 +158,24 @@ digestRouter.get('/', async (req, res) => {
     else buckets[3]!.pages.push(p);
   }
 
-  // Lead story selection: prefer a high-priority page from today, then a
-  // high-priority page overall, then the most recent page with the most
-  // source emails (richest content).
+  // Lead story selection. The chain prefers TODAY's content over
+  // stale high-priority — without this, a high-priority story from
+  // a week ago would dominate the masthead indefinitely, defeating
+  // the "refresh at least daily" expectation. Order:
+  //
+  //   1. Today + high-priority (the ideal)
+  //   2. Today + any priority (latest of today — "refresh daily"
+  //      guarantee: if today has ANY story, today gets the masthead)
+  //   3. Recent + high-priority (only when today is empty; better
+  //      to show a fresh-ish important thing than the richest stale)
+  //   4. Richest-recent terminal fallback
   const inToday = buckets[0]!.pages;
   const lead =
     inToday.find((p) => p.priority === 'high') ??
+    // Latest of today: buckets[0].pages is the today bucket;
+    // `allPages` sort order is articleDate-desc → first is freshest
+    // among today's set.
+    inToday[0] ??
     allPages.find((p) => p.priority === 'high') ??
     allPages
       .slice(0, 25)
@@ -319,9 +332,66 @@ digestRouter.get('/', async (req, res) => {
     });
   }
 
+  // ── Featured desks / categories ──────────────────────────────────────
+  // Same shape as featuredSections but pins by categoryId. The user
+  // toggles a category as "featured" in Settings → Desks (the star),
+  // and the home page renders the category's most-recent pages as
+  // its own section with the desk's display name + description.
+  // Stale ids (the user archived the desk after pinning it) get
+  // filtered here rather than the client having to know — keeps the
+  // home payload self-consistent even when settings drift.
+  const featuredCategoryIds = (userPrefs?.featuredCategoryIds ?? [])
+    .filter((id) => Types.ObjectId.isValid(id))
+    .map((id) => new Types.ObjectId(id));
+  const featuredDesks = featuredCategoryIds.length
+    ? await Category.find({
+        userId,
+        _id: { $in: featuredCategoryIds },
+        status: { $ne: 'archived' },
+      })
+        .select('name description kind icon color')
+        .lean()
+    : [];
+  // Preserve user-set order: walk featuredCategoryIds and pluck the
+  // matching Category row in order, dropping anything that didn't
+  // resolve (archived/deleted).
+  const deskById = new Map(featuredDesks.map((d) => [String(d._id), d]));
+  const orderedDesks = featuredCategoryIds
+    .map((id) => deskById.get(String(id)))
+    .filter((d): d is (typeof featuredDesks)[number] => !!d);
+  const featuredDeskSections: {
+    categoryId: string;
+    name: string;
+    description: string;
+    kind: 'desk' | 'ad-hoc';
+    icon: string | null;
+    pageCount: number;
+    pages: DigestPage[];
+  }[] = [];
+  for (const desk of orderedDesks) {
+    const deskFilter = { ...filter, categoryId: desk._id };
+    const matching = (await Page.find(deskFilter)
+      .sort({ articleDate: -1, updatedAt: -1 })
+      .limit(8)
+      .select('-contentMd -embedding -topicCentroid')
+      .lean()) as unknown as DigestPage[];
+    const total = await Page.countDocuments(deskFilter);
+    featuredDeskSections.push({
+      categoryId: String(desk._id),
+      name: desk.name,
+      description: desk.description ?? '',
+      kind: (desk.kind as 'desk' | 'ad-hoc' | undefined) ?? 'ad-hoc',
+      icon: desk.icon ?? null,
+      pageCount: total,
+      pages: matching,
+    });
+  }
+
   res.json({
     featuredTags,
     featuredSections,
+    featuredCategoryIds: featuredCategoryIds.map((id) => String(id)),
+    featuredDeskSections,
     showMoonPhases: !!userPrefs?.settings?.showMoonPhases,
     edition: {
       date: now.toISOString(),

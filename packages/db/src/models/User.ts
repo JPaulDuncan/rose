@@ -393,6 +393,15 @@ const userSchema = new Schema(
      */
     featuredTags: { type: [String], default: [] },
     /**
+     * Categories (kind='desk' or 'ad-hoc') the user pinned to the
+     * home page + newsletter. Mirrors `featuredTags` — same UX, but
+     * scopes pages by their categoryId rather than a tag/topic
+     * string. Order is the rendering order. ObjectId strings;
+     * stored as strings (not ObjectIds) to keep the schema flat and
+     * match the existing featuredTags pattern.
+     */
+    featuredCategoryIds: { type: [String], default: [] },
+    /**
      * Saved locations for the home-page weather widget. Order matters
      * (first becomes the default if no `primary` flag is set, the UI
      * promotes/demotes by editing the array). Each row gets a stable

@@ -99,6 +99,16 @@ type Digest = {
       dayKey: string;
     } | null;
   }[];
+  featuredCategoryIds: string[];
+  featuredDeskSections: {
+    categoryId: string;
+    name: string;
+    description: string;
+    kind: 'desk' | 'ad-hoc';
+    icon: string | null;
+    pageCount: number;
+    pages: DigestPage[];
+  }[];
   senderBrands: Record<string, SenderBrand>;
   showMoonPhases?: boolean;
 };
@@ -202,6 +212,12 @@ export default function HomePage() {
           {data.featuredSections.length > 0 && (
             <FeaturedSections
               sections={data.featuredSections}
+              suppressIds={suppressIds}
+            />
+          )}
+          {data.featuredDeskSections && data.featuredDeskSections.length > 0 && (
+            <FeaturedDeskSections
+              sections={data.featuredDeskSections}
               suppressIds={suppressIds}
             />
           )}
@@ -1033,6 +1049,86 @@ function FeaturedSections({
             ) : pages.length === 0 ? (
               <p className="text-xs italic text-ink-500">
                 No recent dispatches in this section.
+              </p>
+            ) : (
+              lead && <FeatureLead page={lead} />
+            )}
+
+            {rest.length > 0 && (
+              <>
+                <div className="border-t border-ink-200 dark:border-ink-800" />
+                <SectionCarousel pages={rest.slice(0, 12)} />
+              </>
+            )}
+          </section>
+        );
+      })}
+    </div>
+  );
+}
+
+/**
+ * Newspaper-section block for user-pinned categories / desks.
+ * Same render shape as FeaturedSections but driven by Category
+ * rows rather than tag digests, so:
+ *   - no per-day digest body (categories don't have digests)
+ *   - section name is the desk's display name (the user's own
+ *     curated label), and the eyebrow reads "The {Name} Desk"
+ *     to reinforce the newspaper metaphor
+ *   - lead card + carousel of remaining pages, all linking through
+ *     to a future /c/{categoryId} route (today: anchor only).
+ */
+function FeaturedDeskSections({
+  sections,
+  suppressIds,
+}: {
+  sections: {
+    categoryId: string;
+    name: string;
+    description: string;
+    kind: 'desk' | 'ad-hoc';
+    icon: string | null;
+    pageCount: number;
+    pages: DigestPage[];
+  }[];
+  suppressIds: Set<string>;
+}) {
+  return (
+    <div className="space-y-12 border-t-4 border-double border-ink-900 pt-8 dark:border-ink-100">
+      {sections.map((s) => {
+        const pages = s.pages.filter((p) => !suppressIds.has(p._id));
+        const lead = pages[0];
+        const rest = pages.slice(1);
+        return (
+          <section
+            key={s.categoryId}
+            id={`desk-${slugifyAnchor(s.name)}`}
+            className="space-y-5"
+          >
+            <div className="border-b-2 border-ink-900 pb-2 dark:border-ink-100">
+              <div className="flex items-baseline justify-between gap-4">
+                <div>
+                  <div className="text-[10px] uppercase tracking-[0.25em] text-ink-500">
+                    {s.kind === 'desk' ? `The ${s.name} Desk` : `Section · ${s.name}`}
+                  </div>
+                  <h2 className="mt-0.5 font-serif text-3xl font-black leading-tight tracking-tight">
+                    {s.name}
+                  </h2>
+                </div>
+                <div className="shrink-0 text-[11px] uppercase tracking-widest text-ink-500">
+                  {s.pageCount} {s.pageCount === 1 ? 'story' : 'stories'}
+                </div>
+              </div>
+              {s.description && (
+                <p className="mt-2 font-serif text-base italic leading-snug text-ink-700 dark:text-ink-200">
+                  {s.description}
+                </p>
+              )}
+            </div>
+
+            {pages.length === 0 ? (
+              <p className="text-xs italic text-ink-500">
+                No recent stories on this desk.
               </p>
             ) : (
               lead && <FeatureLead page={lead} />

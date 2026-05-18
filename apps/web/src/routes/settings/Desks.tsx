@@ -9,6 +9,7 @@ import {
   X,
   Sparkles,
   Lock,
+  Star,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useApi } from '../../lib/api';
@@ -62,6 +63,27 @@ export default function DesksSettingsPage() {
       const ms = Date.now() - lastUpdate;
       return ms < 90_000 ? 4_000 : false;
     },
+  });
+
+  // Featured-categories state — drives the star toggle per desk.
+  // Lives on User, mirrors the existing featured-tags pattern.
+  const featured = useQuery({
+    queryKey: ['featured-categories'],
+    queryFn: () => api.get<{ categoryIds: string[] }>('/api/featured-categories'),
+  });
+  const featuredSet = new Set(featured.data?.categoryIds ?? []);
+  const togglePin = useMutation({
+    mutationFn: async ({ id, pin }: { id: string; pin: boolean }) =>
+      pin
+        ? api.post<{ categoryIds: string[] }>('/api/featured-categories', {
+            categoryId: id,
+          })
+        : api.del<{ categoryIds: string[] }>(`/api/featured-categories/${id}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['featured-categories'] });
+      qc.invalidateQueries({ queryKey: ['digest'] });
+    },
+    onError: (e: Error) => toast.error(e.message),
   });
 
   const update = useMutation({
@@ -269,6 +291,32 @@ export default function DesksSettingsPage() {
                     )}
                   </div>
                   <div className="flex shrink-0 gap-1">
+                    <button
+                      type="button"
+                      className={
+                        'btn-ghost text-xs ' +
+                        (featuredSet.has(d._id) ? 'text-amber-500' : '')
+                      }
+                      onClick={() =>
+                        togglePin.mutate({
+                          id: d._id,
+                          pin: !featuredSet.has(d._id),
+                        })
+                      }
+                      disabled={togglePin.isPending}
+                      title={
+                        featuredSet.has(d._id)
+                          ? 'Unpin from Home + Newsletter'
+                          : 'Pin to Home + Newsletter as a featured section'
+                      }
+                    >
+                      <Star
+                        className={
+                          'h-3.5 w-3.5 ' +
+                          (featuredSet.has(d._id) ? 'fill-amber-400' : '')
+                        }
+                      />
+                    </button>
                     <button
                       type="button"
                       className="btn-ghost text-xs"

@@ -12,6 +12,9 @@ import {
   ExternalLink,
   Wrench,
   RefreshCw,
+  Search,
+  ChevronDown,
+  ChevronRight,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useApi } from '../../lib/api';
@@ -90,6 +93,19 @@ export default function MemorySettingsPage() {
   const [renamingGroup, setRenamingGroup] = useState<{ id: string; label: string } | null>(
     null,
   );
+  // Search + per-group expansion state. The page can grow to
+  // hundreds of components on a busy archive; without these the
+  // user would scroll forever. localStorage'd via useState's
+  // ad-hoc nature (component re-mounts reset, which is fine —
+  // search/collapse aren't worth persisting across navigations).
+  const [search, setSearch] = useState('');
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+  const [expandedAll, setExpandedAll] = useState<Set<string>>(new Set());
+  const [maintenanceOpen, setMaintenanceOpen] = useState(false);
+  // Per-group default = show top 3 components; click "Show all N"
+  // adds the group's id to expandedAll. Collapsing collapses the
+  // whole group (no body at all). Two independent dimensions.
+  const PREVIEW_COUNT = 3;
 
   const { data, isLoading } = useQuery({
     queryKey: ['memory', status, subject],
@@ -168,8 +184,17 @@ export default function MemorySettingsPage() {
   // sweeper has had a chance to attach them) land in an
   // "Awaiting review" section at the bottom.
   const sectioned = useMemo(() => {
+    const needle = search.trim().toLowerCase();
+    // Client-side text filter — matches against the component text
+    // AND the group label so "running" matches both a "Health"-
+    // group preference and any component whose text mentions it.
+    // Cheap because the API already caps responses at 1000 rows.
+    const components = (data?.components ?? []).filter((c) => {
+      if (!needle) return true;
+      return c.text.toLowerCase().includes(needle);
+    });
     const byGroup = new Map<string | null, Component[]>();
-    for (const c of data?.components ?? []) {
+    for (const c of components) {
       const k = c.groupId;
       const arr = byGroup.get(k) ?? [];
       arr.push(c);
@@ -179,12 +204,26 @@ export default function MemorySettingsPage() {
     const out: { group: Group | null; items: Component[] }[] = [];
     for (const g of groups) {
       const items = byGroup.get(g._id) ?? [];
-      if (items.length > 0) out.push({ group: g, items });
+      const groupMatches = needle && g.label.toLowerCase().includes(needle);
+      // A group with no matching components still shows when the
+      // search matches the GROUP LABEL — gives the user a way to
+      // jump to a theme without typing one of its component texts.
+      if (items.length > 0 || (groupMatches && (data?.components ?? []).some((c) => c.groupId === g._id))) {
+        const allItems = items.length > 0
+          ? items
+          : (data?.components ?? []).filter((c) => c.groupId === g._id);
+        out.push({ group: g, items: allItems });
+      }
     }
     const ungrouped = byGroup.get(null) ?? [];
     if (ungrouped.length > 0) out.push({ group: null, items: ungrouped });
     return out;
-  }, [data]);
+  }, [data, search]);
+
+  const totalMatching = useMemo(
+    () => sectioned.reduce((sum, s) => sum + s.items.length, 0),
+    [sectioned],
+  );
 
   return (
     <div className="space-y-4">
@@ -227,12 +266,22 @@ export default function MemorySettingsPage() {
         )}
       </div>
 
-      <div className="card">
-        <div className="mb-2 flex items-center gap-2">
+      <details
+        className="card"
+        open={maintenanceOpen}
+        onToggle={(e) => setMaintenanceOpen((e.target as HTMLDetailsElement).open)}
+      >
+        <summary className="flex cursor-pointer items-center gap-2">
           <Wrench className="h-4 w-4 text-rose-500" />
           <h3 className="text-sm font-semibold">Maintenance</h3>
-        </div>
-        <p className="mb-3 text-xs text-ink-500">
+          {stats.data && stats.data.pagesAwaiting > 0 && (
+            <span className="ml-auto rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800 dark:bg-amber-900/40 dark:text-amber-200">
+              {stats.data.pagesAwaiting} page
+              {stats.data.pagesAwaiting === 1 ? '' : 's'} awaiting extraction
+            </span>
+          )}
+        </summary>
+        <p className="mb-3 mt-3 text-xs text-ink-500">
           Memory updates happen automatically as new pages are
           generated and every 5 minutes by the background grouping
           sweeper. The buttons below force either step to run right
@@ -321,6 +370,33 @@ export default function MemorySettingsPage() {
             </div>
           </div>
         </div>
+      </details>
+
+      <div className="relative">
+        <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ink-400" />
+        <input
+          type="search"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search components by text…"
+          className="input w-full pl-9 text-sm"
+          aria-label="Search memory components"
+        />
+        {search && (
+          <div className="mt-1 text-[11px] text-ink-500">
+            {totalMatching} match{totalMatching === 1 ? '' : 'es'}{' '}
+            {sectioned.length > 0 && (
+              <>across {sectioned.length} theme{sectioned.length === 1 ? '' : 's'}</>
+            )}
+            <button
+              type="button"
+              className="ml-2 text-rose-600 hover:underline"
+              onClick={() => setSearch('')}
+            >
+              Clear
+            </button>
+          </div>
+        )}
       </div>
 
       <div className="flex flex-wrap items-center gap-3 text-xs">
@@ -387,8 +463,18 @@ export default function MemorySettingsPage() {
         </div>
       )}
 
-      {sectioned.map(({ group, items }) => (
-        <section key={group?._id ?? 'ungrouped'} className="card space-y-2">
+      {sectioned.map(({ group, items }) => {
+        const groupKey = group?._id ?? 'ungrouped';
+        const isCollapsed = collapsedGroups.has(groupKey);
+        const isExpanded = expandedAll.has(groupKey) || search.length > 0;
+        // When a search is active, show every match in every group
+        // (don't paginate the result the user is looking for). When
+        // search is empty, show the top PREVIEW_COUNT and offer
+        // "Show all N" expansion.
+        const visibleItems = isExpanded ? items : items.slice(0, PREVIEW_COUNT);
+        const hiddenCount = items.length - visibleItems.length;
+        return (
+        <section key={groupKey} className="card space-y-2">
           <header className="flex items-center justify-between gap-2">
             {group && renamingGroup?.id === group._id ? (
               <div className="flex flex-1 items-center gap-2">
@@ -431,7 +517,24 @@ export default function MemorySettingsPage() {
               </div>
             ) : (
               <>
-                <h3 className="flex items-center gap-2 text-sm font-semibold">
+                <button
+                  type="button"
+                  className="flex flex-1 items-center gap-2 text-left text-sm font-semibold"
+                  onClick={() => {
+                    setCollapsedGroups((prev) => {
+                      const next = new Set(prev);
+                      if (next.has(groupKey)) next.delete(groupKey);
+                      else next.add(groupKey);
+                      return next;
+                    });
+                  }}
+                  title={isCollapsed ? 'Expand group' : 'Collapse group'}
+                >
+                  {isCollapsed ? (
+                    <ChevronRight className="h-3.5 w-3.5 text-ink-500" />
+                  ) : (
+                    <ChevronDown className="h-3.5 w-3.5 text-ink-500" />
+                  )}
                   {group?.label ?? 'Awaiting grouping'}
                   <span className="text-xs font-normal text-ink-500">
                     · {items.length}
@@ -441,8 +544,8 @@ export default function MemorySettingsPage() {
                       renamed
                     </span>
                   )}
-                </h3>
-                {group && (
+                </button>
+                {group && !isCollapsed && (
                   <button
                     type="button"
                     className="btn-ghost text-xs"
@@ -457,8 +560,9 @@ export default function MemorySettingsPage() {
               </>
             )}
           </header>
+          {!isCollapsed && (
           <ul className="space-y-2">
-            {items.map((c) => (
+            {visibleItems.map((c) => (
               <li
                 key={c._id}
                 className={
@@ -623,8 +727,42 @@ export default function MemorySettingsPage() {
               </li>
             ))}
           </ul>
+          )}
+          {!isCollapsed && hiddenCount > 0 && (
+            <button
+              type="button"
+              className="btn-ghost text-xs"
+              onClick={() => {
+                setExpandedAll((prev) => {
+                  const next = new Set(prev);
+                  next.add(groupKey);
+                  return next;
+                });
+              }}
+            >
+              Show all {items.length}
+              <ChevronDown className="h-3 w-3" />
+            </button>
+          )}
+          {!isCollapsed && isExpanded && items.length > PREVIEW_COUNT && !search && (
+            <button
+              type="button"
+              className="btn-ghost text-xs"
+              onClick={() => {
+                setExpandedAll((prev) => {
+                  const next = new Set(prev);
+                  next.delete(groupKey);
+                  return next;
+                });
+              }}
+            >
+              Show fewer
+              <ChevronRight className="h-3 w-3 rotate-90" />
+            </button>
+          )}
         </section>
-      ))}
+        );
+      })}
     </div>
   );
 }
