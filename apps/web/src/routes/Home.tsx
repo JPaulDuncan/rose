@@ -109,6 +109,15 @@ type Digest = {
     pageCount: number;
     pages: DigestPage[];
   }[];
+  /** xMemory-driven personalisation lede. Highest-affinity recent
+   *  page + up to 3 companions on the same theme. Null when the
+   *  user has no MemoryGroups yet (cold start) or no candidate
+   *  page crosses the affinity threshold (0.25). */
+  forYou: {
+    page: DigestPage;
+    affinity: number;
+    companions: DigestPage[];
+  } | null;
   senderBrands: Record<string, SenderBrand>;
   showMoonPhases?: boolean;
 };
@@ -205,6 +214,9 @@ export default function HomePage() {
           height. */}
       <div className="mt-10 grid items-start gap-6 lg:grid-cols-[1fr_300px]">
         <div className="min-w-0 space-y-10">
+          {data.forYou && data.forYou.page && (
+            <ForYouLede forYou={data.forYou} />
+          )}
           {data.topStories && data.topStories.lead && (
             <TopStories lead={data.topStories.lead} />
           )}
@@ -441,6 +453,57 @@ function Byline({
  * (MoreNews, col 2). Newspaper-style nameplate above the lede so it
  * still reads as the day's marquee story.
  */
+/**
+ * "For you" lede — the xMemory-driven personalisation block. Picks
+ * the highest-affinity recent page from the digest, with up to 3
+ * companions on the same theme. Render shape mirrors TopStories so
+ * the two sections feel like siblings: same nameplate, same lead
+ * card, plus a 3-card carousel of companions when present.
+ *
+ * The block ALWAYS sits above Top Stories — the "what arrived
+ * today" signal is still here, just below "what you'd want to read."
+ * Cold-start users (no user-facts yet) won't see this section at
+ * all because `forYou` is null until xMemory has groups.
+ */
+function ForYouLede({
+  forYou,
+}: {
+  forYou: { page: DigestPage; affinity: number; companions: DigestPage[] };
+}) {
+  return (
+    <section className="border-t-4 border-double border-ink-900 pt-6 dark:border-ink-100">
+      <div className="mb-4 flex items-baseline justify-between gap-4 border-b border-ink-300 pb-2 dark:border-ink-700">
+        <div>
+          <h2 className="font-serif text-xl font-black uppercase tracking-[0.2em]">
+            For You
+          </h2>
+          <div className="mt-1 text-[10px] uppercase tracking-widest text-ink-500">
+            Aligned with what Rose has learned about your interests
+          </div>
+        </div>
+        <span
+          className="text-[10px] uppercase tracking-widest text-ink-500"
+          title={`Affinity ${Math.round(forYou.affinity * 100)}% against your xMemory user-facts`}
+        >
+          {Math.round(forYou.affinity * 100)}% match
+        </span>
+      </div>
+      <FeatureLead page={forYou.page} />
+      {forYou.companions.length > 0 && (
+        <>
+          <div className="mt-6 border-t border-ink-200 dark:border-ink-800" />
+          <div className="mt-4 text-[10px] uppercase tracking-widest text-ink-500">
+            On the same theme
+          </div>
+          <div className="mt-2">
+            <SectionCarousel pages={forYou.companions} />
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+
 function TopStories({ lead }: { lead: DigestPage }) {
   return (
     <section className="border-t-4 border-double border-ink-900 pt-6 dark:border-ink-100">

@@ -14,7 +14,7 @@ import {
 } from '@rose/shared';
 import { userIdOf } from '../middleware/auth.js';
 import { validateBody } from '../middleware/validate.js';
-import { librarySyncQueue } from '../lib/queues.js';
+import { librarySyncQueue, postWriteHooksQueue } from '../lib/queues.js';
 
 export const libraryRouter: Router = Router();
 
@@ -47,7 +47,15 @@ libraryRouter.patch('/settings', validateBody(LibrarySettingsUpdate), async (req
 
 libraryRouter.get('/sources', async (req, res) => {
   const userId = new Types.ObjectId(userIdOf(req));
-  const sources = await LibrarySource.find({ userId })
+  // ?status filters; default excludes rejected so the UI doesn't
+  // surface dead entries. status='proposed' isolates the
+  // suggestions panel; 'all' returns everything.
+  const statusParam = (req.query.status as string | undefined) ?? null;
+  const filter: Record<string, unknown> = { userId };
+  if (statusParam === 'proposed') filter.status = 'proposed';
+  else if (statusParam === 'active') filter.status = 'active';
+  else if (statusParam !== 'all') filter.status = { $ne: 'rejected' };
+  const sources = await LibrarySource.find(filter)
     .sort({ createdAt: -1 })
     .lean();
   // Attach a doc-count per source so the UI can render usage at a
@@ -72,6 +80,8 @@ libraryRouter.get('/sources', async (req, res) => {
       lastSyncAt: s.lastSyncAt ? s.lastSyncAt.toISOString() : null,
       lastError: s.lastError ?? null,
       status: s.status,
+      proposalReason: (s.proposalReason as string | undefined) ?? null,
+      proposalEvidence: (s.proposalEvidence as string[] | undefined) ?? [],
       docCount: countMap.get(String(s._id)) ?? 0,
     })),
   });
@@ -142,6 +152,77 @@ libraryRouter.post('/sources/:id/sync-now', async (req, res) => {
     { attempts: 1, removeOnComplete: 200, removeOnFail: 200 },
   );
   res.status(202).json({ jobId: job.id });
+});
+
+/**
+ * Accept a proposed source — flips status from 'proposed' to
+ * 'active', clears proposal-only fields, and kicks an immediate
+ * sync so the user sees library docs without waiting for the next
+ * scheduled tick.
+ */
+libraryRouter.post('/sources/:id/accept', async (req, res) => {
+  const userId = new Types.ObjectId(userIdOf(req));
+  if (!Types.ObjectId.isValid(req.params.id ?? '')) {
+    res.status(400).json({ error: 'invalid_request' });
+    return;
+  }
+  const cat = await LibrarySource.findOne({ _id: req.params.id, userId });
+  if (!cat || cat.status !== 'proposed') {
+    res.status(404).json({ error: 'not_found' });
+    return;
+  }
+  cat.status = 'active';
+  cat.proposalReason = '';
+  cat.proposalEvidence = [];
+  await cat.save();
+  await librarySyncQueue.add(
+    'sync',
+    { sourceId: String(cat._id), userId: String(userId) },
+    { attempts: 1, removeOnComplete: 200, removeOnFail: 200 },
+  );
+  res.json({ ok: true, source: cat });
+});
+
+/**
+ * Reject a proposed source — flips status to 'rejected' (kept as
+ * a row so future proposer runs dedup against it and don't
+ * re-suggest the same URL).
+ */
+libraryRouter.post('/sources/:id/reject', async (req, res) => {
+  const userId = new Types.ObjectId(userIdOf(req));
+  if (!Types.ObjectId.isValid(req.params.id ?? '')) {
+    res.status(400).json({ error: 'invalid_request' });
+    return;
+  }
+  const cat = await LibrarySource.findOne({ _id: req.params.id, userId });
+  if (!cat || cat.status !== 'proposed') {
+    res.status(404).json({ error: 'not_found' });
+    return;
+  }
+  cat.status = 'rejected';
+  await cat.save();
+  res.json({ ok: true, source: cat });
+});
+
+/**
+ * Enqueue the library-source proposer for this user. Walks the
+ * user's confident xMemory user-fact groups and proposes
+ * RSS/sitemap/URL sources matching each theme. UI polls
+ * /sources?status=proposed for results.
+ */
+libraryRouter.post('/sources/suggest', async (req, res) => {
+  const userId = new Types.ObjectId(userIdOf(req));
+  try {
+    await postWriteHooksQueue.add(
+      'library-suggest',
+      { kind: 'library-suggest', userId: String(userId) },
+      { attempts: 1, removeOnComplete: 20, removeOnFail: 20 },
+    );
+  } catch (err) {
+    res.status(503).json({ error: 'enqueue_failed', message: (err as Error).message });
+    return;
+  }
+  res.status(202).json({ ok: true });
 });
 
 // ── Documents (search + read + delete) ────────────────────────────

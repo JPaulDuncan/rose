@@ -32,7 +32,9 @@ type Source = {
   pollIntervalMinutes: number;
   lastSyncAt: string | null;
   lastError: string | null;
-  status: 'active' | 'paused' | 'error';
+  status: 'active' | 'paused' | 'error' | 'proposed' | 'rejected';
+  proposalReason?: string | null;
+  proposalEvidence?: string[];
   docCount: number;
 };
 
@@ -48,6 +50,47 @@ export default function LibrarySettings() {
     queryKey: ['library-sources'],
     queryFn: () => api.get<{ sources: Source[] }>('/api/library/sources'),
     refetchInterval: 15_000,
+  });
+  // Proposed sources from the xMemory-driven library proposer.
+  // Polls fast for ~2min after the user kicks the proposer so
+  // suggestions appear as the worker writes them.
+  const proposed = useQuery({
+    queryKey: ['library-sources', 'proposed'],
+    queryFn: () =>
+      api.get<{ sources: Source[] }>('/api/library/sources?status=proposed'),
+    refetchInterval: ({ state }) => {
+      const ms = Date.now() - state.dataUpdatedAt;
+      return ms < 120_000 ? 5_000 : false;
+    },
+  });
+  const acceptProposed = useMutation({
+    mutationFn: async (id: string) =>
+      api.post<{ ok: true }>(`/api/library/sources/${id}/accept`, {}),
+    onSuccess: () => {
+      toast.success('Source added to your library');
+      qc.invalidateQueries({ queryKey: ['library-sources'] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+  const rejectProposed = useMutation({
+    mutationFn: async (id: string) =>
+      api.post<{ ok: true }>(`/api/library/sources/${id}/reject`, {}),
+    onSuccess: () => {
+      toast.success('Suggestion dismissed');
+      qc.invalidateQueries({ queryKey: ['library-sources'] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+  const suggest = useMutation({
+    mutationFn: async () =>
+      api.post<{ ok: true }>('/api/library/sources/suggest', {}),
+    onSuccess: () => {
+      toast.success(
+        'Looking for sources matching your interests — suggestions will appear as the worker finishes.',
+      );
+      qc.invalidateQueries({ queryKey: ['library-sources', 'proposed'] });
+    },
+    onError: (e: Error) => toast.error(e.message),
   });
 
   const [form, setForm] = useState<LibrarySettings | null>(null);
@@ -142,8 +185,126 @@ export default function LibrarySettings() {
         </div>
       </div>
 
-      <SourcesCard sources={sources?.sources ?? []} qc={qc} />
+      <SuggestedSourcesCard
+        proposed={proposed.data?.sources ?? []}
+        onSuggest={() => suggest.mutate()}
+        onAccept={(id) => acceptProposed.mutate(id)}
+        onReject={(id) => rejectProposed.mutate(id)}
+        suggestBusy={suggest.isPending}
+      />
+      <SourcesCard
+        sources={(sources?.sources ?? []).filter((s) => s.status !== 'proposed')}
+        qc={qc}
+      />
       <OpmlCard qc={qc} token={token} />
+    </div>
+  );
+}
+
+/**
+ * xMemory-driven library suggestions. Pulls from
+ * /api/library/sources?status=proposed and renders each as an
+ * Accept / Reject card with the reason + sample user-facts the
+ * proposer used. Always rendered (even when empty) so the
+ * "Suggest sources" button is discoverable; the empty state
+ * explains what the button does.
+ */
+function SuggestedSourcesCard({
+  proposed,
+  onSuggest,
+  onAccept,
+  onReject,
+  suggestBusy,
+}: {
+  proposed: Source[];
+  onSuggest: () => void;
+  onAccept: (id: string) => void;
+  onReject: (id: string) => void;
+  suggestBusy: boolean;
+}) {
+  return (
+    <div className="card space-y-3">
+      <header className="flex items-center justify-between gap-2">
+        <div>
+          <h2 className="font-semibold">Suggested sources</h2>
+          <p className="text-xs text-ink-500">
+            Rose proposes RSS feeds and pages based on the user-facts
+            it has extracted from your archive. Accepted suggestions
+            start syncing immediately; rejected ones won't be
+            re-suggested.
+          </p>
+        </div>
+        <button
+          type="button"
+          className="btn-secondary text-xs"
+          onClick={onSuggest}
+          disabled={suggestBusy}
+        >
+          {suggestBusy ? 'Queued…' : 'Suggest sources'}
+        </button>
+      </header>
+      {proposed.length === 0 ? (
+        <div className="text-xs text-ink-500">
+          No suggestions right now. Click <strong>Suggest sources</strong>{' '}
+          to have Rose look for feeds matching your interests.
+        </div>
+      ) : (
+        <ul className="space-y-2">
+          {proposed.map((s) => (
+            <li
+              key={s._id}
+              className="rounded-md border border-amber-200 bg-amber-50 p-3 dark:border-amber-900/40 dark:bg-amber-950/20"
+            >
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="rounded bg-ink-100 px-1.5 py-0.5 text-[10px] font-mono uppercase text-ink-600 dark:bg-ink-800 dark:text-ink-300">
+                      {s.kind}
+                    </span>
+                    <span className="font-semibold">{s.name}</span>
+                  </div>
+                  {s.url && (
+                    <a
+                      href={s.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="mt-0.5 block truncate text-[11px] text-ink-500 hover:underline"
+                    >
+                      {s.url}
+                    </a>
+                  )}
+                  {s.proposalReason && (
+                    <p className="mt-2 text-xs text-ink-600 dark:text-ink-300">
+                      {s.proposalReason}
+                    </p>
+                  )}
+                  {s.proposalEvidence && s.proposalEvidence.length > 0 && (
+                    <div className="mt-1 text-[11px] text-ink-500">
+                      Because you've said: {s.proposalEvidence.slice(0, 3).map((e) => `"${e}"`).join(' · ')}
+                    </div>
+                  )}
+                </div>
+                <div className="flex shrink-0 gap-1">
+                  <button
+                    type="button"
+                    className="btn-ghost text-xs"
+                    onClick={() => onAccept(s._id)}
+                  >
+                    Accept
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-ghost text-xs text-red-600"
+                    onClick={() => onReject(s._id)}
+                  >
+                    Reject
+                  </button>
+                </div>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

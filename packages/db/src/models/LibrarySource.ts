@@ -29,16 +29,31 @@ const sourceSchema = new Schema(
     lastError: { type: String, default: null },
     status: {
       type: String,
-      enum: ['active', 'paused', 'error'],
+      enum: ['active', 'paused', 'error', 'proposed', 'rejected'],
       default: 'active',
       index: true,
     },
+    /**
+     * Why Rose proposed this source (only set when status='proposed').
+     * Reads like "Matches your interest in {theme} — {component-text
+     *  example}." Surfaced in the Settings → Library suggestions
+     * panel so the user knows WHY this URL appeared. Cleared on
+     * accept (status='active').
+     */
+    proposalReason: { type: String, default: '' },
+    /**
+     * For proposed sources: the user-fact texts that drove the
+     * suggestion. Persisted so the user can verify the inference
+     * chain before accepting. Up to 4 stored; cleared on accept.
+     */
+    proposalEvidence: { type: [String], default: [] },
   },
   { timestamps: true },
 );
 
 sourceSchema.index({ userId: 1, kind: 1, status: 1 });
 sourceSchema.index({ userId: 1, lastSyncAt: 1 });
+sourceSchema.index({ userId: 1, status: 1 });
 
 export type LibrarySourceDoc = HydratedDocument<InferSchemaType<typeof sourceSchema>>;
 export const LibrarySource = model('LibrarySource', sourceSchema);

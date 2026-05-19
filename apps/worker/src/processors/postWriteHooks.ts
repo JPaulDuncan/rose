@@ -9,6 +9,7 @@ import { hashContent } from '../services/extractPlaces.js';
 import { proposeDesksForUser } from '../services/proposeDesks.js';
 import { runDeskProposalSweepNow } from '../services/deskProposalSweeper.js';
 import { runMemoryGroupingForUser } from '../services/memoryGroupingSweep.js';
+import { proposeLibrarySourcesForUser } from '../services/proposeLibrarySources.js';
 
 const QUEUE = 'rose.post-write-hooks';
 
@@ -35,7 +36,8 @@ type PostWriteJobData =
   | { kind: 'suggest-desks'; userId: string }
   | { kind: 'desk-sweep-tick'; force?: boolean }
   | { kind: 'memory-backfill'; userId: string; limit?: number }
-  | { kind: 'memory-regroup'; userId: string };
+  | { kind: 'memory-regroup'; userId: string }
+  | { kind: 'library-suggest'; userId: string };
 
 export function startPostWriteHooksWorker() {
   const worker = new Worker<PostWriteJobData>(
@@ -116,6 +118,19 @@ export function startPostWriteHooksWorker() {
           logger.warn(
             { err, userId: String(userId) },
             'memory-regroup: failed',
+          );
+          return { ok: false };
+        }
+      }
+
+      if (job.data.kind === 'library-suggest') {
+        try {
+          const summary = await proposeLibrarySourcesForUser(userId);
+          return { ok: true, ...summary };
+        } catch (err) {
+          logger.warn(
+            { err, userId: String(userId) },
+            'library-suggest: failed',
           );
           return { ok: false };
         }

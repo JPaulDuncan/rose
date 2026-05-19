@@ -1,6 +1,15 @@
 import { Router } from 'express';
 import { Types } from 'mongoose';
-import { Page, Email, User, SenderBrand, TagDigest, Category } from '@rose/db';
+import {
+  Page,
+  Email,
+  User,
+  SenderBrand,
+  TagDigest,
+  Category,
+  MemoryGroup,
+  MemoryComponent,
+} from '@rose/db';
 import { userIdOf } from '../middleware/auth.js';
 
 export const digestRouter: Router = Router();
@@ -61,6 +70,79 @@ function pullQuoteFrom(contentMd: string | null | undefined): string | null {
   return null;
 }
 
+/** Inline cosine for the affinity scoring loop. Mirrors the
+ *  worker-side implementation in apps/worker/src/lib/vec.ts. */
+function cosineLocal(a: readonly number[], b: readonly number[]): number {
+  if (!a.length || a.length !== b.length) return 0;
+  let dot = 0;
+  let na = 0;
+  let nb = 0;
+  for (let i = 0; i < a.length; i += 1) {
+    const ai = a[i]!;
+    const bi = b[i]!;
+    dot += ai * bi;
+    na += ai * ai;
+    nb += bi * bi;
+  }
+  return na && nb ? dot / (Math.sqrt(na) * Math.sqrt(nb)) : 0;
+}
+
+type AffinityProfile = {
+  groups: { centroid: number[]; weight: number }[];
+  empty: boolean;
+};
+
+/**
+ * Build the user's affinity profile: MemoryGroup centroids
+ * (subject='user' only) above the confidence floor, weighted by
+ * sqrt of size. See apps/worker/src/lib/userAffinity.ts for the
+ * full design notes — this implementation is the API-side mirror.
+ */
+async function loadAffinityProfile(
+  userId: Types.ObjectId,
+): Promise<AffinityProfile> {
+  const groups = (await MemoryGroup.find({ userId, subject: 'user' })
+    .select('+centroid label componentCount')
+    .lean()) as Array<{
+    _id: Types.ObjectId;
+    centroid: number[];
+    componentCount: number;
+  }>;
+  if (groups.length === 0) return { groups: [], empty: true };
+
+  const avgs = await MemoryComponent.aggregate<{
+    _id: Types.ObjectId;
+    avg: number;
+  }>([
+    {
+      $match: {
+        userId,
+        subject: 'user',
+        status: 'active',
+        groupId: { $in: groups.map((g) => g._id) },
+      },
+    },
+    { $group: { _id: '$groupId', avg: { $avg: '$confidence' } } },
+  ]);
+  const avgById = new Map(avgs.map((r) => [String(r._id), r.avg]));
+
+  const eligible = groups.filter(
+    (g) => (avgById.get(String(g._id)) ?? 0) >= 0.5,
+  );
+  if (eligible.length === 0) return { groups: [], empty: true };
+  const total = eligible.reduce(
+    (n, g) => n + Math.max(1, g.componentCount),
+    0,
+  );
+  return {
+    empty: false,
+    groups: eligible.map((g) => ({
+      centroid: g.centroid,
+      weight: Math.sqrt(Math.max(1, g.componentCount) / total),
+    })),
+  };
+}
+
 function startOfDay(d: Date): Date {
   const x = new Date(d);
   x.setHours(0, 0, 0, 0);
@@ -108,15 +190,26 @@ digestRouter.get('/', async (req, res) => {
 
   // Pull contentMd just long enough to compute word count + pull quote,
   // then drop it before responding so the wire payload stays small.
+  // Keep topicCentroid in the in-memory rows so we can score pages
+  // by user-affinity (xMemory personalization), but strip it from
+  // the response shape — the client doesn't need the vector itself.
   const rawPages = await Page.find(filter)
     .sort({ articleDate: -1, updatedAt: -1 })
-    .select('-embedding -topicCentroid')
+    .select('-embedding')
     .lean();
+  const centroidById = new Map<string, number[]>();
   const allPages: DigestPage[] = rawPages.map((p) => {
     const md = (p.contentMd as string | undefined) ?? '';
     const wordCount = md.trim() ? md.trim().split(/\s+/).length : 0;
     const pullQuote = pullQuoteFrom(md);
-    const { contentMd: _drop, ...rest } = p as { contentMd?: string } & Record<string, unknown>;
+    const centroid = (p.topicCentroid as number[] | null | undefined) ?? null;
+    if (centroid && centroid.length > 0) {
+      centroidById.set(String(p._id), centroid);
+    }
+    const { contentMd: _drop, topicCentroid: _drop2, ...rest } = p as {
+      contentMd?: string;
+      topicCentroid?: number[];
+    } & Record<string, unknown>;
     return { ...(rest as unknown as DigestPage), wordCount, pullQuote };
   });
 
@@ -186,12 +279,50 @@ digestRouter.get('/', async (req, res) => {
       )[0] ??
     null;
 
+  // ── User-affinity profile (xMemory personalization) ──────────────
+  // Centroids of the user's confident user-fact MemoryGroups, used
+  // to score pages by "how aligned with what the user actually cares
+  // about." The inline implementation mirrors
+  // apps/worker/src/lib/userAffinity.ts — must stay in lockstep with
+  // it. Two ~30-line copies is the right tradeoff vs creating a
+  // shared package, since the API and worker have different call
+  // patterns (per-request batch here, per-sweep there).
+  //
+  // Echo-chamber mitigations baked in:
+  //   - Only contributes to the score; never gates ("AFFINITY IS A
+  //     WEIGHT, NOT A FILTER" in the worker copy's docstring).
+  //   - Confidence floor: groups whose components average < 0.5
+  //     confidence are dropped.
+  //   - Size weighting: sqrt of (group_count / total) so a 12-
+  //     component group dominates a 3-component one but a 50-
+  //     component group doesn't swallow everything.
+  //   - Cold-start safe: zero groups → returns 0 for every page,
+  //     no behavioural change.
+  const affinityProfile = await loadAffinityProfile(userId);
+
+  function affinityFor(pageId: string): number {
+    if (affinityProfile.empty) return 0;
+    const c = centroidById.get(pageId);
+    if (!c || c.length === 0) return 0;
+    let best = 0;
+    for (const g of affinityProfile.groups) {
+      if (g.centroid.length !== c.length) continue;
+      const sim = Math.max(0, cosineLocal(c, g.centroid));
+      const score = sim * g.weight;
+      if (score > best) best = score;
+    }
+    return Math.min(1, best);
+  }
+
   // ── Top stories (above-the-fold "Top Stories" hero block) ─────────
   // Lead + 3 ranked secondaries. Ranking favors high priority, then
   // notification streams (which often surface real incidents), then
-  // pages with the richest content (most contributing emails / words).
-  // We exclude the lead from the secondaries list and pull from the
-  // pool of recently-updated pages so the block always feels fresh.
+  // pages with the richest content (most contributing emails / words),
+  // PLUS a user-affinity bump (xMemory) so pages aligned with the
+  // user's expressed interests rank higher than equally-shaped
+  // generic ones. The affinity term caps at +60 — close to priority's
+  // +100 weight so a "high-priority but irrelevant" page can still
+  // outrank "no-priority but on-theme", but not by a wide margin.
   function rankScore(p: DigestPage): number {
     let s = 0;
     if (p.priority === 'high') s += 100;
@@ -205,6 +336,9 @@ digestRouter.get('/', async (req, res) => {
       Math.min(7, (Date.now() - new Date(p.updatedAt).getTime()) / (24 * 3600 * 1000)),
     );
     s += Math.round(20 * (1 - age / 7));
+    // User-affinity. 0..1 score → 0..60 contribution. Pages off-
+    // theme aren't penalised; they just don't get the boost.
+    s += Math.round(affinityFor(p._id) * 60);
     return s;
   }
   const ranked = [...allPages].sort((a, b) => rankScore(b) - rankScore(a));
@@ -212,6 +346,41 @@ digestRouter.get('/', async (req, res) => {
     .filter((p) => p._id !== (lead?._id ?? ''))
     .slice(0, 3);
   const topStories = { lead, secondaries };
+
+  // ── "For you" lede (xMemory) ───────────────────────────────────────
+  // Highest-affinity recent page that ISN'T already the lead or a
+  // top-stories secondary. Threshold of 0.25 keeps a tepid match
+  // from displacing nothing — only render the section when the user
+  // has a clearly-on-theme page available. Falls through to null
+  // when the user has no affinity profile (cold start) or no page
+  // crosses the threshold.
+  const FOR_YOU_THRESHOLD = 0.25;
+  const dedupSet = new Set(
+    [lead?._id, ...secondaries.map((s) => s._id)].filter(Boolean) as string[],
+  );
+  const forYouCandidates = affinityProfile.empty
+    ? []
+    : allPages
+        .filter((p) => !dedupSet.has(p._id))
+        .filter((p) => {
+          // Only "recent" — fades affinity boost on a stale archive.
+          const age = (Date.now() - new Date(p.updatedAt).getTime()) / (24 * 3600 * 1000);
+          return age <= 7;
+        })
+        .map((p) => ({ p, score: affinityFor(p._id) }))
+        .filter((r) => r.score >= FOR_YOU_THRESHOLD)
+        .sort((a, b) => b.score - a.score);
+  const forYou =
+    forYouCandidates.length > 0
+      ? {
+          page: forYouCandidates[0]!.p,
+          affinity: forYouCandidates[0]!.score,
+          // Top-3 same-theme companions for the section's secondary
+          // list — gives the user "one focus piece + 3 more on this
+          // theme" without forcing them to scroll.
+          companions: forYouCandidates.slice(1, 4).map((r) => r.p),
+        }
+      : null;
 
   // ── Most Read rail (right rail) ───────────────────────────────────
   // Distinct from "topStories": this is a numbered list of the pages a
@@ -411,6 +580,7 @@ digestRouter.get('/', async (req, res) => {
     },
     lead,
     topStories,
+    forYou,
     mostRead,
     buckets,
     topSenders,

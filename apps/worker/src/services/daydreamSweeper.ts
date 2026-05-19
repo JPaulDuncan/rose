@@ -3,6 +3,7 @@ import { Types } from 'mongoose';
 import { User, Page } from '@rose/db';
 import { redis } from '../lib/redis.js';
 import { logger } from '../lib/logger.js';
+import { loadUserAffinityProfile, rankByAffinity } from '../lib/userAffinity.js';
 
 const SWEEP_INTERVAL_MS = 60_000;
 /** Per-user pages to enqueue per sweep. Conservative — daydream has
@@ -56,10 +57,14 @@ async function pickCandidates(): Promise<{ userId: Types.ObjectId; pageId: Types
 
   const out: { userId: Types.ObjectId; pageId: Types.ObjectId }[] = [];
   for (const u of enabledUsers) {
-    // Pick a page that has at least one topic or tag and hasn't been
-    // assigned subjects yet, sorted newest-first so recent pages get
-    // enriched before old ones.
-    const page = await Page.findOne({
+    // xMemory-aware ordering: pull the top 20 recent un-daydreamed
+    // pages, score each by user-affinity (xMemory), pick the
+    // highest-scoring one. Pages that match what Rose has learned
+    // the user cares about get researched before generic-recency
+    // ones. Cold-start users (no MemoryGroups) → affinity = 0 for
+    // all candidates → order falls back to recency, matching the
+    // pre-personalisation behaviour exactly.
+    const candidates = (await Page.find({
       userId: u._id,
       $or: [
         { daydreamSubjects: { $size: 0 } },
@@ -89,11 +94,16 @@ async function pickCandidates(): Promise<{ userId: Types.ObjectId; pageId: Types
       ],
     })
       .sort({ updatedAt: -1 })
-      .select('_id')
-      .lean();
-    if (page) {
+      .limit(20)
+      .select('+topicCentroid _id')
+      .lean()) as Array<{ _id: Types.ObjectId; topicCentroid?: number[] | null }>;
+    if (candidates.length === 0) continue;
+    const profile = await loadUserAffinityProfile(u._id);
+    const ranked = rankByAffinity(candidates, profile);
+    const winner = ranked[0]?.item;
+    if (winner) {
       for (let i = 0; i < PAGES_PER_SWEEP; i += 1) {
-        out.push({ userId: u._id, pageId: page._id });
+        out.push({ userId: u._id, pageId: winner._id });
       }
     }
   }
