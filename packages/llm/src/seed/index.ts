@@ -65,7 +65,12 @@ ${SYSTEM_PROMPT_NEWS_PROSE}
 STRUCTURE
 - Title: a stable noun phrase that names the *topic* of the page — not the subject of any one email. < 80 chars. No "Re:" / "Fwd:" prefixes, no dates.
 - Summary: ≤ 280 characters, written like a news lede — the most important fact in the most recent development, in one sentence. Stays accurate as new emails arrive.
-- Body (markdown): begins with a one-line **"Updated <human date> — <one-sentence latest development>"** in italics, derived from the most recent message. Then the lede paragraph (the latest news in 2–3 sentences). Then context paragraphs (what's been happening, who's involved, what was decided earlier) in roughly reverse-chronological order. End with a brief "Background" paragraph for the original starting point if the story spans more than a few exchanges.
+- Body (markdown):
+  1. First line is the italic dateline: \`*Updated <human date> — <one-sentence latest development>*\` derived from the most recent message. Blank line after.
+  2. Lede paragraph — the latest news in 1–3 short sentences. Stands alone.
+  3. One or two short paragraphs developing the lede (specifics, named participants, the "what changed"). Blank line between each.
+  4. If the story spans more than ~3 paragraphs of body, group remaining material under \`##\` subheads ("What's changing", "Who's involved", "What's next", "Background", etc.) — reverse-chronological where it makes sense, with **Background** as the final section when the story has prior exchanges.
+  5. Keep every paragraph short (1–3 sentences). Always a blank line between paragraphs and before/after subheads. No \`#\` top-level heading inside contentMd — the page title renders that.
 
 CITATIONS
 - Every factual claim, decision, action item, quoted statement, or attributed fact MUST be followed by an inline citation referencing the source email using the exact label provided — e.g. \`The deploy is set for Friday [e2]\` or \`Costs were debated at length [e1, e3]\`. Multiple labels comma-separated inside one bracket. Only use labels that appear below; never invent labels.
@@ -197,7 +202,7 @@ NEW EMAILS (each labeled e<n>; these are the ONLY new sources you may cite). Whe
 {{new_labeled_threads}}
 
 MERGE RULES — these are the differences from a fresh-write
-1. Preserve the structure and voice of the existing body. Do NOT rewrite paragraphs unless a new email genuinely contradicts or supersedes them. The user may have hand-edited paragraphs; treat existing prose as authoritative.
+1. Preserve the structure and voice of the existing body. Do NOT rewrite paragraphs unless a new email genuinely contradicts or supersedes them. The user may have hand-edited paragraphs; treat existing prose as authoritative. Exception: if the existing body is a single dense paragraph or wall of text, you MAY break it into shorter news-style paragraphs (1–3 sentences each) with blank lines between them, and add \`##\` subheads to group sections — without changing the wording. Improving the layout while leaving the prose intact is allowed.
 2. The lede paragraph leads with the latest development. If the new emails contain a more recent development than the current lede, rewrite the lede (only the lede). Otherwise leave it.
 3. Update the italic "Updated <date> — <one sentence>" line at the top of the body to reflect the most recent new dispatch.
 4. New material goes into the body the same way a beat reporter folds in a wire update: a sentence or two added to the relevant paragraph if it's a continuation; a fresh paragraph if it's a distinct angle; a new H2 section only if the new emails open a genuinely new sub-story.
@@ -554,10 +559,12 @@ STRUCTURE
 - Title: a stable noun phrase that names the topic — short, ≤ 80 chars, no "Re:" or dates.
 - Summary: ≤ 280 characters, written like a news lede. Lead with the most important *recent* fact in one sentence.
 - Body (markdown):
-  1. **First line is exactly** "Updated <human date> — <one-sentence framing of why this matters to *this user*>" *in italics*, drawn from the user's mail context. This is the "for you" frame.
-  2. Lead paragraph: 2–3 sentences on the latest development across the web sources, every claim cited.
-  3. Context paragraphs: what's been happening, who's involved, what was decided earlier. Reverse-chronological where it makes sense.
-  4. Close with a "Background" paragraph drawing on prior internal pages (i?) when they exist; otherwise on older web sources.
+  1. First line is exactly the italic dateline: \`*Updated <human date> — <one-sentence framing of why this matters to this user>*\` drawn from the user's mail context. Blank line after. This is the "for you" frame.
+  2. Lede paragraph: 1–3 short sentences on the latest development across the web sources, every claim cited. Stands alone.
+  3. One or two short paragraphs developing the story — specifics, named participants, what changed. Blank line between each.
+  4. When the piece has more than ~3 paragraphs of body, group remaining material under \`##\` subheads ("What's new", "Who's involved", "What's next", etc.). Reverse-chronological where it makes sense.
+  5. Close with a \`## Background\` section drawing on prior internal pages (i?) when they exist; otherwise on older web sources. Skip the Background section entirely when the piece is short (< 3 body paragraphs).
+  6. Keep every paragraph short (1–3 sentences, ≤ ~60 words). Blank line between every paragraph and around subheads. No top-level \`#\` heading inside contentMd.
 
 DIVERSITY HEURISTIC
 - If every web source comes from the same hostname or the same political camp, add a one-sentence flag at the end of the body in italics: "*Coverage in this synthesis is dominated by <hostname>.*" The user can read the citations and decide.
