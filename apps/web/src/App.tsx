@@ -59,6 +59,7 @@ const MapsSettingsPage = lazy(() => import('./routes/settings/Maps'));
 const TagsSettingsPage = lazy(() => import('./routes/settings/Tags'));
 const EntitiesSettingsPage = lazy(() => import('./routes/settings/Entities'));
 const MemorySettingsPage = lazy(() => import('./routes/settings/Memory'));
+const KnowledgeSettingsPage = lazy(() => import('./routes/settings/Knowledge'));
 const DesksSettingsPage = lazy(() => import('./routes/settings/Desks'));
 const LibrarySettingsPage = lazy(() => import('./routes/settings/Library'));
 const AdminSettingsPage = lazy(() => import('./routes/settings/Admin'));
@@ -174,6 +175,7 @@ export default function App() {
           <Route path="tags" element={<TagsSettingsPage />} />
           <Route path="entities" element={<EntitiesSettingsPage />} />
           <Route path="memory" element={<MemorySettingsPage />} />
+          <Route path="knowledge" element={<KnowledgeSettingsPage />} />
           <Route path="desks" element={<DesksSettingsPage />} />
           <Route path="library" element={<LibrarySettingsPage />} />
           <Route path="admin" element={<AdminSettingsPage />} />

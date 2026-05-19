@@ -8,9 +8,8 @@ import { useApi } from '../../lib/api';
  * nav was 17 unsorted tabs in a flat list — hard to find anything.
  * Grouping by purpose (Profile / Inputs / Organisation / Automation
  * / Maintenance / Admin) cuts the visual surface without removing
- * any individual tab. Future consolidation can collapse tabs
- * within a group (e.g. Memory + Entities → one "Knowledge"); for
- * now this just sorts the existing list into the right buckets.
+ * any individual tab. Memory + Entities are now collapsed behind
+ * one "Knowledge" tab (see settings/Knowledge.tsx).
  */
 type TabDef = { to: string; label: string; admin?: boolean };
 
@@ -36,8 +35,7 @@ const SECTIONS: { label: string; tabs: TabDef[] }[] = [
     tabs: [
       { to: 'desks', label: 'Desks' },
       { to: 'tags', label: 'Tags' },
-      { to: 'entities', label: 'Entities' },
-      { to: 'memory', label: 'Memory' },
+      { to: 'knowledge', label: 'Knowledge' },
       { to: 'maps', label: 'Maps' },
     ],
   },
