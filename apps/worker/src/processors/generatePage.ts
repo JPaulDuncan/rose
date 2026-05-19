@@ -1523,7 +1523,24 @@ export function startGeneratePageWorker() {
         ) {
           page.articleDate = articleDate;
         }
-        page.topics = topics;
+        // Tags/topics consolidation. The generator template asks
+        // the LLM for both; per-page they ended up nearly
+        // identical, just with subtle drift between which surfaces
+        // read which. New pages collapse both lists into `tags`
+        // (deduped, lowercased) so downstream code can read one
+        // column. `topics` is kept as an empty array for back-
+        // compat with row shape; existing rows that had real
+        // topics stay readable to legacy code paths.
+        const mergedTags = Array.from(
+          new Set([
+            ...((page.tags as string[] | undefined) ?? []).map((t) =>
+              t.toLowerCase(),
+            ),
+            ...topics.map((t) => t.toLowerCase()),
+          ]),
+        );
+        page.tags = mergedTags;
+        page.topics = [];
         page.set('pageLinks', pageLinks);
         page.set('pageImages', pageImages);
         page.heroImageUrl = heroImageUrl;

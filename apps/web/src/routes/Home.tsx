@@ -214,22 +214,29 @@ export default function HomePage() {
           height. */}
       <div className="mt-10 grid items-start gap-6 lg:grid-cols-[1fr_300px]">
         <div className="min-w-0 space-y-10">
-          {data.forYou && data.forYou.page && (
+          {/* Masthead: ForYou (xMemory-driven) takes precedence when
+              present — having both the personalised lede AND the
+              generic Top Story side-by-side was the duplication
+              the cleanup pass identified. Cold-start users (no
+              user-facts yet) fall back to the rank-score lead. */}
+          {data.forYou && data.forYou.page ? (
             <ForYouLede forYou={data.forYou} />
-          )}
-          {data.topStories && data.topStories.lead && (
-            <TopStories lead={data.topStories.lead} />
+          ) : (
+            data.topStories &&
+            data.topStories.lead && <TopStories lead={data.topStories.lead} />
           )}
           <BreakingCarousel pages={breakingPool} />
-          {data.featuredSections.length > 0 && (
-            <FeaturedSections
-              sections={data.featuredSections}
-              suppressIds={suppressIds}
-            />
-          )}
-          {data.featuredDeskSections && data.featuredDeskSections.length > 0 && (
-            <FeaturedDeskSections
-              sections={data.featuredDeskSections}
+          {/* Featured — tags + desks rendered under one shared header
+              so the user sees them as one "things you've pinned"
+              surface instead of two parallel sections. Each kind
+              keeps its own component (they shape differently —
+              tag-digests have a generated body, desks render their
+              description). */}
+          {(data.featuredSections.length > 0 ||
+            (data.featuredDeskSections && data.featuredDeskSections.length > 0)) && (
+            <FeaturedAll
+              tagSections={data.featuredSections}
+              deskSections={data.featuredDeskSections ?? []}
               suppressIds={suppressIds}
             />
           )}
@@ -1018,6 +1025,59 @@ function slugifyAnchor(label: string): string {
   return label.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
 }
 
+/**
+ * Unified "Featured" header that wraps both the tag-driven
+ * featured sections AND the desk-driven ones. Each kind keeps its
+ * own component (they shape differently) but the user reads them
+ * as one block of pinned content instead of two parallel sections.
+ * Renders nothing when both lists are empty.
+ */
+function FeaturedAll({
+  tagSections,
+  deskSections,
+  suppressIds,
+}: {
+  tagSections: {
+    tag: string;
+    pageCount: number;
+    pages: DigestPage[];
+    digest: FeaturedSectionDigest | null;
+  }[];
+  deskSections: {
+    categoryId: string;
+    name: string;
+    description: string;
+    kind: 'desk' | 'ad-hoc';
+    icon: string | null;
+    pageCount: number;
+    pages: DigestPage[];
+  }[];
+  suppressIds: Set<string>;
+}) {
+  if (tagSections.length === 0 && deskSections.length === 0) return null;
+  return (
+    <div className="space-y-12">
+      <div className="border-t-4 border-double border-ink-900 pt-6 dark:border-ink-100">
+        <div className="text-[10px] uppercase tracking-[0.25em] text-ink-500">
+          Pinned by you
+        </div>
+        <h2 className="mt-0.5 font-serif text-2xl font-black tracking-tight">
+          Featured
+        </h2>
+      </div>
+      {tagSections.length > 0 && (
+        <FeaturedSections sections={tagSections} suppressIds={suppressIds} />
+      )}
+      {deskSections.length > 0 && (
+        <FeaturedDeskSections
+          sections={deskSections}
+          suppressIds={suppressIds}
+        />
+      )}
+    </div>
+  );
+}
+
 type FeaturedSectionDigest = {
   headline: string;
   dek: string;
@@ -1039,7 +1099,7 @@ function FeaturedSections({
   suppressIds: Set<string>;
 }) {
   return (
-    <div className="space-y-12 border-t-4 border-double border-ink-900 pt-8 dark:border-ink-100">
+    <div className="space-y-12">
       {sections.map((s) => {
         const pages = s.pages.filter((p) => !suppressIds.has(p._id));
         // When a tag-digest exists, it becomes the section's lede —
@@ -1157,7 +1217,7 @@ function FeaturedDeskSections({
   suppressIds: Set<string>;
 }) {
   return (
-    <div className="space-y-12 border-t-4 border-double border-ink-900 pt-8 dark:border-ink-100">
+    <div className="space-y-12">
       {sections.map((s) => {
         const pages = s.pages.filter((p) => !suppressIds.has(p._id));
         const lead = pages[0];

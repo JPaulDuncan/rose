@@ -116,6 +116,14 @@ export default function RulesSettings() {
 
   return (
     <div className="space-y-4">
+      <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200">
+        <strong>Heads up:</strong> Rules are gradually moving into{' '}
+        <a href="/settings/recipes" className="underline">Recipes</a>, which
+        cover the same triggers + actions plus push notifications, webhooks,
+        LLM actions, and time-scheduled briefings. New conditions and
+        actions land in Recipes only; this surface stays for existing
+        rules until the migration import lands.
+      </div>
       <div className="card">
         <div className="mb-2 flex items-center gap-2">
           <Workflow className="h-5 w-5 text-rose-500" />

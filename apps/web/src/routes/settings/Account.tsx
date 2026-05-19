@@ -247,6 +247,14 @@ function PushCard() {
             )}
           </div>
 
+          <div className="mt-4 rounded-md border border-amber-300 bg-amber-50 p-2 text-[11px] text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200">
+            <strong>Note:</strong> push notification rules are moving into{' '}
+            <a href="/settings/recipes" className="underline">Recipes</a> —
+            the same triggers (email arrives, page created, tag applied)
+            plus more actions (tag, archive, webhook, LLM run). This
+            surface stays for existing rules until the migration import
+            lands.
+          </div>
           <NotificationRulesList
             rules={rulesResp?.rules ?? []}
             onAdd={(r) => addRule.mutate(r)}

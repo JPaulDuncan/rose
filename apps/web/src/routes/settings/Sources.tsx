@@ -169,6 +169,7 @@ export default function SourcesSettings() {
     | { kind: 'edit-website'; id: string }
     | { kind: 'create-slack' }
     | { kind: 'create-discord' }
+    | { kind: 'choose-calendar' }
     | { kind: 'create-gcal' }
     | { kind: 'create-ics' }
     | { kind: 'edit-ics'; id: string }
@@ -273,11 +274,12 @@ export default function SourcesSettings() {
         <button className="btn-secondary" onClick={() => setForm({ kind: 'create-discord' })}>
           <MessageCircle className="h-4 w-4" /> Connect Discord
         </button>
-        <button className="btn-secondary" onClick={() => setForm({ kind: 'create-gcal' })}>
-          <CalendarDays className="h-4 w-4" /> Google Calendar
-        </button>
-        <button className="btn-secondary" onClick={() => setForm({ kind: 'create-ics' })}>
-          <CalendarDays className="h-4 w-4" /> Calendar share link
+        {/* Calendar — one picker tile, two underlying types
+            (gcal OAuth and public ICS feed). The disambiguation
+            happens via a small inline card after the user clicks
+            so the source-picker grid stays tight. */}
+        <button className="btn-secondary" onClick={() => setForm({ kind: 'choose-calendar' })}>
+          <CalendarDays className="h-4 w-4" /> Add Calendar
         </button>
         <button className="btn-secondary" onClick={() => setForm({ kind: 'webhook' })}>
           <Webhook className="h-4 w-4" /> Add Webhook
@@ -366,6 +368,48 @@ export default function SourcesSettings() {
           onCancel={() => setForm(null)}
           onSubmit={(body) => create.mutate(body)}
         />
+      )}
+      {form?.kind === 'choose-calendar' && (
+        <div className="card space-y-3">
+          <div>
+            <h3 className="font-semibold">Add a calendar</h3>
+            <p className="mt-1 text-xs text-ink-500">
+              Two ways to connect a calendar. OAuth gives Rose
+              read+write access to your private calendars; the
+              share-link path is read-only and only works against
+              calendars the owner has made public.
+            </p>
+          </div>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <button
+              type="button"
+              className="rounded-md border border-ink-200 p-3 text-left hover:bg-ink-50 dark:border-ink-800 dark:hover:bg-ink-900"
+              onClick={() => setForm({ kind: 'create-gcal' })}
+            >
+              <div className="font-medium">Google Calendar (OAuth)</div>
+              <div className="mt-1 text-xs text-ink-500">
+                Connect via Google sign-in. Pulls your primary and
+                shared calendars. Read + write.
+              </div>
+            </button>
+            <button
+              type="button"
+              className="rounded-md border border-ink-200 p-3 text-left hover:bg-ink-50 dark:border-ink-800 dark:hover:bg-ink-900"
+              onClick={() => setForm({ kind: 'create-ics' })}
+            >
+              <div className="font-medium">Public share link</div>
+              <div className="mt-1 text-xs text-ink-500">
+                Paste a Google share URL, an .ics URL, or a webcal://
+                link. Read-only. Works with any calendar service.
+              </div>
+            </button>
+          </div>
+          <div className="flex justify-end">
+            <button type="button" className="btn-ghost text-xs" onClick={() => setForm(null)}>
+              Cancel
+            </button>
+          </div>
+        </div>
       )}
       {form?.kind === 'create-gcal' && (
         <GcalForm
