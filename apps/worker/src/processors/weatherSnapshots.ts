@@ -151,13 +151,12 @@ async function runSweep(): Promise<{ locations: number; written: number }> {
       const r = await WeatherSnapshot.updateOne(
         { lat, lon, fetchedAt },
         {
-          $setOnInsert: {
-            lat,
-            lon,
-            fetchedAt,
-            label,
-            ...current,
-          },
+          // `label` lives only in $set — listing it in both $set and
+          // $setOnInsert triggers MongoDB "Updating the path 'label'
+          // would create a conflict at 'label'" on every insert. The
+          // filter's lat/lon/fetchedAt seed into the inserted doc
+          // automatically, so they don't need to be repeated here.
+          $setOnInsert: current,
           $set: { label },
         },
         { upsert: true },

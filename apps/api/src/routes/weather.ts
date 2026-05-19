@@ -491,11 +491,13 @@ weatherRouter.get('/', async (req, res, next) => {
       void WeatherSnapshot.updateOne(
         { lat: lat3, lon: lon3, fetchedAt: new Date(fetchedAtTs) },
         {
+          // `label` lives only in $set — listing it here too would
+          // trigger MongoDB "Updating the path 'label' would create
+          // a conflict at 'label'" on every insert and silently sink
+          // every snapshot write. Lat/lon/fetchedAt are already in
+          // the filter, so MongoDB seeds them into the inserted doc
+          // automatically.
           $setOnInsert: {
-            lat: lat3,
-            lon: lon3,
-            fetchedAt: new Date(fetchedAtTs),
-            label: loc.label,
             temperature: current.temperature,
             temperatureUnit: current.temperatureUnit,
             shortForecast: current.shortForecast,
